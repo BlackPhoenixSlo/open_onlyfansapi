@@ -281,3 +281,38 @@ Check the GitHub org, npm scope and domain before publishing.
 4. **Accounts.** `{account}` is the backend integer id, and accounts connect only through the backend's desktop cookie flow, so the dashboard has no connect wizard (pages.md 3.3). Is that OK for the MVP?
 5. **Public API shape.** v0.1 exposes the platform's native paths (`/v1/{account}/users/me`) until `mapping.md` defines reference-shaped routes. Is that acceptable to publish, given the platform's terms of service?
 6. **Repo and licence.** Keep a separate repo, with the same stack so modules can move into the backend later? MIT (maximum adoption) or AGPL-3.0 (blocks closed hosted forks)?
+
+## 11. Amendments after review (2026-10-01)
+
+Decided after `plan-review.md` (devil's advocate) and `plan-review-codex.md`. These override the sections above where they conflict.
+
+**Scope: the release boundary is slice 5.** Webhooks (slice 6) ship after v0.1.
+
+| Cut from MVP | Replacement |
+|---|---|
+| Team invitations, members page, team deletion | One workspace (`organization`) auto-created per user at sign-up. `team_id` isolation stays in every table and query so multi-member comes later without a migration. |
+| `usage_daily` rollup job | `GET /api/usage` aggregates `request_log` directly over a bounded range (max 31 days) using the `(team_id, created_at)` index. Rollups only when that gets slow. |
+| Log write buffer | Direct insert per request, awaited off the response path (`setImmediate`), errors logged not thrown. |
+| Response bodies stored by default | `LOG_BODIES=errors` (default): store request+response bodies only for status ≥ 400; `all` / `none` available. Query strings are redacted with the same key regex, and redaction runs before truncation. |
+| Home page charts, attention feed, onboarding checklist | Home = three KPI cards (24 h requests, error rate, active keys) and a link to Usage. |
+| Schema-driven playground forms | Operation picker (tag + search), account picker, editable path and query, JSON textarea, response panel, curl snippet. Playground state is a log id or in-memory, never request bodies in the URL. |
+| `packages/shared` | Dropped. Types that both apps need live in `apps/api/src/contracts.ts` and are imported by path alias. |
+| Advisory lock, multi-instance worker guarantees, circuit breaker, `realtime.*` catch-all | Postponed with webhooks. When built: lease-based claim (`UPDATE … SET next_attempt_at = now() + interval '60s' … SKIP LOCKED RETURNING`), SSRF check on URL (resolve host, reject private/loopback/link-local ranges), Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`). |
+
+**Security fixes (slice 2 must include these):**
+1. **Proxy path** is built from the raw URL (`request.raw.url`), not the decoded wildcard. Reject any segment that is `.` or `..`, any `%2F`/`%2f`/`%5C`, and any path not starting with `/of/` after joining. Covered by a test with the `..%2fof-accounts` payload.
+2. **CSRF on every cookie-authenticated write** (`/api/*` and session-authenticated `/v1/*`): require `x-dashboard: 1` and `Origin` equal to `APP_URL`. Bearer + cookie together: use the bearer, and if the bearer is invalid return 401 (no cookie fallback).
+3. **Accounts response whitelist:** `/v1/accounts` returns only `id, label, username, displayName, avatarUrl, status`.
+4. **Minted backend JWT:** `{ sub: <int>, iat, exp }` only; never include `employeeId`. Pre-deployment requirement (outside this repo): add a dedicated gateway credential to the backend so the gateway does not hold the backend's signing secret. Tracked as R2.
+5. **Tenant tests:** one vitest file that proves cross-team access fails for keys, logs, and accounts, and that a read key cannot write.
+6. **Rate limit:** forward upstream `Retry-After` and `x-ratelimit-*` headers; add `@fastify/rate-limit` per API key (default 120 req/min) so one client cannot drain the backend's shared 300 req/min bucket.
+
+**Naming:** "Fanrelay" is taken by a product in the same market. The code does not depend on a name: API key prefix `gk_`, webhook secret prefix `whsec_`, Standard Webhooks headers, npm packages `@gateway/api` and `@gateway/web`. The product name, the GitHub repo name (the current folder name contains a third-party trademark and must change before publishing) and the README title are a single user decision deferred to publish time.
+
+**Publishing:** before the repo goes public, move `docs/spec/pages.md`, `endpoints.md` and `mapping.md` out of the public tree (they are derived from a competitor's product and a reverse-engineered platform API) or reduce them to the gateway's own surface, and add a "not affiliated with or endorsed by any platform" notice to the README.
+
+**Licence:** AGPL-3.0 (reversible until first public release).
+
+**better-auth:** keep the plugin's `organization` naming in the DB and code; the UI says "workspace". Auth schema is generated into `apps/api/src/db/auth-schema.ts`. Env gains `BETTER_AUTH_URL` and `TRUST_PROXY`.
+
+**Testing:** vitest `fileParallelism: false` against `gateway_test`.
