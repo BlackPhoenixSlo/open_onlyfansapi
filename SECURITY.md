@@ -36,8 +36,8 @@ Only the latest commit on `main` is supported. This is pre-1.0 software: there a
 
 A few properties worth knowing when you look for issues:
 
-- **The gateway holds one upstream credential.** It signs short-lived JWTs for the backend with a single
-  secret from the environment (`BACKEND_JWT_SECRET`). Compromising the gateway process or its `.env`
+- **The gateway holds one upstream credential.** Every upstream call carries a single bearer token from
+  the environment (`UPSTREAM_TOKEN`). Compromising the gateway process or its `.env`
   means every workspace's upstream access, so anything that leaks environment values, lets a tenant reach
   another tenant's accounts, or escapes the proxy path prefix is serious.
 - **API keys are stored hashed.** A key is shown once at creation; only its SHA-256 hash and prefix are in

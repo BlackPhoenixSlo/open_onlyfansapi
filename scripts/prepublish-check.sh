@@ -21,7 +21,7 @@ fi
 # 2. third-party brand in tracked files (docs/spec is covered by check 5; the other two
 #    carry the brand on purpose: an ignore rule and a token pattern)
 brand_hits=$(git grep -I -i -n -E -e "$BRAND" -- \
-  ':(exclude)docs/spec' ':(exclude).gitignore' ':(exclude)scripts/check-secrets.sh' || true)
+  ':(exclude)docs/spec' ':(exclude).gitignore' ':(exclude).dockerignore' ':(exclude)scripts/check-secrets.sh' || true)
 if [ -n "$brand_hits" ]; then
   report "tracked files mention the third-party brand; rename or scrub before publishing:"
   echo "$brand_hits"

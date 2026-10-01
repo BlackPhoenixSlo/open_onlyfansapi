@@ -65,12 +65,11 @@ printf '%s\n' "$heads" | grep -qiE '^x-upstream-spec:[[:space:]]*unavailable' \
   || fail "/openapi.json lacks 'x-upstream-spec: unavailable'"
 
 # 4. Caddy publishes the only host ports.
-for svc_port in postgres:5432 gateway:4000; do
-  svc=${svc_port%:*}
-  port=${svc_port#*:}
-  if published=$(dc port "$svc" "$port" 2>/dev/null) && [ -n "$published" ]; then
-    fail "$svc publishes $port on the host ($published); only caddy may publish"
-  fi
+# ('compose port' prints "invalid IP:0" for unpublished ports on Compose v5, so inspect the bindings.)
+for svc in postgres gateway; do
+  cid=$(dc ps -q "$svc") || fail "could not find the $svc container"
+  published=$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$cid")
+  [ -z "$published" ] || fail "$svc publishes host ports ($published); only caddy may publish"
 done
 
 # 5. The gateway container does not run as root.
