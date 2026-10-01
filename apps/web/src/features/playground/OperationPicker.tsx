@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { type Op, groupByTag } from './spec';
 
-export const METHOD_TONE: Record<string, string> = {
+const METHOD_TONE: Record<string, string> = {
   GET: 'text-emerald-700 dark:text-emerald-400',
   POST: 'text-sky-700 dark:text-sky-400',
   PUT: 'text-amber-700 dark:text-amber-400',

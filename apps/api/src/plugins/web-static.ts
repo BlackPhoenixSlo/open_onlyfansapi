@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { notFoundHandler } from '../lib/errors.js';
 
-const API_PREFIXES = ['/api/', '/v1/', '/openapi.json', '/healthz'];
+const API_PREFIXES = ['/api/', '/v1/', '/openapi.json', '/docs', '/healthz'];
 
 /**
  * Production only: serve the dashboard build from the same origin, with an index.html fallback for SPA routes.

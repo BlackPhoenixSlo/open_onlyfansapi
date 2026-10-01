@@ -51,7 +51,7 @@ export function RequestForm({
           className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            onSend();
+            if (!sending && problem === null) onSend();
           }}
         >
           <Select value={draft.method} onValueChange={(method) => set({ method })}>

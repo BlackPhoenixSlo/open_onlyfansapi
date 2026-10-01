@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../../db/index.js';
 import { requestLog } from '../../db/schema.js';
 import { env } from '../../env.js';
+import { parseAccountId } from '../proxy/routes.js';
 import { redactBody, redactHeaders, redactQuery } from './redact.js';
 
 const PROXY_ROUTE = '/v1/:account/*';
@@ -45,7 +46,7 @@ function toRow(request: FastifyRequest, reply: FastifyReply, { payload, duration
     teamId: actor.teamId,
     apiKeyId: actor.keyId,
     userId: actor.userId,
-    accountId: account && /^\d+$/.test(account) ? Number(account) : null,
+    accountId: account === undefined ? null : parseAccountId(account),
     method: request.method,
     path,
     endpoint: normaliseEndpoint(request.method, request.routeOptions.url, path),

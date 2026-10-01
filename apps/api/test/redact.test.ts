@@ -39,6 +39,18 @@ describe('redact', () => {
     expect(redactQuery('')).toBeNull();
   });
 
+  it('masks API keys and credentials passed as query parameters or JSON keys', () => {
+    expect(redactQuery('api_key=gk_1&apikey=gk_2&access-key=a&keyword=kept')).toBe(
+      `api_key=${MASK}&apikey=${MASK}&access-key=${MASK}&keyword=kept`,
+    );
+    expect(JSON.parse(redactBody('{"apiKey":"gk_1","privateKey":"p","credentials":{"u":1},"monkey":2}', 'application/json', 1000)!)).toEqual({
+      apiKey: MASK,
+      privateKey: MASK,
+      credentials: MASK,
+      monkey: 2,
+    });
+  });
+
   it('redacts before truncating', () => {
     // The secret sits past the cut: truncating first would leave invalid JSON (placeholder) or leak the value.
     const late = JSON.stringify({ note: 'x'.repeat(40), password: 'hunter2' });

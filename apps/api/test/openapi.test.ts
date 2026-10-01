@@ -55,7 +55,57 @@ describe('openapi', () => {
     expect(spec.servers).toBeUndefined();
     expect(Object.keys(spec.components.securitySchemes)).toEqual(['ApiKey']);
     expect(spec.components.securitySchemes.ApiKey).toMatchObject({ type: 'http', scheme: 'bearer' });
-    expect(JSON.stringify(spec)).not.toMatch(/of-api|bearerAuth/);
+    expect(JSON.stringify(spec)).not.toMatch(/of-api|bearerAuth|internal/);
+  });
+
+  it('publishes only the component schemas the public operations reference', async () => {
+    const spec = (await app.inject({ method: 'GET', url: '/openapi.json' })).json();
+    expect(spec.paths['/v1/{account}/users/me'].get.responses[200].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/User',
+    });
+    expect(Object.keys(spec.components.schemas).sort()).toEqual(['Media', 'User']);
+  });
+
+  it('fetches the spec once for concurrent requests and caches a failure for a minute, keeping the last good spec', async () => {
+    const fresh = await buildApp({ logger: false, backendUrl: backend.url });
+    try {
+      const before = specHits();
+      const get = () => fresh.inject({ method: 'GET', url: '/openapi.json' });
+      await Promise.all([get(), get(), get()]);
+      expect(specHits() - before).toBe(1);
+
+      backend.state.specFails = true;
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+      const stale = await get();
+      expect(specHits() - before).toBe(2);
+      expect(stale.headers['x-backend-spec']).toBeUndefined();
+      expect(Object.keys(stale.json().paths)).toContain('/v1/{account}/users/me');
+      await get();
+      expect(specHits() - before).toBe(2);
+
+      vi.setSystemTime(Date.now() + 60_000 + 1);
+      await get();
+      expect(specHits() - before).toBe(3);
+    } finally {
+      backend.state.specFails = false;
+      vi.useRealTimers();
+      await fresh.close();
+    }
+  });
+
+  it('a backend that was never reachable is retried after a minute, not on every hit', async () => {
+    const fresh = await buildApp({ logger: false, backendUrl: backend.url });
+    backend.state.specFails = true;
+    try {
+      const before = specHits();
+      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-backend-spec']).toBe('unavailable');
+      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-backend-spec']).toBe('unavailable');
+      expect(specHits() - before).toBe(1);
+    } finally {
+      backend.state.specFails = false;
+      await fresh.close();
+    }
   });
 
   it('caches the backend spec for 10 minutes', async () => {

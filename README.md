@@ -9,7 +9,7 @@ OpenAPI reference. Webhooks come later. The product name is a placeholder.
 
 ## Quick start
 
-Requires Node 22+, pnpm 10 and Docker.
+Requires Node 22.12+, pnpm 10 and Docker.
 
 ```sh
 docker compose up -d                 # Postgres 17 on :5434 (+ gateway_test database)

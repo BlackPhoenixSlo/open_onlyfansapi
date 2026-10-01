@@ -32,6 +32,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: migrations in sync with the schema
+        run: pnpm db:generate && test -z "$(git status --porcelain apps/api/drizzle)"
       - run: pnpm -r typecheck
       - run: pnpm -r test
       - run: sh scripts/check-secrets.sh --all

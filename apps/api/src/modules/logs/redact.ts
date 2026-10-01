@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
 /** JSON keys and query parameters whose values are never stored. */
-export const SENSITIVE_KEY = /pass(word)?|secret|token|cookie|auth|otp|session|code$/i;
+export const SENSITIVE_KEY = /pass(word)?|secret|token|cookie|auth|otp|session|code$|(api|access|private)[-_]?key|credential/i;
 export const MASK = '[redacted]';
 
 /** Never stored, even if added to the allow-list below. */

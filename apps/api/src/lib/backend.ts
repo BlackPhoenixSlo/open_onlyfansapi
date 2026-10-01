@@ -5,9 +5,11 @@ import { teamBackend } from '../db/schema.js';
 import { AppError } from './errors.js';
 
 const TOKEN_TTL_MS = 5 * 60_000;
-const TOKEN_CACHE_MS = 4 * 60_000;
+// Reused while at least 3 min of validity remain, so a backend clock up to 3 min ahead still accepts it.
+const TOKEN_CACHE_MS = 2 * 60_000;
 
 export type Backend = ReturnType<typeof createBackend>;
+export type BackendResponse = { status: number; ok: boolean; headers: Headers; body: Buffer };
 
 /**
  * Client for the backend. Each call carries a short-lived HS256 JWT `{ sub, iat, exp }` minted for the
@@ -27,21 +29,25 @@ export function createBackend(opts: { url: string; jwtSecret: string; timeoutMs:
     return fresh;
   }
 
-  /** Calls the backend as `backendUserId`. Network failure → 502, timeout → 504. */
+  /**
+   * Calls the backend as `backendUserId` and buffers the response body, so the timeout covers the whole exchange.
+   * Network failure → 502, timeout (headers or body) → 504.
+   */
   async function request(
     backendUserId: number,
     url: URL,
     init: { method?: string; headers?: Record<string, string>; body?: string } = {},
-  ): Promise<Response> {
+  ): Promise<BackendResponse> {
     if (url.origin !== origin) throw new AppError(400, 'invalid_path', 'Path escapes the backend');
     try {
-      return await fetch(url, {
+      const res = await fetch(url, {
         method: init.method ?? 'GET',
         headers: { ...init.headers, authorization: `Bearer ${token(backendUserId)}` },
         body: init.body,
         redirect: 'manual',
         signal: AbortSignal.timeout(opts.timeoutMs),
       });
+      return { status: res.status, ok: res.ok, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) };
     } catch (err) {
       if (err instanceof Error && err.name === 'TimeoutError') {
         throw new AppError(504, 'upstream_timeout', 'The backend did not respond in time');

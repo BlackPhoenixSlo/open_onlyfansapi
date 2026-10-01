@@ -83,6 +83,27 @@ export function fillPath(template: string, values: Record<string, string>): stri
   return template.replace(PARAM, (whole, name: string) => (values[name] ? encodeURIComponent(values[name]) : whole));
 }
 
+/**
+ * Why the playground must not send `url` (a path plus optional query), or null. The browser resolves `.`, `..`
+ * and `%2e` segments before sending, so `/v1/%2e%2e/api/keys/x` would reach `/api/keys/x` with the session cookie
+ * and pass the CSRF check. Only same-origin `/v1/` URLs without dot segments are sent.
+ */
+export function urlProblem(url: string, origin: string): string | null {
+  const path = url.split('?')[0]!;
+  if (!path.startsWith('/v1/')) return 'The path must start with /v1/.';
+  let sent: URL;
+  try {
+    sent = new URL(url, origin);
+  } catch {
+    return 'The path is not a valid URL.';
+  }
+  const dotSegment = path.split(/[/\\]/).some((s) => /^(\.|%2e){1,2}$/i.test(s));
+  if (dotSegment || sent.origin !== origin || !sent.pathname.startsWith('/v1/')) {
+    return 'The path cannot contain . or .. segments.';
+  }
+  return null;
+}
+
 /** Segment-wise match of a raw path against a template; `literals` counts the non-placeholder segments. */
 function matchTemplate(template: string, raw: string): { params: Record<string, string>; literals: number } | null {
   const t = template.split('/');

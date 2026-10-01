@@ -200,11 +200,13 @@ function KeyFormDialog({
       }
       return (await api<CreatedKey>('/api/keys', { method: 'POST', body })).secret;
     },
-    onSuccess: async (secret) => {
-      await queryClient.invalidateQueries({ queryKey: keysQuery.queryKey });
+    // The secret is shown once: show it before the list refetch, and don't keep it in the mutation cache afterwards.
+    gcTime: 0,
+    onSuccess: (secret) => {
       onClose();
       if (secret) onCreated(secret);
       else toast.success('Key updated');
+      void queryClient.invalidateQueries({ queryKey: keysQuery.queryKey });
     },
     onError: (e) => toast.error(e.message),
   });

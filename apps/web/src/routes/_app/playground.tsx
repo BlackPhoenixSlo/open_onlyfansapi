@@ -6,7 +6,7 @@ import { OperationPicker } from '@/features/playground/OperationPicker';
 import { type Draft, RequestForm } from '@/features/playground/RequestForm';
 import { type Result, ResponsePanel } from '@/features/playground/ResponsePanel';
 import { curlSnippet } from '@/features/playground/snippet';
-import { type Op, fillPath, matchPath, pathParams, specQuery } from '@/features/playground/spec';
+import { type Op, fillPath, matchPath, pathParams, specQuery, urlProblem } from '@/features/playground/spec';
 import { accountsQuery, logQuery } from '@/lib/api';
 
 // State is in memory; only a log id goes in the URL (never request bodies).
@@ -78,6 +78,8 @@ function Page({ children }: { children: ReactNode }) {
 
 async function sendRequest(method: string, url: string, body: string | undefined): Promise<Result> {
   // The dashboard session authenticates the call (no API key in the browser); it is logged as "Dashboard".
+  const problem = urlProblem(url, window.location.origin);
+  if (problem) throw new Error(problem);
   const headers: Record<string, string> = { 'x-dashboard': '1', accept: 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   const started = performance.now();
@@ -113,13 +115,10 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
   const url = query ? `${path}?${query}` : path;
   const body = draft.method !== 'GET' && draft.body.trim() ? draft.body : undefined;
   const missing = pathParams(draft.path).filter((n) => !(n === 'account' ? accountId : draft.params[n]));
-  const problem = !draft.path.startsWith('/v1/')
-    ? 'The path must start with /v1/.'
-    : missing.length > 0
+  const problem =
+    missing.length > 0
       ? `Fill in: ${missing.join(', ')}.`
-      : body !== undefined
-        ? jsonProblem(body)
-        : null;
+      : (urlProblem(url, window.location.origin) ?? (body !== undefined ? jsonProblem(body) : null));
 
   const send = useMutation({
     mutationFn: () => sendRequest(draft.method, url, body),

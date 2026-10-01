@@ -4,7 +4,7 @@ This guide runs the gateway on your machine, links it to the backend and makes a
 
 ## Prerequisites
 
-- Node 22 or newer
+- Node 22.12 or newer
 - pnpm 10
 - Docker (for Postgres)
 - A running backend that the gateway can reach, and its JWT signing secret
@@ -120,4 +120,5 @@ NODE_ENV=production pnpm --filter @gateway/api start
 
 `pnpm build` builds both apps. With `NODE_ENV=production` the API also serves the dashboard from
 `apps/web/dist`, so the API and dashboard share one origin. Set `APP_URL` and `BETTER_AUTH_URL` to that
-public URL, and `TRUST_PROXY=true` if a reverse proxy sits in front.
+public URL, and `TRUST_PROXY=1` if one reverse proxy sits in front (a hop count or the proxies' IPs/CIDRs;
+`true` would trust a client-sent `X-Forwarded-For`).

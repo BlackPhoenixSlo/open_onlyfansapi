@@ -3,13 +3,15 @@
 # Patterns: reference-product keys (ofapi_), generic bearer/sk/ghp tokens, private keys.
 set -eu
 PATTERN='ofapi_[A-Za-z0-9]+|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'
+# NUL-separated names (paths may contain spaces). Matches are judged by output, not by the exit status
+# (xargs folds "no match in one batch" and "match in another" into the same non-zero status).
 if [ "${1:-}" = "--all" ]; then
-  FILES=$(git ls-files)
+  MATCHES=$(git ls-files -z | xargs -0 grep -nIE "$PATTERN" -- || true)
 else
-  FILES=$(git diff --cached --name-only --diff-filter=ACM)
+  MATCHES=$(git diff --cached --name-only -z --diff-filter=ACM | xargs -0 grep -nIE "$PATTERN" -- || true)
 fi
-[ -z "$FILES" ] && exit 0
-if echo "$FILES" | xargs grep -nE "$PATTERN" -- 2>/dev/null; then
+if [ -n "$MATCHES" ]; then
+  echo "$MATCHES"
   echo "secrets check: token-like strings found above; refusing." >&2
   exit 1
 fi

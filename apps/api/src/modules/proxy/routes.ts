@@ -4,7 +4,15 @@ import { AppError } from '../../lib/errors.js';
 import { assertWriteScope } from '../../plugins/actor.js';
 
 const ENCODED_SEPARATOR = /%2f|%5c|\\/i;
+const MAX_ACCOUNT_ID = 2_147_483_647;
 const FORWARDED_RESPONSE_HEADERS = new Set(['content-type', 'x-of-cache', 'retry-after']);
+
+/** The `{account}` path segment as an id, or null. Account ids are int4 (backend and `request_log.account_id`). */
+export function parseAccountId(segment: string): number | null {
+  if (!/^\d{1,10}$/.test(segment)) return null;
+  const id = Number(segment);
+  return id <= MAX_ACCOUNT_ID ? id : null;
+}
 
 const invalidPath = () => new AppError(400, 'invalid_path', 'The path contains a disallowed segment');
 
@@ -17,7 +25,8 @@ export function resolveUpstream(rawUrl: string, backendOrigin: string): { accoun
   const path = q === -1 ? rawUrl : rawUrl.slice(0, q);
   const query = q === -1 ? '' : rawUrl.slice(q);
   const m = /^\/v1\/([^/]+)(\/.*)?$/.exec(path);
-  if (!m || !/^\d+$/.test(m[1]!)) throw new AppError(404, 'not_found', 'Unknown account or route');
+  const accountId = m ? parseAccountId(m[1]!) : null;
+  if (!m || accountId === null) throw new AppError(404, 'not_found', 'Unknown account or route');
   const rest = m[2] ?? '/';
   if (ENCODED_SEPARATOR.test(rest)) throw invalidPath();
   for (const segment of rest.split('/')) {
@@ -31,7 +40,7 @@ export function resolveUpstream(rawUrl: string, backendOrigin: string): { accoun
   }
   const url = new URL(`/of${rest}${query}`, backendOrigin);
   if (url.origin !== backendOrigin || !url.pathname.startsWith('/of/')) throw invalidPath();
-  return { accountId: Number(m[1]), url };
+  return { accountId, url };
 }
 
 /** `ALL /v1/:account/*` → backend `/of/*`, as the workspace's linked owner, scoped by `x-of-proxy-account-id`. */
@@ -67,6 +76,6 @@ export default async function proxyRoutes(app: FastifyInstance) {
     res.headers.forEach((value, key) => {
       if (FORWARDED_RESPONSE_HEADERS.has(key) || key.startsWith('x-ratelimit-')) reply.header(key, value);
     });
-    return reply.send(Buffer.from(await res.arrayBuffer()));
+    return reply.send(res.body);
   });
 }

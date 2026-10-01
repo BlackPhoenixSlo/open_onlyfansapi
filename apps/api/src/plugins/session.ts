@@ -2,7 +2,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { auth } from '../auth.js';
+import { auth, CLIENT_IP_HEADER } from '../auth.js';
 import { db } from '../db/index.js';
 import { member } from '../db/schema.js';
 import { env } from '../env.js';
@@ -46,12 +46,12 @@ export default fp(async (app: FastifyInstance) => {
       url: '/api/auth/*',
       async handler(request, reply) {
         const body = typeof request.body === 'string' && request.body.length > 0 ? request.body : undefined;
+        // better-auth keys its sign-in rate limit and session IP on CLIENT_IP_HEADER, not on a client-supplied
+        // X-Forwarded-For: always overwrite it with Fastify's request.ip (which honours TRUST_PROXY).
+        const headers = fromNodeHeaders(request.headers);
+        headers.set(CLIENT_IP_HEADER, request.ip);
         const response = await auth.handler(
-          new Request(new URL(request.url, env.BETTER_AUTH_URL), {
-            method: request.method,
-            headers: fromNodeHeaders(request.headers),
-            body,
-          }),
+          new Request(new URL(request.url, env.BETTER_AUTH_URL), { method: request.method, headers, body }),
         );
         reply.status(response.status);
         response.headers.forEach((value, key) => {

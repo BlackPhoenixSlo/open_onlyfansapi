@@ -166,6 +166,31 @@ describe('proxy', () => {
     }
   });
 
+  it('a body that stalls past the timeout is 504 upstream_timeout, not 500', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/12/slow-body', headers: bearer(writeKey) });
+    expect(res.statusCode).toBe(504);
+    expect(res.json().error.code).toBe('upstream_timeout');
+  });
+
+  it('an account id outside the int4 range is 404 and still logged', async () => {
+    const before = backend.requests.length;
+    const res = await app.inject({ method: 'GET', url: '/v1/99999999999/users/me', headers: bearer(writeKey) });
+    expect(res.statusCode).toBe(404);
+    expect(backend.requests.length).toBe(before);
+    await waitForLogs([String(res.headers['x-request-id'])]);
+  });
+
+  it('rate-limits per key: 429 with Retry-After for one key, other keys unaffected', async () => {
+    const { secret } = await createKey(app, cookie, { scope: 'read' });
+    const max = Number(process.env.KEY_RATE_LIMIT_PER_MIN ?? 120);
+    for (let i = 0; i < max; i++) await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(secret) });
+    const limited = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(secret) });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error.code).toBe('rate_limited');
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(readKey) })).statusCode).toBe(200);
+  });
+
   it('upstream down is 502 upstream_unavailable', async () => {
     const port = await new Promise<number>((resolve) => {
       const s = createServer().listen(0, '127.0.0.1', () => {

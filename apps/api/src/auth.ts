@@ -7,6 +7,9 @@ import * as schema from './db/schema.js';
 import { appOrigin, env } from './env.js';
 import { randomBase62 } from './lib/ids.js';
 
+/** Header the Fastify bridge sets to the resolved client IP; client-sent values are dropped. */
+export const CLIENT_IP_HEADER = 'x-gateway-client-ip';
+
 /** One workspace (better-auth "organization") per user, created right after sign-up. */
 async function createPersonalWorkspace(user: { id: string; name: string; email: string }) {
   const base = (user.name || user.email.split('@')[0] || 'workspace').trim();
@@ -30,9 +33,13 @@ export const auth = betterAuth({
   trustedOrigins: [appOrigin],
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: { enabled: true },
-  // better-auth skips its Origin check under NODE_ENV=test by default; keep it on everywhere so tests cover it.
-  advanced: { disableOriginCheck: false },
-  plugins: [organization({ allowUserToCreateOrganization: false })],
+  advanced: {
+    // better-auth skips its Origin check under NODE_ENV=test by default; keep it on everywhere so tests cover it.
+    disableOriginCheck: false,
+    // Set by the Fastify bridge from request.ip (plugins/session.ts).
+    ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
+  },
+  plugins: [organization({ allowUserToCreateOrganization: false, disableOrganizationDeletion: true })],
   databaseHooks: {
     user: { create: { after: createPersonalWorkspace } },
     session: {

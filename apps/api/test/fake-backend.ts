@@ -21,9 +21,22 @@ export const BACKEND_SPEC = {
   openapi: '3.0.3',
   info: { title: 'Backend API', version: '1.0.0' },
   servers: [{ url: 'http://localhost:3001' }],
-  components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } }, schemas: {} },
+  components: {
+    securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
+    schemas: {
+      User: { type: 'object', properties: { avatar: { $ref: '#/components/schemas/Media' } } },
+      Media: { type: 'object', properties: { url: { type: 'string' } } },
+      OfAccountRow: { type: 'object', properties: { egressPort: { type: 'integer' } } },
+    },
+  },
   paths: {
-    '/of/users/me': { get: of('users.me') },
+    '/of/users/me': {
+      get: of('users.me', {
+        responses: { 200: { description: 'Me', content: { 'application/json': { schema: { $ref: '#/components/schemas/User' } } } } },
+      }),
+    },
+    // An internal operation under /of/ that the backend does not tag as public.
+    '/of/internal/egress': { get: { tags: ['internal'], operationId: 'internal.egress', responses: ok } },
     '/of/users/{userId}/posts': {
       get: of('users.posts.list', {
         parameters: [pathParam('userId'), queryParam('limit', { type: 'integer', default: 10 }), queryParam('order', { type: 'string', enum: ['asc', 'desc'] })],
@@ -49,7 +62,13 @@ export const BACKEND_SPEC = {
         },
       }),
     },
-    '/of-accounts': { get: { tags: ['of-accounts'], operationId: 'ofAccounts.list', responses: ok } },
+    '/of-accounts': {
+      get: {
+        tags: ['of-accounts'],
+        operationId: 'ofAccounts.list',
+        responses: { 200: { description: 'Rows', content: { 'application/json': { schema: { $ref: '#/components/schemas/OfAccountRow' } } } } },
+      },
+    },
   },
 };
 
@@ -60,7 +79,9 @@ export const BACKEND_SPEC = {
 export async function startFakeBackend(jwtSecret: string, accountsByUser: Record<number, FakeAccount[]> = {}) {
   const verify = createVerifier({ key: jwtSecret, algorithms: ['HS256'] });
   const requests: Recorded[] = [];
-  const app = Fastify();
+  /** Test switch: make `/docs/json` answer 500. */
+  const state = { specFails: false };
+  const app = Fastify({ forceCloseConnections: true });
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
@@ -86,7 +107,7 @@ export async function startFakeBackend(jwtSecret: string, accountsByUser: Record
     requests.at(-1)!.body = typeof request.body === 'string' ? request.body : null;
   });
 
-  app.get('/docs/json', async () => BACKEND_SPEC);
+  app.get('/docs/json', async (_request, reply) => (state.specFails ? reply.status(500).send({ error: 'boom' }) : BACKEND_SPEC));
   app.get('/of-accounts', async (request) => {
     const sub = requests.at(-1)!.jwt.sub as number;
     return accountsByUser[sub] ?? [];
@@ -94,9 +115,17 @@ export async function startFakeBackend(jwtSecret: string, accountsByUser: Record
   app.all('/of/*', async (request, reply) => {
     reply.header('x-of-cache', 'MISS').header('x-ratelimit-limit', '300').header('x-ratelimit-remaining', '299');
     if (request.url.startsWith('/of/rate-limited')) return reply.status(429).header('retry-after', '42').send({ error: 'RATE_LIMITED' });
+    // Headers, then a body that stalls past the gateway's timeout (BACKEND_TIMEOUT_MS=2000 in tests).
+    if (request.url.startsWith('/of/slow-body')) {
+      reply.hijack();
+      reply.raw.writeHead(200, { 'content-type': 'application/json' });
+      reply.raw.write('{"partial":');
+      setTimeout(() => reply.raw.end('true}'), 2500).unref();
+      return reply;
+    }
     return { echo: true, method: request.method, url: request.url };
   });
 
   const address = await app.listen({ port: 0, host: '127.0.0.1' });
-  return { url: address, requests, close: () => app.close() };
+  return { url: address, requests, state, close: () => app.close() };
 }
