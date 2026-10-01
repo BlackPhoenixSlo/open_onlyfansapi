@@ -1,13 +1,13 @@
 # Getting started
 
-This guide runs the gateway on your machine, links it to the backend and makes a first API call.
+This guide runs the gateway on your machine, links a workspace to the upstream and makes a first API call.
 
 ## Prerequisites
 
 - Node 22.12 or newer
 - pnpm 10
 - Docker (for Postgres)
-- A running backend that the gateway can reach, and its JWT signing secret
+- An upstream service the gateway can reach, and its bearer token (or the fake upstream from step 3)
 
 ## 1. Start the database
 
@@ -29,8 +29,8 @@ Set these values in `.env`:
 | Variable | What to put there |
 |---|---|
 | `BETTER_AUTH_SECRET` | A random secret of at least 16 characters. `openssl rand -base64 32` works. |
-| `BACKEND_URL` | Where the backend listens. Defaults to `http://localhost:3001`. |
-| `BACKEND_JWT_SECRET` | The secret the backend uses to verify its JWTs. The gateway signs short-lived tokens with it. |
+| `UPSTREAM_URL` | The upstream service's origin. Defaults to `http://localhost:3001`. |
+| `UPSTREAM_TOKEN` | The bearer token the gateway sends on every upstream call (at least 16 characters). Use `dev-upstream-token` with the fake upstream. |
 
 `.env.example` already fills in the rest for local use. `APP_URL` is the dashboard origin
 (`http://localhost:5173`) and `BETTER_AUTH_URL` is where the API serves sign-in (`http://localhost:4000`).
@@ -48,19 +48,29 @@ pnpm dev
 The API listens on `http://localhost:4000` and the dashboard on `http://localhost:5173`. In development the
 dashboard forwards `/api` and `/v1` to the API.
 
+Without a real upstream, run the fake one the tests use in a second terminal:
+
+```sh
+UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts
+```
+
+It listens on `0.0.0.0:3001` (`FAKE_UPSTREAM_PORT` to change that), requires
+`authorization: Bearer dev-upstream-token` and serves one account with id `1`.
+
 ## 4. Sign up and link your workspace
 
 Open http://localhost:5173 and register. A workspace is created for you.
 
-The workspace must be linked to the backend user whose accounts it should use. Until then, calls that reach
-the backend fail with `409 team_not_linked`. Find your workspace slug on the **Settings** page, then run:
+The workspace must be linked before it may reach the upstream; the link is the operator's approval step.
+Until then, calls that would reach the upstream fail with `409 team_not_linked`. Find your workspace slug on
+the **Settings** page, then run:
 
 ```sh
-pnpm --filter @gateway/api link-team <workspace-slug> <backendUserId>
+pnpm --filter @gateway/api link-team <workspace-slug>
 ```
 
-`<backendUserId>` is that user's numeric id on the backend. Running the command again replaces the link.
-Accounts themselves are connected on the backend side, not in the gateway.
+Running the command again is harmless. Accounts themselves are connected in the upstream service, not in the
+gateway.
 
 ## 5. Create an API key
 
@@ -79,14 +89,14 @@ curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/accounts
 ```
 
 `/v1/whoami` shows the workspace and key. `/v1/accounts` lists the accounts the key can use. Take an `id`
-from that list (the **Accounts** page shows the same list) and call the backend through the gateway:
+from that list (the **Accounts** page shows the same list) and call the upstream through the gateway:
 
 ```sh
 export ACCOUNT_ID=123
 curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/users/me
 ```
 
-Anything under `/v1/{account}/` is forwarded to the backend's account API for that account. The backend's
+Anything under `/v1/{account}/` is forwarded to the upstream's account API for that account. The upstream's
 response, including errors, comes back unchanged.
 
 ## 7. Explore the API
@@ -95,9 +105,9 @@ response, including errors, comes back unchanged.
   account, edit path parameters, query rows and a JSON body, then press Send. You see the status, latency,
   headers and JSON response, and a curl snippet that uses `$API_KEY`. Requests use your dashboard session,
   so no key is needed in the browser; they are logged with the key "Dashboard".
-- **`GET /openapi.json`**: the OpenAPI spec. It holds the gateway's own `/v1` routes plus the backend's
-  account operations, mapped to `/v1/{account}/...` under the `platform` tag. If the backend's spec can't be
-  fetched, you get the gateway routes only and the response header `x-backend-spec: unavailable`. The spec
+- **`GET /openapi.json`**: the OpenAPI spec. It holds the gateway's own `/v1` routes plus the upstream's
+  account operations, mapped to `/v1/{account}/...` under the `platform` tag. If the upstream's spec can't be
+  fetched, you get the gateway routes only and the response header `x-upstream-spec: unavailable`. The spec
   is cached for 10 minutes.
 - **`GET /docs`**: an interactive API reference built from `/openapi.json`. Both are public.
 
