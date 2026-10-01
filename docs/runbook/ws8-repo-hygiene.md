@@ -44,3 +44,21 @@ git -c user.name=jakabasej -c user.email=jakabasej3@gmail.com commit -m "chore: 
 ```
 
 Report: the script's output on the current tree, and the commit hash.
+
+## Result
+
+Added `CONTRIBUTING.md`, `SECURITY.md` and `scripts/prepublish-check.sh` (executable, POSIX sh, ~0.1 s;
+uses `git grep`, `git ls-files`, `grep` and `sh` only). The script builds the brand pattern by string
+concatenation so it is not itself a match for check 2.
+
+Run on this tree it exits 1 with two failures:
+
+1. **check 5** — `docs/spec/pages.md`, `endpoints.md` and `mapping.md` are still tracked, with the
+   `git rm --cached` hint printed (not run).
+2. **check 2** — the brand also appears in `docs/runbook/*.md` (worktree paths in the launch commands and
+   the quoted check-2 wording in this file). The acceptance note expected only (1); check 2 was implemented
+   as written (exclusions limited to `docs/spec/`, `.gitignore`, `scripts/check-secrets.sh`), and these hits
+   are real: the runbook is tracked and would be public. Decide at publish time whether to scrub the
+   runbook paths, untrack `docs/runbook/`, or extend the exclusion list — WS8 does not own those files.
+
+Nothing outside the four owned files was touched.
