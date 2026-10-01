@@ -15,10 +15,11 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
 import { Route as AppKeysRouteImport } from './routes/_app/keys'
-import { Route as AppLogsRouteImport } from './routes/_app/logs'
 import { Route as AppPlaygroundRouteImport } from './routes/_app/playground'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
+import { Route as AppLogsIndexRouteImport } from './routes/_app/logs.index'
+import { Route as AppLogsIdRouteImport } from './routes/_app/logs.$id'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -49,11 +50,6 @@ const AppKeysRoute = AppKeysRouteImport.update({
   path: '/keys',
   getParentRoute: () => AppRoute,
 } as any)
-const AppLogsRoute = AppLogsRouteImport.update({
-  id: '/logs',
-  path: '/logs',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
@@ -69,6 +65,16 @@ const AppUsageRoute = AppUsageRouteImport.update({
   path: '/usage',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLogsIndexRoute = AppLogsIndexRouteImport.update({
+  id: '/logs/',
+  path: '/logs/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLogsIdRoute = AppLogsIdRouteImport.update({
+  id: '/logs/$id',
+  path: '/logs/$id',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -76,21 +82,23 @@ export interface FileRoutesByFullPath {
   '/register': typeof RegisterRoute
   '/accounts': typeof AppAccountsRoute
   '/keys': typeof AppKeysRoute
-  '/logs': typeof AppLogsRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
   '/usage': typeof AppUsageRoute
+  '/logs/$id': typeof AppLogsIdRoute
+  '/logs/': typeof AppLogsIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/accounts': typeof AppAccountsRoute
   '/keys': typeof AppKeysRoute
-  '/logs': typeof AppLogsRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
+  '/logs/$id': typeof AppLogsIdRoute
+  '/logs': typeof AppLogsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -99,11 +107,12 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/_app/accounts': typeof AppAccountsRoute
   '/_app/keys': typeof AppKeysRoute
-  '/_app/logs': typeof AppLogsRoute
   '/_app/playground': typeof AppPlaygroundRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/usage': typeof AppUsageRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/logs/$id': typeof AppLogsIdRoute
+  '/_app/logs/': typeof AppLogsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -113,21 +122,23 @@ export interface FileRouteTypes {
     | '/register'
     | '/accounts'
     | '/keys'
-    | '/logs'
     | '/playground'
     | '/settings'
     | '/usage'
+    | '/logs/$id'
+    | '/logs/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
     | '/register'
     | '/accounts'
     | '/keys'
-    | '/logs'
     | '/playground'
     | '/settings'
     | '/usage'
     | '/'
+    | '/logs/$id'
+    | '/logs'
   id:
     | '__root__'
     | '/_app'
@@ -135,11 +146,12 @@ export interface FileRouteTypes {
     | '/register'
     | '/_app/accounts'
     | '/_app/keys'
-    | '/_app/logs'
     | '/_app/playground'
     | '/_app/settings'
     | '/_app/usage'
     | '/_app/'
+    | '/_app/logs/$id'
+    | '/_app/logs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -192,13 +204,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKeysRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/logs': {
-      id: '/_app/logs'
-      path: '/logs'
-      fullPath: '/logs'
-      preLoaderRoute: typeof AppLogsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/playground': {
       id: '/_app/playground'
       path: '/playground'
@@ -220,27 +225,43 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppUsageRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/logs/': {
+      id: '/_app/logs/'
+      path: '/logs'
+      fullPath: '/logs/'
+      preLoaderRoute: typeof AppLogsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/logs/$id': {
+      id: '/_app/logs/$id'
+      path: '/logs/$id'
+      fullPath: '/logs/$id'
+      preLoaderRoute: typeof AppLogsIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
   AppKeysRoute: typeof AppKeysRoute
-  AppLogsRoute: typeof AppLogsRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppLogsIdRoute: typeof AppLogsIdRoute
+  AppLogsIndexRoute: typeof AppLogsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
   AppKeysRoute: AppKeysRoute,
-  AppLogsRoute: AppLogsRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
+  AppLogsIdRoute: AppLogsIdRoute,
+  AppLogsIndexRoute: AppLogsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
