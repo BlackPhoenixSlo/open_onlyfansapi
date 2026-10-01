@@ -10,6 +10,10 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @gateway/api db:generate",
-    "db:migrate": "pnpm --filter @gateway/api db:migrate"
+    "db:migrate": "pnpm --filter @gateway/api db:migrate",
+    "media": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }
