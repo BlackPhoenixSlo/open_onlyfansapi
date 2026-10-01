@@ -10,7 +10,8 @@ RUN corepack enable pnpm && corepack install
 
 # --- dependencies: manifests only, so the install layer caches ---
 FROM base AS deps
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+# .pnpmfile.cjs must sit next to the lockfile: the frozen install checks its checksum.
+COPY pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.cjs ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 RUN pnpm install --frozen-lockfile
@@ -23,8 +24,10 @@ RUN pnpm build
 
 # --- production dependencies for @gateway/api only ---
 # pnpm 10 needs --legacy here because inject-workspace-packages is not set.
+# The second command fails the build if dev tooling leaks in (see .pnpmfile.cjs).
 FROM build AS prod-deps
-RUN pnpm --filter @gateway/api deploy --prod --legacy /prod
+RUN pnpm --filter @gateway/api deploy --prod --legacy /prod \
+ && ! ls /prod/node_modules/.pnpm | grep -qE '^(vitest|vite|tsx|drizzle-kit|esbuild|typescript)@'
 
 # --- runtime ---
 FROM node:22-alpine AS runtime
