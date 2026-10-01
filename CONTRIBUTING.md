@@ -7,7 +7,7 @@ requests are welcome.
 
 Follow [docs/getting-started.md](docs/getting-started.md) — it covers the prerequisites, the Postgres
 container, `.env`, migrations and the first API call. The short version is in the
-[README](README.md#quick-start). Don't duplicate setup steps in a PR description; link to that guide.
+[README](README.md#develop-locally). Don't duplicate setup steps in a PR description; link to that guide.
 
 ## Checks
 

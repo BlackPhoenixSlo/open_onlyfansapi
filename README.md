@@ -7,12 +7,13 @@ OpenAPI reference. Webhooks come later. The product name is a placeholder.
 > **Not affiliated.** This project is unofficial and is not affiliated with, endorsed by or connected to any
 > content platform or its operators. Users are responsible for complying with the terms of the platforms they use.
 
-## Quick start
+## Develop locally
 
-Requires Node 22.12+, pnpm 10 and Docker.
+Requires Node 22.12+, pnpm 10 and Docker. This setup is for development; to run the gateway on a server, follow
+[deploy/hostinger.md](deploy/hostinger.md).
 
 ```sh
-docker compose up -d                 # Postgres 17 on :5434 (+ gateway_test database)
+docker compose up -d                 # Postgres 17 on 127.0.0.1:5434 (+ gateway_test database)
 cp .env.example .env                 # set BETTER_AUTH_SECRET, UPSTREAM_URL and UPSTREAM_TOKEN
 pnpm install
 pnpm db:migrate
