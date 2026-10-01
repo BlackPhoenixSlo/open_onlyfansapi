@@ -1,0 +1,95 @@
+# Production stack: cd deploy && cp .env.example .env && <edit .env> && docker compose up -d
+# Only caddy publishes host ports (or nothing at all in tunnel mode); gateway and postgres stay internal.
+# Secrets are listed per service on purpose (no env_file), so POSTGRES_PASSWORD and TUNNEL_TOKEN
+# only reach the services that need them.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: gateway:local
+    expose: ["4000"]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "4000"
+      # One proxy hop in front (caddy, or cloudflared in tunnel mode).
+      TRUST_PROXY: "1"
+      DATABASE_URL: postgres://gateway:${POSTGRES_PASSWORD:?}@postgres:5432/gateway
+      # The dashboard and the API share one origin.
+      APP_URL: ${PUBLIC_URL:?}
+      BETTER_AUTH_URL: ${PUBLIC_URL:?}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?}
+      UPSTREAM_URL: ${UPSTREAM_URL:?}
+      UPSTREAM_TOKEN: ${UPSTREAM_TOKEN:?}
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-30000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_DB: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    logging: *logging
+
+  # COMPOSE_PROFILES=caddy (default): TLS on one domain, the only published ports.
+  caddy:
+    image: caddy:2-alpine
+    profiles: [caddy]
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  # COMPOSE_PROFILES=tunnel: Cloudflare terminates TLS; no host port is published.
+  # Point the tunnel's public hostname at http://gateway:4000.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: [tunnel]
+    command: tunnel --no-autoupdate run
+    # Not ${TUNNEL_TOKEN:?}: compose interpolates every service, including ones outside the
+    # active profile, so a required marker here would break plain `caddy` deployments.
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
