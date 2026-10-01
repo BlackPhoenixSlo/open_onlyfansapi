@@ -50,3 +50,14 @@ export async function linkTeam(teamId: string, backendUserId: number) {
 }
 
 export const bearer = (secret: string) => ({ authorization: `Bearer ${secret}` });
+
+/** Request-log rows are inserted off the response path; waits until all `ids` are stored. */
+export async function waitForLogs(ids: string[], timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await pool.query<{ n: number }>('SELECT count(*)::int AS n FROM request_log WHERE id = ANY($1)', [ids]);
+    if (rows[0]!.n === ids.length) return;
+    if (Date.now() > deadline) throw new Error(`request logs not written: ${ids.join(', ')}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

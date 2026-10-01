@@ -3,12 +3,16 @@ import swagger from '@fastify/swagger';
 import Fastify from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { env } from './env.js';
+import { registerJobs } from './jobs/index.js';
 import { createBackend, type Backend } from './lib/backend.js';
 import { AppError, errorHandler, notFoundHandler } from './lib/errors.js';
 import { newId } from './lib/ids.js';
 import accountsRoutes from './modules/accounts/routes.js';
 import keysRoutes from './modules/keys/routes.js';
+import { captureRequestLogs } from './modules/logs/capture.js';
+import logsRoutes from './modules/logs/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
+import usageRoutes from './modules/usage/routes.js';
 import whoamiRoutes from './modules/whoami/routes.js';
 import { authenticate } from './plugins/actor.js';
 import sessionPlugin from './plugins/session.js';
@@ -56,10 +60,13 @@ export async function buildApp(opts: AppOptions = {}) {
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   await app.register(keysRoutes, { prefix: '/api/keys' });
+  await app.register(logsRoutes, { prefix: '/api/logs' });
+  await app.register(usageRoutes, { prefix: '/api' });
 
   await app.register(
     async (v1) => {
       v1.addHook('onRequest', authenticate);
+      captureRequestLogs(v1);
       await v1.register(rateLimit, {
         hook: 'preHandler',
         max: env.KEY_RATE_LIMIT_PER_MIN,
@@ -77,5 +84,6 @@ export async function buildApp(opts: AppOptions = {}) {
     { prefix: '/v1' },
   );
 
+  if (env.RUN_JOBS) registerJobs(app);
   return app;
 }

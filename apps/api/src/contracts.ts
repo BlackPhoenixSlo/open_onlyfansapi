@@ -63,3 +63,74 @@ export const whoami = z.object({
 export type Whoami = z.infer<typeof whoami>;
 
 export type ErrorBody = { error: { code: string; message: string; requestId: string } };
+
+// Request logs
+export const logStatus = z.enum(['2xx', '4xx', '5xx', 'error']);
+export type LogStatus = z.infer<typeof logStatus>;
+
+export const logSummary = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  method: z.string(),
+  /** As called, without the query string, e.g. `/v1/12/users/me`. */
+  path: z.string(),
+  /** Normalised, e.g. `GET /users/:id` (proxy) or `GET /v1/whoami` (gateway route). */
+  endpoint: z.string(),
+  statusCode: z.number().int(),
+  durationMs: z.number().int(),
+  reqBytes: z.number().int(),
+  respBytes: z.number().int(),
+  /** Gateway-generated error code; null for successes and passed-through upstream errors. */
+  errorCode: z.string().nullable(),
+  /** null = dashboard session */
+  keyId: z.string().nullable(),
+  keyName: z.string().nullable(),
+  userId: z.string().nullable(),
+  accountId: z.number().int().nullable(),
+});
+export type LogSummary = z.infer<typeof logSummary>;
+export const logList = z.object({ items: z.array(logSummary), nextCursor: z.string().nullable() });
+export type LogList = z.infer<typeof logList>;
+
+export const logDetail = logSummary.extend({
+  /** Redacted query string without the leading `?`. */
+  query: z.string().nullable(),
+  ip: z.string(),
+  reqHeaders: z.record(z.string(), z.string()),
+  /** Redacted and truncated; stored only per LOG_BODIES (default: status >= 400). */
+  reqBody: z.string().nullable(),
+  respBody: z.string().nullable(),
+});
+export type LogDetail = z.infer<typeof logDetail>;
+
+// Usage and Home
+export const usageGroupBy = z.enum(['day', 'key', 'account', 'endpoint']);
+export type UsageGroupBy = z.infer<typeof usageGroupBy>;
+
+export const usage = z.object({
+  /** One entry per UTC day in the range, zero-filled. `day` is `YYYY-MM-DD`. */
+  series: z.array(z.object({ day: z.string(), requests: z.number().int(), errors: z.number().int() })),
+  /** `key`: day, key id, account id or endpoint ('' = dashboard / no account). `share` is 0..1 of all requests. */
+  rows: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      requests: z.number().int(),
+      errors: z.number().int(),
+      avgMs: z.number(),
+      bytes: z.number(),
+      share: z.number(),
+    }),
+  ),
+});
+export type Usage = z.infer<typeof usage>;
+
+export const overview = z.object({
+  requests24h: z.number().int(),
+  requests7d: z.number().int(),
+  /** 0..1 share of 24 h requests with status >= 400 */
+  errorRate24h: z.number(),
+  /** Non-revoked API keys */
+  activeKeys: z.number().int(),
+});
+export type Overview = z.infer<typeof overview>;

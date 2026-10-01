@@ -3,7 +3,6 @@ import { pool } from './db/index.js';
 import { env } from './env.js';
 
 const app = await buildApp();
-// RUN_JOBS gates the background jobs that arrive with later slices; there are none yet.
 
 const shutdown = async () => {
   await app.close();

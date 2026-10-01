@@ -17,6 +17,10 @@ const schema = z.object({
   BACKEND_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   KEY_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
   RUN_JOBS: bool.default(true),
+  /** Which request logs keep bodies: `errors` = status >= 400 only. */
+  LOG_BODIES: z.enum(['errors', 'all', 'none']).default('errors'),
+  LOG_BODY_MAX_BYTES: z.coerce.number().int().positive().default(16_384),
+  LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(14),
 });
 
 const parsed = schema.safeParse(process.env);
