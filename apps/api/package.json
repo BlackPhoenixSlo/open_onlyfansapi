@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx --env-file-if-exists=../../.env scripts/migrate.ts",
+    "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "auth:generate": "better-auth generate --config src/auth.ts --output src/db/auth-schema.ts -y",
     "link-team": "tsx --env-file-if-exists=../../.env src/db/link-team.ts"
   },

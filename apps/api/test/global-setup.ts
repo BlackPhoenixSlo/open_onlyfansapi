@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { runMigrations } from '../scripts/migrate.js';
+import { runMigrations } from '../src/db/migrate.js';
 
 /** Creates gateway_test if missing (initdb only runs on a fresh volume) and applies migrations. */
 export default async function setup() {

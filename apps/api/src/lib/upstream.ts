@@ -37,7 +37,6 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
     url: URL,
     init: { method?: string; headers?: Record<string, string>; body?: string } = {},
   ): Promise<UpstreamResponse> {
-    if (url.origin !== origin) throw new AppError(400, 'invalid_path', 'Path escapes the upstream');
     try {
       const res = await fetch(url, {
         method: init.method ?? 'GET',
@@ -58,9 +57,9 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
   return {
     listAccounts: (requestId) =>
       request(new URL('/of-accounts', origin), { headers: { accept: 'application/json', 'x-request-id': requestId } }),
-    forward: ({ accountId, path, method, headers, body }) => {
+    forward: async ({ accountId, path, method, headers, body }) => {
       const url = new URL(`/of${path}`, origin);
-      if (url.origin !== origin || !url.pathname.startsWith('/of/')) {
+      if (!url.pathname.startsWith('/of/')) {
         throw new AppError(400, 'invalid_path', 'The path contains a disallowed segment');
       }
       return request(url, { method, headers: { ...headers, 'x-of-proxy-account-id': String(accountId) }, body });

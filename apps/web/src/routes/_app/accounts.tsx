@@ -21,9 +21,13 @@ function Accounts() {
       ) : accounts.isError ? (
         accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked' ? (
           <Empty title="Workspace not linked">
-            {CONNECT_HINT} This workspace isn't linked to the upstream yet. A workspace admin links it with{' '}
-            <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>{' '}
-            (the slug is shown in Settings).
+            {CONNECT_HINT} This workspace isn't linked to the upstream yet. The operator links it with{' '}
+            <code className="rounded bg-muted px-1 py-0.5">
+              docker compose exec gateway node dist/db/link-team.js &lt;slug&gt;
+            </code>{' '}
+            (local dev:{' '}
+            <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>).
+            The slug is shown in Settings.
           </Empty>
         ) : (
           <p className="text-destructive">{accounts.error.message}</p>
