@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately to **security@example.com** *(replace this with your own address before publishing)*.
+Report privately to **contact@jackbase.dev** *(replace this with your own address before publishing)*.
 Please do not open a public issue, pull request or discussion for a security problem.
 
 Include what you can:

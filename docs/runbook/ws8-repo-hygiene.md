@@ -9,7 +9,7 @@ Add the files an open-source repo needs before its first public push, plus a pre
 ## Files you own
 
 - `CONTRIBUTING.md` (new): how to run the stack locally (link to `docs/getting-started.md`, do not duplicate it), test commands, the commit convention, and that PRs must pass `pnpm -r typecheck && pnpm -r test` and `scripts/check-secrets.sh --all`.
-- `SECURITY.md` (new): how to report a vulnerability privately (an email placeholder `security@example.com` the user replaces), what is in scope (gateway, dashboard, compose), and a short threat summary: the gateway holds one upstream token; API keys are stored hashed; cookie writes need Origin + header.
+- `SECURITY.md` (new): how to report a vulnerability privately (an email placeholder `contact@jackbase.dev` the user replaces), what is in scope (gateway, dashboard, compose), and a short threat summary: the gateway holds one upstream token; API keys are stored hashed; cookie writes need Origin + header.
 - `scripts/prepublish-check.sh` (new, POSIX sh, executable): exits non-zero if any of these are true, printing each failure:
   1. `scripts/check-secrets.sh --all` fails.
   2. A tracked file outside `docs/spec/`, `.gitignore` and `scripts/check-secrets.sh` contains the string `onlyfansapi` or `ofapi_` (case-insensitive).
