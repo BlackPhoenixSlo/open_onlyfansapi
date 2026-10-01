@@ -47,7 +47,7 @@ Each path has exactly one proxy hop in front of the gateway (Caddy, or cloudflar
 |---|---|---|---|---|---|
 | `caddy` (profile `caddy`) | `caddy:2-alpine` | **80, 443, 443/udp**: the only published ports | `./Caddyfile:/etc/caddy/Caddyfile:ro`, `caddy_data:/data`, `caddy_config:/config` | none (the smoke test curls through it) | `PUBLIC_URL` |
 | `gateway` | built from `../apps/api/Dockerfile` (context `..`) | none (`expose: 4000`) | none | the image's `HEALTHCHECK`: `GET http://127.0.0.1:4000/healthz` every 10 s | see §5 (`DATABASE_URL` is built from `POSTGRES_PASSWORD`) |
-| `postgres` | `postgres:17-alpine` | none | `pgdata:/var/lib/postgresql/data` | `pg_isready -U gateway` | `POSTGRES_USER=gateway`, `POSTGRES_DB=gateway`, `POSTGRES_PASSWORD` |
+| `postgres` | `postgres:17-alpine` | none | `pgdata:/var/lib/postgresql/data` | `pg_isready -U gateway -h 127.0.0.1` | `POSTGRES_USER=gateway`, `POSTGRES_DB=gateway`, `POSTGRES_PASSWORD` |
 | `cloudflared` (profile `tunnel`) | `cloudflare/cloudflared:<pinned tag>` (not `latest`) | none | none | none | `TUNNEL_TOKEN`; command `tunnel --no-autoupdate run` |
 
 - **Profiles.** `deploy/.env.example` sets `COMPOSE_PROFILES=caddy`. Tunnel users set `COMPOSE_PROFILES=tunnel`.
@@ -157,7 +157,7 @@ one seeded account `1`.
 - **Postgres.** Use a random password and a named volume. Postgres 17 only: a major upgrade needs a dump and restore.
 - **Backups.** `docker compose exec -T postgres pg_dump -U gateway -Fc gateway > gateway-$(date +%F).dump`, run
   daily from cron. Keep the dumps off the VPS. They hold key hashes, sessions and redacted logs, so store them
-  `chmod 600` and encrypted at rest. Restoring is `pg_restore --clean --if-exists`. Hostinger snapshots are a
+  `chmod 600` and encrypted at rest. Restoring is `dropdb`, `createdb`, then `pg_restore --exit-on-error`. Hostinger snapshots are a
   second layer, not a replacement.
 - **Container.** The container runs as non-root `node`. The runtime image has no dev dependencies, sources or tests.
   `.dockerignore` keeps out `.env*` (except examples), `.git`, `node_modules` and `dist`.
