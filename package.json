@@ -1,0 +1,15 @@
+{
+  "name": "gateway",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@10.33.2",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm --filter @gateway/web build && pnpm --filter @gateway/api build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @gateway/api db:generate",
+    "db:migrate": "pnpm --filter @gateway/api db:migrate"
+  }
+}

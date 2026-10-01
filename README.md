@@ -1,0 +1,42 @@
+# Gateway
+
+A self-hostable API gateway and dashboard in front of a creator-account backend: API keys with scopes and
+per-account allowlists, a raw proxy to the backend's account API, and (in later slices) request logs,
+usage, a playground and webhooks. The product name is a placeholder.
+
+> **Not affiliated.** This project is unofficial and is not affiliated with, endorsed by or connected to any
+> content platform or its operators. Users are responsible for complying with the terms of the platforms they use.
+
+## Quick start
+
+Requires Node 22+, pnpm 10 and Docker.
+
+```sh
+docker compose up -d                 # Postgres 17 on :5434 (+ gateway_test database)
+cp .env.example .env                 # set BETTER_AUTH_SECRET and BACKEND_JWT_SECRET
+pnpm install
+pnpm db:migrate
+pnpm dev                             # api on :4000, dashboard on :5173
+```
+
+Register at http://localhost:5173 (a workspace is created for you), then link the workspace to the backend
+owner whose accounts it should use:
+
+```sh
+pnpm --filter @gateway/api link-team <workspace-slug> <backendUserId>
+```
+
+Create a key on the **API keys** page and call the API:
+
+```sh
+curl -H "Authorization: Bearer $KEY" http://localhost:4000/v1/whoami
+curl -H "Authorization: Bearer $KEY" http://localhost:4000/v1/accounts
+curl -H "Authorization: Bearer $KEY" http://localhost:4000/v1/$ACCOUNT_ID/users/me
+```
+
+`pnpm -r typecheck` and `pnpm -r test` run the checks (tests use the `gateway_test` database).
+`pnpm build` builds both apps; in production the api serves the dashboard from `apps/web/dist`.
+
+## Licence
+
+AGPL-3.0-only. See [LICENSE](LICENSE).
