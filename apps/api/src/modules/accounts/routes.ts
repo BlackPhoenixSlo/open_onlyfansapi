@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { accountList, type Account } from '../../contracts.js';
-import { requireBackendUserId } from '../../lib/backend.js';
 import { AppError } from '../../lib/errors.js';
+import { assertTeamLinked } from '../../lib/team-link.js';
 
-type BackendAccount = {
+type UpstreamAccount = {
   id: number;
   label?: string | null;
   ofUsername?: string | null;
@@ -13,8 +13,8 @@ type BackendAccount = {
   status?: string | null;
 };
 
-/** Whitelists the backend row: internal fields (proxy, agency, creator ids) never leave the gateway. */
-function toAccount(a: BackendAccount): Account {
+/** Whitelists the upstream row: internal fields (proxy, agency, creator ids) never leave the gateway. */
+function toAccount(a: UpstreamAccount): Account {
   return {
     id: a.id,
     label: a.label ?? null,
@@ -25,10 +25,10 @@ function toAccount(a: BackendAccount): Account {
   };
 }
 
-function parseAccounts(body: Buffer): BackendAccount[] | null {
+function parseAccounts(body: Buffer): UpstreamAccount[] | null {
   try {
     const rows: unknown = JSON.parse(body.toString());
-    return Array.isArray(rows) ? (rows as BackendAccount[]) : null;
+    return Array.isArray(rows) ? (rows as UpstreamAccount[]) : null;
   } catch {
     return null;
   }
@@ -40,12 +40,10 @@ export default async function accountsRoutes(app: FastifyInstance) {
     { schema: { tags: ['gateway'], response: { 200: accountList } } },
     async (request) => {
       const { actor } = request;
-      const backendUserId = await requireBackendUserId(actor.teamId);
-      const res = await app.backend.request(backendUserId, new URL('/of-accounts', app.backend.origin), {
-        headers: { accept: 'application/json', 'x-request-id': request.id },
-      });
+      await assertTeamLinked(actor.teamId);
+      const res = await app.upstream.listAccounts(request.id);
       const rows = res.ok ? parseAccounts(res.body) : null;
-      if (!rows) throw new AppError(502, 'backend_error', `The backend answered ${res.status} for the account list`);
+      if (!rows) throw new AppError(502, 'upstream_error', `The upstream answered ${res.status} for the account list`);
       const allowed = actor.accountIds;
       return { items: rows.filter((a) => !allowed || allowed.includes(a.id)).map(toAccount) };
     },

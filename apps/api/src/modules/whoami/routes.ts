@@ -17,7 +17,7 @@ export default async function whoamiRoutes(app: FastifyInstance) {
           id: organization.id,
           name: organization.name,
           slug: organization.slug,
-          backendUserId: teamBackend.backendUserId,
+          linkedAt: teamBackend.linkedAt,
         })
         .from(organization)
         .leftJoin(teamBackend, eq(teamBackend.teamId, organization.id))
@@ -25,7 +25,7 @@ export default async function whoamiRoutes(app: FastifyInstance) {
         .limit(1);
       if (!team) throw new AppError(404, 'not_found', 'Workspace not found');
       return {
-        team,
+        team: { id: team.id, name: team.name, slug: team.slug, linked: team.linkedAt !== null },
         key: actor.keyId
           ? { id: actor.keyId, name: actor.keyName ?? '', scope: actor.scope, allowedAccountIds: actor.accountIds }
           : null,

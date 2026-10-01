@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { env } from './env.js';
 import { registerJobs } from './jobs/index.js';
-import { createBackend, type Backend } from './lib/backend.js';
+import { createUpstream, type Upstream } from './lib/upstream.js';
 import { AppError, errorHandler, notFoundHandler } from './lib/errors.js';
 import { newId } from './lib/ids.js';
 import accountsRoutes from './modules/accounts/routes.js';
@@ -21,11 +21,11 @@ import webStatic from './plugins/web-static.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    backend: Backend;
+    upstream: Upstream;
   }
 }
 
-export type AppOptions = { backendUrl?: string; logger?: boolean };
+export type AppOptions = { upstreamUrl?: string; logger?: boolean };
 
 export async function buildApp(opts: AppOptions = {}) {
   const app = Fastify({
@@ -43,8 +43,8 @@ export async function buildApp(opts: AppOptions = {}) {
     reply.header('x-request-id', request.id);
   });
   app.decorate(
-    'backend',
-    createBackend({ url: opts.backendUrl ?? env.BACKEND_URL, jwtSecret: env.BACKEND_JWT_SECRET, timeoutMs: env.BACKEND_TIMEOUT_MS }),
+    'upstream',
+    createUpstream({ url: opts.upstreamUrl ?? env.UPSTREAM_URL, token: env.UPSTREAM_TOKEN, timeoutMs: env.UPSTREAM_TIMEOUT_MS }),
   );
 
   await app.register(swagger, {
@@ -73,7 +73,7 @@ export async function buildApp(opts: AppOptions = {}) {
         max: env.KEY_RATE_LIMIT_PER_MIN,
         timeWindow: 60_000,
         keyGenerator: (req) => req.actor.keyId ?? `user:${req.actor.userId}`,
-        // Only on 429s, so the backend's x-ratelimit-* headers on proxied responses stay unambiguous.
+        // Only on 429s, so the upstream's x-ratelimit-* headers on proxied responses stay unambiguous.
         addHeadersOnExceeding: { 'x-ratelimit-limit': false, 'x-ratelimit-remaining': false, 'x-ratelimit-reset': false },
         errorResponseBuilder: (_req, ctx) =>
           new AppError(429, 'rate_limited', `Rate limit of ${ctx.max} requests per minute exceeded; retry in ${ctx.after}`),

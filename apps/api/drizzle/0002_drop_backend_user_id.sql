@@ -1,0 +1,1 @@
+ALTER TABLE "team_backend" DROP COLUMN "backend_user_id";

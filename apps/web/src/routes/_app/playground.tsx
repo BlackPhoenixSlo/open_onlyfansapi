@@ -58,8 +58,8 @@ function Playground() {
   return (
     <Page>
       {spec.isError && <p className="text-sm text-destructive">{spec.error.message}</p>}
-      {spec.data && !spec.data.backendAvailable && (
-        <p className="text-sm text-muted-foreground">The backend's operations are unavailable right now; only gateway routes are listed.</p>
+      {spec.data && !spec.data.upstreamAvailable && (
+        <p className="text-sm text-muted-foreground">The upstream's operations are unavailable right now; only gateway routes are listed.</p>
       )}
       {log.isError && <p className="text-sm text-destructive">Could not load request {logId}: {log.error.message}</p>}
       <Workbench key={logId ?? 'new'} ops={ops} initial={initial} />

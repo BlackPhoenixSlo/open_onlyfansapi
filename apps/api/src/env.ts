@@ -25,9 +25,10 @@ const schema = z.object({
   BETTER_AUTH_URL: z.string().url(),
   BETTER_AUTH_SECRET: z.string().min(16),
   TRUST_PROXY: z.string().default('false').transform(parseTrustProxy),
-  BACKEND_URL: z.string().url(),
-  BACKEND_JWT_SECRET: z.string().min(8),
-  BACKEND_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  /** The upstream service's origin; any path in it is ignored. */
+  UPSTREAM_URL: z.string().url(),
+  UPSTREAM_TOKEN: z.string().min(16),
+  UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   KEY_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
   RUN_JOBS: bool.default(true),
   /** Which request logs keep bodies: `errors` = status >= 400 only. */

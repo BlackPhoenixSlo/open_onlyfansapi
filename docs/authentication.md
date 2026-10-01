@@ -89,7 +89,7 @@ Each API key may make `KEY_RATE_LIMIT_PER_MIN` requests per minute to `/v1` (120
 sessions are counted per user. Over the limit, the gateway answers `429 rate_limited` with a `retry-after`
 header. The count is kept in memory by each API process.
 
-The backend has its own limits. Its `429` responses pass through unchanged, with their `Retry-After` and
+The upstream has its own limits. Its `429` responses pass through unchanged, with their `Retry-After` and
 `x-ratelimit-*` headers.
 
 ## Errors
@@ -101,7 +101,7 @@ Errors produced by the gateway have this shape:
 ```
 
 Every response, success or error, carries an `x-request-id` header with the same id. The gateway also sends
-it to the backend. Include it when you report a problem.
+it to the upstream. Include it when you report a problem.
 
 | Status | Code | When |
 |---|---|---|
@@ -114,19 +114,19 @@ it to the backend. Include it when you report a problem.
 | 403 | `csrf_failed` | A cookie-authenticated write lacked `x-dashboard: 1` or the right `Origin`. |
 | 403 | `no_workspace` | The signed-in user has no active workspace. |
 | 404 | `not_found` | Unknown route, a non-numeric account id, or a key or log entry that does not exist. |
-| 409 | `team_not_linked` | The workspace is not linked to a backend user yet. See [getting-started.md](getting-started.md). |
+| 409 | `team_not_linked` | The workspace is not linked to the upstream yet. See [getting-started.md](getting-started.md). |
 | 429 | `rate_limited` | The key or user went over the per-minute limit. |
 | 500 | `internal_error` | Something failed inside the gateway. |
-| 502 | `upstream_unavailable` | The gateway could not reach the backend. |
-| 502 | `backend_error` | The backend returned an error for the account list (`/v1/accounts`). |
-| 504 | `upstream_timeout` | The backend did not answer within `BACKEND_TIMEOUT_MS` (30 seconds by default). |
+| 502 | `upstream_unavailable` | The gateway could not reach the upstream. |
+| 502 | `upstream_error` | The upstream returned an error for the account list (`/v1/accounts`). |
+| 504 | `upstream_timeout` | The upstream did not answer within `UPSTREAM_TIMEOUT_MS` (30 seconds by default). |
 
 Other HTTP-level failures use a code based on the status: `bad_request` (400), `payload_too_large` (413) and
 `unsupported_media_type` (415, for a body type the gateway does not read; send JSON). The dashboard's own
 `/api` routes also use `invalid_range`, `range_too_large` and `invalid_cursor`.
 
-### Backend errors
+### Upstream errors
 
-Calls under `/v1/{account}/` are forwarded to the backend. When the backend answers with an error, the
+Calls under `/v1/{account}/` are forwarded to the upstream. When the upstream answers with an error, the
 gateway passes the status and body through unchanged. Those errors do not use the shape above. Only the
 gateway's own errors do.

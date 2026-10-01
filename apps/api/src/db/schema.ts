@@ -4,12 +4,11 @@ import { organization, user } from './auth-schema.js';
 
 export * from './auth-schema.js';
 
-/** Link from a workspace to the backend owner user whose accounts it may use. Set only by `link-team`. */
+/** A workspace that may reach the upstream. Set only by `link-team`. */
 export const teamBackend = pgTable('team_backend', {
   teamId: text('team_id')
     .primaryKey()
     .references(() => organization.id, { onDelete: 'cascade' }),
-  backendUserId: integer('backend_user_id').notNull(),
   linkedAt: timestamp('linked_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

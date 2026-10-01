@@ -155,7 +155,7 @@ function AccountField({
     body =
       accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked' ? (
         <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          This workspace isn't linked to a backend user yet, so account calls return 409 <code>team_not_linked</code>. See the
+          This workspace isn't linked to the upstream yet, so account calls return 409 <code>team_not_linked</code>. See the
           Accounts page for how to link it.
         </p>
       ) : (

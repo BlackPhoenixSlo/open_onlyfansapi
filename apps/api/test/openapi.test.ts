@@ -2,18 +2,18 @@ import { createServer } from 'node:net';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
-import { startFakeBackend } from './fake-backend.js';
+import { startFakeUpstream } from './fake-upstream.js';
 
-const backend = await startFakeBackend(process.env.BACKEND_JWT_SECRET!);
-const app = await buildApp({ logger: false, backendUrl: backend.url });
+const upstream = await startFakeUpstream(process.env.UPSTREAM_TOKEN!);
+const app = await buildApp({ logger: false, upstreamUrl: upstream.url });
 
 afterAll(async () => {
   await app.close();
-  await backend.close();
+  await upstream.close();
   await pool.end();
 });
 
-const specHits = () => backend.requests.filter((r) => r.url === '/docs/json').length;
+const specHits = () => upstream.requests.filter((r) => r.url === '/docs/json').length;
 
 const freePort = () =>
   new Promise<number>((resolve) => {
@@ -26,10 +26,10 @@ const freePort = () =>
 type Param = { name: string; in: string; required?: boolean; schema?: unknown };
 
 describe('openapi', () => {
-  it('merges the backend /of operations under /v1/{account} with the gateway /v1 routes', async () => {
+  it('merges the upstream /of operations under /v1/{account} with the gateway /v1 routes', async () => {
     const res = await app.inject({ method: 'GET', url: '/openapi.json' });
     expect(res.statusCode).toBe(200);
-    expect(res.headers['x-backend-spec']).toBeUndefined();
+    expect(res.headers['x-upstream-spec']).toBeUndefined();
     const spec = res.json();
 
     // `/of-accounts` (not under `/of/`), dashboard routes and the proxy wildcard are not published.
@@ -67,19 +67,19 @@ describe('openapi', () => {
   });
 
   it('fetches the spec once for concurrent requests and caches a failure for a minute, keeping the last good spec', async () => {
-    const fresh = await buildApp({ logger: false, backendUrl: backend.url });
+    const fresh = await buildApp({ logger: false, upstreamUrl: upstream.url });
     try {
       const before = specHits();
       const get = () => fresh.inject({ method: 'GET', url: '/openapi.json' });
       await Promise.all([get(), get(), get()]);
       expect(specHits() - before).toBe(1);
 
-      backend.state.specFails = true;
+      upstream.state.specFails = true;
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
       const stale = await get();
       expect(specHits() - before).toBe(2);
-      expect(stale.headers['x-backend-spec']).toBeUndefined();
+      expect(stale.headers['x-upstream-spec']).toBeUndefined();
       expect(Object.keys(stale.json().paths)).toContain('/v1/{account}/users/me');
       await get();
       expect(specHits() - before).toBe(2);
@@ -88,28 +88,28 @@ describe('openapi', () => {
       await get();
       expect(specHits() - before).toBe(3);
     } finally {
-      backend.state.specFails = false;
+      upstream.state.specFails = false;
       vi.useRealTimers();
       await fresh.close();
     }
   });
 
-  it('a backend that was never reachable is retried after a minute, not on every hit', async () => {
-    const fresh = await buildApp({ logger: false, backendUrl: backend.url });
-    backend.state.specFails = true;
+  it('an upstream that was never reachable is retried after a minute, not on every hit', async () => {
+    const fresh = await buildApp({ logger: false, upstreamUrl: upstream.url });
+    upstream.state.specFails = true;
     try {
       const before = specHits();
-      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-backend-spec']).toBe('unavailable');
-      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-backend-spec']).toBe('unavailable');
+      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-upstream-spec']).toBe('unavailable');
+      expect((await fresh.inject({ method: 'GET', url: '/openapi.json' })).headers['x-upstream-spec']).toBe('unavailable');
       expect(specHits() - before).toBe(1);
     } finally {
-      backend.state.specFails = false;
+      upstream.state.specFails = false;
       await fresh.close();
     }
   });
 
-  it('caches the backend spec for 10 minutes', async () => {
-    const fresh = await buildApp({ logger: false, backendUrl: backend.url });
+  it('caches the upstream spec for 10 minutes', async () => {
+    const fresh = await buildApp({ logger: false, upstreamUrl: upstream.url });
     try {
       const before = specHits();
       await fresh.inject({ method: 'GET', url: '/openapi.json' });
@@ -126,12 +126,12 @@ describe('openapi', () => {
     }
   });
 
-  it('serves the gateway-only spec with x-backend-spec: unavailable when the backend is down', async () => {
-    const down = await buildApp({ logger: false, backendUrl: `http://127.0.0.1:${await freePort()}` });
+  it('serves the gateway-only spec with x-upstream-spec: unavailable when the upstream is down', async () => {
+    const down = await buildApp({ logger: false, upstreamUrl: `http://127.0.0.1:${await freePort()}` });
     try {
       const res = await down.inject({ method: 'GET', url: '/openapi.json' });
       expect(res.statusCode).toBe(200);
-      expect(res.headers['x-backend-spec']).toBe('unavailable');
+      expect(res.headers['x-upstream-spec']).toBe('unavailable');
       expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', '/v1/whoami']);
     } finally {
       await down.close();

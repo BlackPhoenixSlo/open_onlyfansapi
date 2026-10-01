@@ -28,9 +28,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.3
         version: 0.45.3(@prisma/client@5.22.0)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(kysely@0.29.6)(pg@8.23.1)
-      fast-jwt:
-        specifier: ^6.3.3
-        version: 6.3.3
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
@@ -2284,9 +2281,6 @@ packages:
     resolution: {integrity: sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==}
     engines: {node: '>=10'}
 
-  asn1.js@5.4.1:
-    resolution: {integrity: sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA==}
-
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -2402,9 +2396,6 @@ packages:
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
-
-  bn.js@4.12.5:
-    resolution: {integrity: sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==}
 
   body-parser@2.3.0:
     resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
@@ -2826,9 +2817,6 @@ packages:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
 
-  ecdsa-sig-formatter@1.0.11:
-    resolution: {integrity: sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==}
-
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
@@ -2964,10 +2952,6 @@ packages:
 
   fast-json-stringify@7.0.1:
     resolution: {integrity: sha512-eRSayARSbbwlBjpP4vnTTIRD5QPcIrmihPxDeN1DtKnHPg66UuJLx+8hlK1kaFdjvzyQ/dzALoi4vwAQ+T+iZA==}
-
-  fast-jwt@6.3.3:
-    resolution: {integrity: sha512-pQDXx7IHeZT4jSmpE9o80RrBqfrG4fPrl8anazSM5vErIdK1iCc13z/EWX+H0j7liWSRnwTpHswIKMeLYGAckw==}
-    engines: {node: '>=20'}
 
   fast-querystring@1.1.2:
     resolution: {integrity: sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg==}
@@ -3575,9 +3559,6 @@ packages:
     resolution: {integrity: sha512-z0yWI+4FDrrweS8Zmt4Ej5HdJmky15+L2e6Wgn3+iK5fWzb6T3fhNFq2+MeTRb064c6Wr4N/wv0DzQTjNzHNGQ==}
     engines: {node: '>=10'}
 
-  minimalistic-assert@1.0.1:
-    resolution: {integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==}
-
   minimatch@10.2.6:
     resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
     engines: {node: 18 || 20 || >=22}
@@ -3591,9 +3572,6 @@ packages:
 
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
-
-  mnemonist@0.40.5:
-    resolution: {integrity: sha512-egXDkYJsKZCizjk8FydZ3g8TOigBwt+dIaehgKcQSAE3DCkCTWG4N94trvwR1ZYeAHo1exxE+ZhZOUuj01HdNw==}
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
@@ -3646,9 +3624,6 @@ packages:
   object-treeify@1.1.33:
     resolution: {integrity: sha512-EFVjAYfzWqWsBMRHPMAXLCDIJnpMhdWAqR7xG6M6a2cs6PMFpl/+Z20w9zDW4vkxOFfddegBKq9Rehd0bxWE7A==}
     engines: {node: '>= 10'}
-
-  obliterator@2.0.5:
-    resolution: {integrity: sha512-42CPE9AhahZRsMNslczq0ctAEtqk8Eka26QofnqC346BZdHDySk3LWka23LI7ULIw11NmltpiLagIq8gBozxTw==}
 
   obug@2.2.1:
     resolution: {integrity: sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==}
@@ -6532,13 +6507,6 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  asn1.js@5.4.1:
-    dependencies:
-      bn.js: 4.12.5
-      inherits: 2.0.4
-      minimalistic-assert: 1.0.1
-      safer-buffer: 2.1.2
-
   assertion-error@2.0.1: {}
 
   ast-types@0.16.3:
@@ -6678,8 +6646,6 @@ snapshots:
       inherits: 2.0.4
       readable-stream: 3.6.2
     optional: true
-
-  bn.js@4.12.5: {}
 
   body-parser@2.3.0:
     dependencies:
@@ -6963,10 +6929,6 @@ snapshots:
       es-errors: 1.3.0
       gopd: 1.2.0
 
-  ecdsa-sig-formatter@1.0.11:
-    dependencies:
-      safe-buffer: 5.2.1
-
   ee-first@1.1.1: {}
 
   electron-to-chromium@1.5.443: {}
@@ -7206,14 +7168,6 @@ snapshots:
       fast-uri: 4.2.1
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
-
-  fast-jwt@6.3.3:
-    dependencies:
-      '@lukeed/ms': 2.0.2
-      asn1.js: 5.4.1
-      ecdsa-sig-formatter: 1.0.11
-      mnemonist: 0.40.5
-      safe-regex2: 5.1.1
 
   fast-querystring@1.1.2:
     dependencies:
@@ -7698,8 +7652,6 @@ snapshots:
   mimic-response@3.1.0:
     optional: true
 
-  minimalistic-assert@1.0.1: {}
-
   minimatch@10.2.6:
     dependencies:
       brace-expansion: 5.0.12
@@ -7710,10 +7662,6 @@ snapshots:
 
   mkdirp-classic@0.5.3:
     optional: true
-
-  mnemonist@0.40.5:
-    dependencies:
-      obliterator: 2.0.5
 
   ms@2.1.3: {}
 
@@ -7751,8 +7699,6 @@ snapshots:
   object-inspect@1.13.4: {}
 
   object-treeify@1.1.33: {}
-
-  obliterator@2.0.5: {}
 
   obug@2.2.1: {}
 
@@ -8227,7 +8173,8 @@ snapshots:
     dependencies:
       queue-microtask: 1.2.3
 
-  safe-buffer@5.2.1: {}
+  safe-buffer@5.2.1:
+    optional: true
 
   safe-regex2@5.1.1:
     dependencies:
