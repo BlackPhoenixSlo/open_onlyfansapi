@@ -1,0 +1,6 @@
+# PUBLIC_URL drives the site address: an https:// value turns on automatic ACME TLS,
+# http://localhost serves plain HTTP on :80 for local smoke tests.
+{$PUBLIC_URL} {
+	encode zstd gzip
+	reverse_proxy gateway:4000
+}
