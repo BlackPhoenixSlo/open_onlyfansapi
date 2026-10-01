@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ENV_KEYS, parseTrustProxy } from '../src/env.js';
+import { ENV_KEYS, envSchema, parseTrustProxy } from '../src/env.js';
 
 const root = new URL('../../../', import.meta.url).pathname;
 const script = join(root, 'scripts/check-secrets.sh');
@@ -23,6 +23,24 @@ describe('hygiene', () => {
     const oneHop = parseTrustProxy('1') as (address: string, hop: number) => boolean;
     expect([oneHop('10.0.0.1', 0), oneHop('6.6.6.6', 1)]).toEqual([true, false]);
     expect(parseTrustProxy('10.0.0.0/8, 127.0.0.1')).toEqual(['10.0.0.0/8', '127.0.0.1']);
+  });
+
+  it('production refuses a plain-http public URL unless it is localhost', () => {
+    const base = {
+      DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',
+      BETTER_AUTH_SECRET: 'x'.repeat(16),
+      UPSTREAM_URL: 'https://upstream.example.com',
+      UPSTREAM_TOKEN: 'x'.repeat(16),
+    };
+    const parse = (url: string, NODE_ENV = 'production') =>
+      envSchema.safeParse({ ...base, NODE_ENV, APP_URL: url, BETTER_AUTH_URL: url });
+
+    const rejected = parse('http://gw.example.com');
+    expect(rejected.error?.issues.map((i) => i.path[0])).toEqual(['APP_URL', 'BETTER_AUTH_URL']);
+    expect(rejected.error?.issues[0]?.message).toContain('without the Secure flag');
+    expect([parse('http://localhost'), parse('http://127.0.0.1:4000'), parse('https://gw.example.com')].map((r) => r.success))
+      .toEqual([true, true, true]);
+    expect(parse('http://gw.example.com', 'development').success).toBe(true);
   });
 
   it('check-secrets finds a staged token in a path with spaces', () => {

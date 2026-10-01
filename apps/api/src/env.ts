@@ -15,7 +15,15 @@ export function parseTrustProxy(value: string): boolean | string[] | ((address: 
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-const schema = z.object({
+const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
+
+/** True for an `http:` URL whose host is not one of `allowedHosts`. */
+function isPlainHttp(value: string, allowedHosts: string[]) {
+  const url = URL.parse(value);
+  return url?.protocol === 'http:' && !allowedHosts.includes(url.hostname);
+}
+
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.string().default('info'),
   DATABASE_URL: z.string().url(),
@@ -35,16 +43,30 @@ const schema = z.object({
   LOG_BODIES: z.enum(['errors', 'all', 'none']).default('errors'),
   LOG_BODY_MAX_BYTES: z.coerce.number().int().positive().default(16_384),
   LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(14),
+}).superRefine((e, ctx) => {
+  if (e.NODE_ENV !== 'production') return;
+  for (const key of ['APP_URL', 'BETTER_AUTH_URL'] as const) {
+    if (isPlainHttp(e[key], LOCAL_HOSTS)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: `${key} must be https:// in production: plain HTTP sends session cookies without the Secure flag (http is allowed only for localhost and 127.0.0.1)`,
+      });
+    }
+  }
 });
 
-const parsed = schema.safeParse(process.env);
+const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
   console.error('Invalid environment:\n' + z.prettifyError(parsed.error));
   process.exit(1);
 }
 
 export const env = parsed.data;
+if (isPlainHttp(env.UPSTREAM_URL, [...LOCAL_HOSTS, 'host.docker.internal'])) {
+  console.warn('UPSTREAM_URL is plain http:// to a remote host: UPSTREAM_TOKEN and request bodies travel unencrypted.');
+}
 /** Every variable the API reads (`.env.example` must list them all). */
-export const ENV_KEYS = Object.keys(schema.shape);
+export const ENV_KEYS = Object.keys(envSchema.shape);
 /** Origin (scheme://host:port) the dashboard is served from; the only Origin allowed on cookie writes. */
 export const appOrigin = new URL(env.APP_URL).origin;
