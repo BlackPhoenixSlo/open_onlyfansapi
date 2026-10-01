@@ -71,6 +71,10 @@ Fill in:
 | `UPSTREAM_URL` | your upstream's origin, e.g. `https://upstream.example.com` |
 | `UPSTREAM_TOKEN` | the bearer token that upstream issued to you (at least 16 characters) |
 
+For an upstream on the same VPS use `UPSTREAM_URL=http://host.docker.internal:<port>` (plain `http://localhost:<port>`
+would reach the gateway container itself). The upstream must listen on the Docker bridge or `0.0.0.0`, not on
+`127.0.0.1` only; keep that port closed in the hPanel firewall.
+
 `.env` is gitignored and holds every secret on the box. Keep it `chmod 600`. To rotate `UPSTREAM_TOKEN` or
 `BETTER_AUTH_SECRET`, edit `.env` and run `docker compose up -d` (a new auth secret logs everyone out).
 
@@ -113,6 +117,7 @@ cd /opt/gateway/deploy
 docker compose exec -T postgres pg_dump -U gateway -Fc gateway > "/root/backups/gateway-$(date +%F).dump"  # first (§8 creates /root/backups)
 git -C /opt/gateway pull
 docker compose up -d --build
+docker image prune -f      # drops the image the build replaced
 ```
 
 Migrations run on start and are **forward-only**: there is no down path, so take the backup above before every
@@ -147,12 +152,14 @@ rsync -av --remove-source-files root@<vps-ip>:/root/backups/ ./gateway-backups/ 
 
 Dumps contain API key hashes, sessions and redacted request logs. Store them `chmod 600` and encrypted at rest.
 
-Restore into a running stack:
+Restore into a fresh, empty database (this replaces everything in it):
 
 ```sh
 cd /opt/gateway/deploy
 docker compose stop gateway
-docker compose exec -T postgres pg_restore -U gateway -d gateway --clean --if-exists < /root/backups/gateway-2026-10-01.dump
+docker compose exec -T postgres dropdb -U gateway gateway
+docker compose exec -T postgres createdb -U gateway gateway
+docker compose exec -T postgres pg_restore -U gateway -d gateway --exit-on-error < /root/backups/gateway-<date>.dump
 docker compose start gateway
 ```
 
@@ -169,8 +176,10 @@ docker compose logs -f gateway caddy      # follow
 docker compose logs --since 1h gateway    # recent only
 ```
 
-Every service logs to `json-file` capped at **10 MB × 3 files** per service, so a small VPS disk cannot fill up.
-Older lines are dropped, not archived — ship them elsewhere if you need history.
+Every service logs to `json-file` capped at **10 MB × 3 files** per service. Older lines are dropped, not
+archived — ship them elsewhere if you need history. Only container logs are capped: §7 prunes the old image on
+each update, but `/root/backups` is not rotated. The §8 `rsync` removes the dumps it copies; otherwise delete old
+dumps yourself.
 
 Per-request API logs (method, path, status, duration, redacted bodies) live in Postgres and are visible on the
 dashboard's **Logs** page. They are kept 14 days (the `LOG_RETENTION_DAYS` default; not set through `deploy/.env`).
@@ -209,9 +218,11 @@ of Caddy.
 **No certificate / `curl` fails over HTTPS (ACME).** Check Caddy's log: `docker compose logs caddy`.
 
 - `no such host` or a challenge timeout → DNS has not propagated or points elsewhere. Re-run `dig +short <domain>`
-  and compare with the VPS IP.
-- `connection refused` on the challenge → port 80 is closed in the hPanel firewall, or something else holds it
-  (`ss -tlnp | grep ':80'`). Let's Encrypt needs inbound 80 for the HTTP-01 challenge.
+  and compare with the VPS IP. Once DNS is fixed, `docker compose restart caddy` retries at once instead of
+  waiting out Caddy's retry backoff.
+- `connection refused` on the challenge → 80 and 443 are closed in the hPanel firewall, or something else holds
+  them (`ss -tlnp | grep -E ':(80|443)\s'`). Caddy tries the HTTP-01 challenge on 80 and the TLS-ALPN challenge
+  on 443, so either open port gets a certificate; keep both open so `http://` redirects to HTTPS.
 - `PUBLIC_URL` must be the bare origin (`https://gw.example.com`), no path and no trailing slash.
 - Certificates live in the `caddy_data` volume. Keep it across updates; deleting it re-issues and counts against
   Let's Encrypt rate limits (5 duplicate certificates per week).
@@ -226,9 +237,16 @@ docker compose logs gateway | tail -40
 ```
 
 - `Invalid environment: …` names the offending variables. Common causes: `BETTER_AUTH_SECRET` shorter than 16
-  characters, `UPSTREAM_TOKEN` shorter than 16 characters, `UPSTREAM_URL` or `PUBLIC_URL` not a valid absolute URL.
+  characters, `UPSTREAM_TOKEN` shorter than 16 characters, `UPSTREAM_URL` or `PUBLIC_URL` not a valid absolute URL,
+  or an `http://` `PUBLIC_URL` (reported as `APP_URL` and `BETTER_AUTH_URL`; production needs `https://`).
 - `required variable … is missing a value` from `docker compose` itself means a blank line in `.env`
   (`POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `UPSTREAM_URL`, `UPSTREAM_TOKEN` and `PUBLIC_URL` are all required).
+
+**`password authentication failed for user "gateway"`.** Postgres sets the password once, when it first creates
+the `pgdata` volume; changing `POSTGRES_PASSWORD` in `.env` later does not reach it. Restore the old value. On a
+fresh install with nothing to keep, `docker compose down -v` deletes the volumes (the `caddy_data` certificates
+too) and the next `up -d` starts over. `docker compose` also expands `$` in `.env` values, so single-quote a value
+that contains one: `POSTGRES_PASSWORD='pa$word'`.
 
 **502 `upstream_unavailable` / 504 `upstream_timeout`.** The gateway reached its own limits talking to your
 upstream. Verify `UPSTREAM_URL` and `UPSTREAM_TOKEN` from inside the network and raise `UPSTREAM_TIMEOUT_MS`

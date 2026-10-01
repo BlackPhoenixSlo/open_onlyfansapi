@@ -3,6 +3,9 @@
 # Secrets are listed per service on purpose (no env_file), so POSTGRES_PASSWORD and TUNNEL_TOKEN
 # only reach the services that need them.
 
+# Not "gateway": a checkout in /opt/gateway gives the root dev compose that project name.
+name: gateway-prod
+
 x-logging: &logging
   driver: json-file
   options:
@@ -16,13 +19,17 @@ services:
       dockerfile: apps/api/Dockerfile
     image: gateway:local
     expose: ["4000"]
+    # Lets UPSTREAM_URL=http://host.docker.internal:<port> reach an upstream on the same VPS.
+    extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "4000"
       # One proxy hop in front (caddy, or cloudflared in tunnel mode).
       TRUST_PROXY: "1"
-      DATABASE_URL: postgres://gateway:${POSTGRES_PASSWORD:?}@postgres:5432/gateway
+      # The password stays out of the URL, where / # % @ would break parsing; node-postgres reads PGPASSWORD.
+      DATABASE_URL: postgres://gateway@postgres:5432/gateway
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
       # The dashboard and the API share one origin.
       APP_URL: ${PUBLIC_URL:?}
       BETTER_AUTH_URL: ${PUBLIC_URL:?}
@@ -45,7 +52,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      # Over TCP: during first-boot setup the socket answers before Postgres listens on the network.
+      test: ["CMD-SHELL", "pg_isready -U gateway -h 127.0.0.1"]
       interval: 5s
       timeout: 5s
       retries: 20
