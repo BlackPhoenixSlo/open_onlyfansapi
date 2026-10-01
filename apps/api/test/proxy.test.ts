@@ -5,7 +5,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { resolveUpstream } from '../src/modules/proxy/routes.js';
 import { startFakeBackend } from './fake-backend.js';
-import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
 const BACKEND_USER = 4242;
 const backend = await startFakeBackend(process.env.BACKEND_JWT_SECRET!, {
@@ -20,11 +20,13 @@ let writeKey: string;
 let readKey: string;
 let limitedKey: string;
 let cookie: string;
+let userId: string;
 
 beforeAll(async () => {
   await resetDb();
   const user = await signUp(app, 'proxy@example.test');
   cookie = user.cookie;
+  userId = user.userId;
   await linkTeam(user.teamId, BACKEND_USER);
   writeKey = (await createKey(app, cookie, { scope: 'write' })).secret;
   readKey = (await createKey(app, cookie, { scope: 'read' })).secret;
@@ -74,6 +76,32 @@ describe('proxy', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/12/users/me', headers: { cookie, 'x-dashboard': '1' } });
     expect(res.statusCode).toBe(200);
     expect(last().url).toBe('/of/users/me');
+  });
+
+  it('proxies a session write with the CSRF headers and logs it without a key (playground)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/12/chats/1/messages?draft=1',
+      headers: { ...dashboard(cookie), 'content-type': 'application/json' },
+      payload: '{"text":"hi"}',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(last()).toMatchObject({ method: 'POST', url: '/of/chats/1/messages?draft=1', body: '{"text":"hi"}' });
+    expect(last().headers.cookie).toBeUndefined();
+
+    const id = res.headers['x-request-id'] as string;
+    await waitForLogs([id]);
+    const log = await app.inject({ method: 'GET', url: `/api/logs/${id}`, headers: { cookie } });
+    expect(log.json()).toMatchObject({
+      keyId: null,
+      keyName: null,
+      userId,
+      accountId: 12,
+      method: 'POST',
+      path: '/v1/12/chats/1/messages',
+      query: 'draft=1',
+      statusCode: 200,
+    });
   });
 
   it('read key cannot write', async () => {

@@ -11,6 +11,7 @@ import accountsRoutes from './modules/accounts/routes.js';
 import keysRoutes from './modules/keys/routes.js';
 import { captureRequestLogs } from './modules/logs/capture.js';
 import logsRoutes from './modules/logs/routes.js';
+import openapiRoutes from './modules/openapi/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import whoamiRoutes from './modules/whoami/routes.js';
@@ -49,15 +50,15 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(swagger, {
     openapi: {
       info: { title: 'Gateway API', version: '0.1.0' },
-      components: { securitySchemes: { apiKey: { type: 'http', scheme: 'bearer' } } },
-      security: [{ apiKey: [] }],
+      components: { securitySchemes: { ApiKey: { type: 'http', scheme: 'bearer', description: 'An API key (`gk_…`)' } } },
+      security: [{ ApiKey: [] }],
     },
     transform: jsonSchemaTransform,
   });
   await app.register(sessionPlugin);
 
   app.get('/healthz', async () => ({ ok: true }));
-  app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
+  await app.register(openapiRoutes);
 
   await app.register(keysRoutes, { prefix: '/api/keys' });
   await app.register(logsRoutes, { prefix: '/api/logs' });

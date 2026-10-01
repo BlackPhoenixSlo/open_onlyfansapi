@@ -12,6 +12,6 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
-    proxy: { '/api': api, '/v1': api },
+    proxy: { '/api': api, '/v1': api, '/openapi.json': api, '/docs': api },
   },
 });

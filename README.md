@@ -1,8 +1,8 @@
 # Gateway
 
 A self-hostable API gateway and dashboard in front of a creator-account backend: API keys with scopes and
-per-account allowlists, a raw proxy to the backend's account API, and (in later slices) request logs,
-usage, a playground and webhooks. The product name is a placeholder.
+per-account allowlists, a raw proxy to the backend's account API, request logs, usage, a playground and an
+OpenAPI reference. Webhooks come later. The product name is a placeholder.
 
 > **Not affiliated.** This project is unofficial and is not affiliated with, endorsed by or connected to any
 > content platform or its operators. Users are responsible for complying with the terms of the platforms they use.
@@ -36,6 +36,13 @@ curl -H "Authorization: Bearer $KEY" http://localhost:4000/v1/$ACCOUNT_ID/users/
 
 `pnpm -r typecheck` and `pnpm -r test` run the checks (tests use the `gateway_test` database).
 `pnpm build` builds both apps; in production the api serves the dashboard from `apps/web/dist`.
+
+## Docs
+
+- [Getting started](docs/getting-started.md): run the gateway, link a workspace, make a first call.
+- [Authentication](docs/authentication.md): API keys, scopes, account allowlists, sessions, rate limits and errors.
+
+A running gateway also serves its OpenAPI spec at `/openapi.json` and an interactive API reference at `/docs`.
 
 ## Licence
 

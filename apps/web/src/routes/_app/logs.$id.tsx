@@ -7,7 +7,8 @@ import { StatusBadge } from '@/components/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiError, logQuery } from '@/lib/api';
-import { formatBytes } from '@/lib/utils';
+import { curlSnippet } from '@/features/playground/snippet';
+import { formatBytes, prettyJson } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/logs/$id')({ component: LogPage });
 
@@ -118,33 +119,21 @@ function Body({ title, body }: { title: string; body: string | null }) {
         {body === null ? (
           <p className="text-sm text-muted-foreground">Not stored (bodies are kept for failed requests by default).</p>
         ) : (
-          <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 text-xs">{pretty(body)}</pre>
+          <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 text-xs">{prettyJson(body)}</pre>
         )}
       </CardContent>
     </Card>
   );
 }
 
-function pretty(body: string) {
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    return body;
-  }
-}
-
-/** Single-quotes a value for POSIX shells. */
-const sh = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
-
 function copyCurl(log: LogDetail) {
-  const url = `${window.location.origin}${log.path}${log.query ? `?${log.query}` : ''}`;
-  // Double quotes so the shell expands $API_KEY.
-  const parts = [`curl -X ${log.method} ${sh(url)}`, `-H "Authorization: Bearer $API_KEY"`];
-  if (log.reqBody !== null) {
-    const type = log.reqHeaders['content-type'] ?? 'application/json';
-    parts.push(`-H ${sh(`Content-Type: ${type}`)}`, `--data ${sh(log.reqBody)}`);
-  }
-  navigator.clipboard.writeText(parts.join(' \\\n  ')).then(
+  const snippet = curlSnippet({
+    method: log.method,
+    url: `${window.location.origin}${log.path}${log.query ? `?${log.query}` : ''}`,
+    body: log.reqBody,
+    contentType: log.reqHeaders['content-type'],
+  });
+  navigator.clipboard.writeText(snippet).then(
     () => toast.success('Copied cURL command'),
     () => toast.error('Copy failed'),
   );
