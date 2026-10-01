@@ -49,6 +49,16 @@ describe('csrf', () => {
     expect((await app.inject({ method: 'GET', url: '/v1/whoami', headers: { cookie, 'x-dashboard': '1' } })).statusCode).toBe(200);
   });
 
+  it('better-auth rejects cookie writes from a foreign Origin on /api/auth', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/organization/update',
+      headers: { cookie, origin: 'https://evil.example', 'content-type': 'application/json' },
+      payload: { data: { name: 'pwned' } },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('an invalid bearer with a valid cookie is 401 (no cookie fallback)', async () => {
     const res = await app.inject({
       method: 'GET',

@@ -30,6 +30,8 @@ export const auth = betterAuth({
   trustedOrigins: [appOrigin],
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: { enabled: true },
+  // better-auth skips its Origin check under NODE_ENV=test by default; keep it on everywhere so tests cover it.
+  advanced: { disableOriginCheck: false },
   plugins: [organization({ allowUserToCreateOrganization: false })],
   databaseHooks: {
     user: { create: { after: createPersonalWorkspace } },

@@ -32,7 +32,8 @@ export async function buildApp(opts: AppOptions = {}) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.setErrorHandler(errorHandler);
-  app.setNotFoundHandler(notFoundHandler);
+  if (env.NODE_ENV === 'production') await app.register(webStatic);
+  else app.setNotFoundHandler(notFoundHandler);
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id);
   });
@@ -76,6 +77,5 @@ export async function buildApp(opts: AppOptions = {}) {
     { prefix: '/v1' },
   );
 
-  if (env.NODE_ENV === 'production') await app.register(webStatic);
   return app;
 }

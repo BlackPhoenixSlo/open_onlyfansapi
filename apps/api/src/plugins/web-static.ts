@@ -7,11 +7,15 @@ import { notFoundHandler } from '../lib/errors.js';
 
 const API_PREFIXES = ['/api/', '/v1/', '/openapi.json', '/healthz'];
 
-/** Production only: serve the dashboard build from the same origin, with an index.html fallback for SPA routes. */
+/**
+ * Production only: serve the dashboard build from the same origin, with an index.html fallback for SPA routes.
+ * Owns the root not-found handler, so register it before any routes.
+ */
 export default fp(async (app: FastifyInstance) => {
   const root = fileURLToPath(new URL('../../../web/dist', import.meta.url));
   if (!existsSync(root)) {
     app.log.warn({ root }, 'dashboard build not found; serving the API only');
+    app.setNotFoundHandler(notFoundHandler);
     return;
   }
   await app.register(fastifyStatic, { root, wildcard: false });
