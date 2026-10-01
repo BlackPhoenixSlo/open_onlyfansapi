@@ -1,0 +1,44 @@
+# deps / build output: rebuilt inside the image
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.turbo
+coverage
+**/__pycache__
+**/.venv
+
+# vcs / tooling
+.git
+.github
+.claude
+.gitignore
+.dockerignore
+
+# secrets (keep .env.example so nothing references a missing file)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# not part of the runtime image
+deploy
+docs
+docker
+docker-compose.yml
+README.md
+
+# reference mirror must never enter the build context
+*.sitesucker*
+us.sitesucker.mac.sitesucker/
+onlyfansapi.com/
+app.onlyfansapi.com/
+mirror/
+reference/
+
+# os / editor
+**/.DS_Store
+.idea
+.vscode
+**/*.log
