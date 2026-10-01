@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately to **contact@jackbase.dev** *(replace this with your own address before publishing)*.
+Report privately to **contact@jackbase.dev**.
 Please do not open a public issue, pull request or discussion for a security problem.
 
 Include what you can:
@@ -15,18 +15,18 @@ Include what you can:
 Expect an acknowledgement within a few days. There is no bug bounty. Please give a reasonable window for
 a fix before disclosing publicly; credit in the release notes if you'd like it.
 
-Only the latest commit on `main` is supported. This is pre-1.0 software: there are no backports.
+Only the latest commit on `master` is supported. This is pre-1.0 software: there are no backports.
 
 ## In scope
 
 - The gateway API (`apps/api`): authentication, API keys, scopes, account allowlists, the proxy to the
-  upstream backend, request logs, usage.
+  upstream, request logs, usage.
 - The dashboard (`apps/web`) served by the gateway.
-- The self-host packaging: `docker-compose.yml`, `docker/`, `.env.example` and the documented defaults.
+- The self-host packaging: `deploy/`, `apps/api/Dockerfile`, `.env.example` and the documented defaults.
 
 ## Out of scope
 
-- The upstream creator-account backend and the content platforms behind it — report those to their owners.
+- The upstream — report issues in it to its owner.
 - Anything caused by running with secrets, debug settings or a database exposed on purpose, and findings
   that need an operator or host-level compromise you already have.
 - Missing hardening headers or rate limits on a deployment you control, dependency advisories with no

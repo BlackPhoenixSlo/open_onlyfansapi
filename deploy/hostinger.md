@@ -69,7 +69,7 @@ Fill in:
 | `POSTGRES_PASSWORD` | the `openssl rand -hex 24` output |
 | `BETTER_AUTH_SECRET` | the `openssl rand -base64 32` output |
 | `UPSTREAM_URL` | your upstream's origin, e.g. `https://upstream.example.com` |
-| `UPSTREAM_TOKEN` | the bearer token that upstream issued to you |
+| `UPSTREAM_TOKEN` | the bearer token that upstream issued to you (at least 16 characters) |
 
 `.env` is gitignored and holds every secret on the box. Keep it `chmod 600`. To rotate `UPSTREAM_TOKEN` or
 `BETTER_AUTH_SECRET`, edit `.env` and run `docker compose up -d` (a new auth secret logs everyone out).
@@ -89,7 +89,7 @@ docker compose ps                        # gateway healthy, postgres healthy, ca
 curl -fsS https://gw.example.com/healthz
 ```
 
-Caddy gets the certificate on the first HTTPS request; allow a few seconds. If `curl` fails, see §11.
+Caddy requests the certificate as soon as it starts; allow a few seconds. If `curl` fails, see §11.
 
 ## 6. First user
 
@@ -102,14 +102,15 @@ Caddy gets the certificate on the first HTTPS request; allow a few seconds. If `
    docker compose exec gateway node dist/db/link-team.js <slug>
    ```
 
-4. Reload the **Accounts** page. It should now list the accounts your upstream exposes. If it shows
-   `team_not_linked`, the slug did not match — re-check it on Settings.
+   Check that it printed `linked workspace …`. A wrong slug exits with `no workspace with slug "…"`; copy the
+   slug from Settings again.
+4. Reload the **Accounts** page. It should now list the accounts your upstream exposes.
 
 ## 7. Updates
 
 ```sh
 cd /opt/gateway/deploy
-docker compose exec -T postgres pg_dump -U gateway -Fc gateway > "/root/gateway-$(date +%F).dump"  # first
+docker compose exec -T postgres pg_dump -U gateway -Fc gateway > "/root/backups/gateway-$(date +%F).dump"  # first (§8 creates /root/backups)
 git -C /opt/gateway pull
 docker compose up -d --build
 ```
@@ -118,6 +119,12 @@ Migrations run on start and are **forward-only**: there is no down path, so take
 update. Only one gateway instance runs, so migrations never race.
 
 ## 8. Backup and restore
+
+Create the backup directory once:
+
+```sh
+mkdir -p /root/backups && chmod 700 /root/backups
+```
 
 Dump (custom format, compressed):
 
@@ -135,7 +142,6 @@ Daily at 03:15 via cron (`crontab -e`):
 Copy the dumps **off the VPS** — a backup that only exists on the box is not a backup:
 
 ```sh
-mkdir -p /root/backups && chmod 700 /root/backups
 rsync -av --remove-source-files root@<vps-ip>:/root/backups/ ./gateway-backups/   # run on your laptop
 ```
 
@@ -146,7 +152,7 @@ Restore into a running stack:
 ```sh
 cd /opt/gateway/deploy
 docker compose stop gateway
-docker compose exec -T postgres pg_restore -U gateway -d gateway --clean --if-exists < gateway-2026-10-01.dump
+docker compose exec -T postgres pg_restore -U gateway -d gateway --clean --if-exists < /root/backups/gateway-2026-10-01.dump
 docker compose start gateway
 ```
 
@@ -167,7 +173,7 @@ Every service logs to `json-file` capped at **10 MB × 3 files** per service, so
 Older lines are dropped, not archived — ship them elsewhere if you need history.
 
 Per-request API logs (method, path, status, duration, redacted bodies) live in Postgres and are visible on the
-dashboard's **Logs** page, with retention controlled by `LOG_RETENTION_DAYS` (14 days by default).
+dashboard's **Logs** page. They are kept 14 days (the `LOG_RETENTION_DAYS` default; not set through `deploy/.env`).
 
 ## 10. Optional: Cloudflare Tunnel instead of open ports
 
@@ -183,11 +189,13 @@ Use this if you would rather expose nothing at all. Cloudflare terminates TLS an
    ```
 
    Keep `PUBLIC_URL=https://gw.example.com` — that is still the public origin.
-3. Apply, then close the ports:
+3. Remove caddy, start cloudflared, then close the ports. Changing the profile does not stop caddy: its
+   container keeps running with 80/443 published until you remove it.
 
    ```sh
-   docker compose up -d --remove-orphans   # starts cloudflared, stops caddy
-   docker compose ps                       # no published ports at all
+   docker compose --profile caddy rm -sf caddy   # stops and removes caddy
+   docker compose up -d                          # starts cloudflared
+   docker compose ps                             # caddy gone, so no published ports
    ```
 
    In the hPanel firewall remove the 80 and 443 rules (keep 22). Your DNS record for the hostname is managed by
@@ -218,18 +226,16 @@ docker compose logs gateway | tail -40
 ```
 
 - `Invalid environment: …` names the offending variables. Common causes: `BETTER_AUTH_SECRET` shorter than 16
-  characters, `UPSTREAM_URL` or `PUBLIC_URL` not a valid absolute URL.
+  characters, `UPSTREAM_TOKEN` shorter than 16 characters, `UPSTREAM_URL` or `PUBLIC_URL` not a valid absolute URL.
 - `required variable … is missing a value` from `docker compose` itself means a blank line in `.env`
   (`POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `UPSTREAM_URL`, `UPSTREAM_TOKEN` and `PUBLIC_URL` are all required).
-- `ECONNREFUSED … 5432` right after boot is normal for a moment; it is a problem only if it persists — check
-  `docker compose ps` for postgres health.
 
 **502 `upstream_unavailable` / 504 `upstream_timeout`.** The gateway reached its own limits talking to your
 upstream. Verify `UPSTREAM_URL` and `UPSTREAM_TOKEN` from inside the network and raise `UPSTREAM_TIMEOUT_MS`
 if the upstream is simply slow:
 
 ```sh
-docker compose exec gateway node -e 'fetch(process.env.UPSTREAM_URL+"/of-accounts",{headers:{authorization:"Bearer "+process.env.UPSTREAM_TOKEN}}).then(r=>console.log(r.status))'
+docker compose exec gateway node -e 'fetch(new URL("/of-accounts",process.env.UPSTREAM_URL),{headers:{authorization:"Bearer "+process.env.UPSTREAM_TOKEN}}).then(r=>console.log(r.status))'
 ```
 
 **Out of disk or a failed build.** `docker system df`, then `docker system prune -f` (it keeps named volumes).

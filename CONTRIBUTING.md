@@ -19,9 +19,9 @@ sh scripts/check-secrets.sh --all
 ```
 
 A pull request must pass `pnpm -r typecheck && pnpm -r test` and `sh scripts/check-secrets.sh --all`.
-CI runs exactly those, plus a check that `apps/api/drizzle` is in sync with the schema. Add or update a
-test with any behaviour change; auth, tenant isolation and the proxy path have tests that are meant to
-stay green.
+CI runs those, plus a check that `apps/api/drizzle` is in sync with the schema, and a `docker` job that
+builds the image and runs `sh scripts/compose-smoke.sh`. Add or update a test with any behaviour change;
+auth, tenant isolation and the proxy path have tests that are meant to stay green.
 
 Before a public release, `sh scripts/prepublish-check.sh` must also pass. See [SECURITY.md](SECURITY.md)
 for how to report a vulnerability instead of opening an issue.
@@ -42,7 +42,7 @@ put the detail in the body.
 
 ## Pull requests
 
-- Branch off `main`, one topic per PR.
+- Branch off `master`, one topic per PR.
 - Say what changed and how you verified it (the commands you ran).
 - No secrets, no `.env`, no third-party API mirrors or vendor brand names in code, tests or docs.
 - Database changes ship with their generated migration in the same commit.
