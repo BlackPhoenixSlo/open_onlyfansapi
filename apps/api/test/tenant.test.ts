@@ -1,32 +1,37 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
-import { startFakeBackend } from './fake-backend.js';
+import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
-const backend = await startFakeBackend(process.env.BACKEND_JWT_SECRET!, {
-  1: [{ id: 100, label: 'A', ofUsername: 'a', ofDisplayName: 'A', ofAvatarUrl: null, status: 'active' }],
-  2: [{ id: 200, label: 'B', ofUsername: 'b', ofDisplayName: 'B', ofAvatarUrl: null, status: 'active' }],
-});
-const app = await buildApp({ logger: false, backendUrl: backend.url });
+const TOKEN = process.env.UPSTREAM_TOKEN!;
+// One upstream token means one upstream tenant: every linked workspace sees the same accounts.
+const upstream = await startFakeUpstream(TOKEN, [
+  { id: 100, label: 'A', ofUsername: 'a', ofDisplayName: 'A', ofAvatarUrl: null, status: 'active' },
+  { id: 200, label: 'B', ofUsername: 'b', ofDisplayName: 'B', ofAvatarUrl: null, status: 'active' },
+]);
+const app = await buildApp({ logger: false, upstreamUrl: upstream.url });
 
 let a: Awaited<ReturnType<typeof signUp>>;
 let b: Awaited<ReturnType<typeof signUp>>;
 let aKey: string;
+let bKey: string;
 let bKeyId: string;
 
 beforeAll(async () => {
   await resetDb();
   a = await signUp(app, 'a@example.test');
   b = await signUp(app, 'b@example.test');
-  await linkTeam(a.teamId, 1);
-  await linkTeam(b.teamId, 2);
+  // Only A is linked; B stands in for a workspace the operator has not approved.
+  await linkTeam(a.teamId);
   aKey = (await createKey(app, a.cookie, { name: 'a-read', scope: 'read' })).secret;
-  bKeyId = (await createKey(app, b.cookie, { name: 'b-key', scope: 'write' })).key.id;
+  const bCreated = await createKey(app, b.cookie, { name: 'b-key', scope: 'write' });
+  bKey = bCreated.secret;
+  bKeyId = bCreated.key.id;
 });
 afterAll(async () => {
   await app.close();
-  await backend.close();
+  await upstream.close();
   await pool.end();
 });
 
@@ -50,14 +55,24 @@ describe('tenant isolation', () => {
     expect((await app.inject({ method: 'GET', url: '/api/keys', headers: bearer(aKey) })).statusCode).toBe(401);
   });
 
-  it("workspace A's key sees only A's accounts and acts as A's backend user", async () => {
+  it("a linked workspace's key reaches the upstream with the gateway's own token", async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/accounts', headers: bearer(aKey) });
-    expect(res.json().items.map((x: { id: number }) => x.id)).toEqual([100]);
-    expect(backend.requests.at(-1)!.jwt.sub).toBe(1);
+    expect(res.json().items.map((x: { id: number }) => x.id)).toEqual([100, 200]);
+    expect(upstream.requests.at(-1)!.headers.authorization).toBe(`Bearer ${TOKEN}`);
     const who = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(aKey) });
-    expect(who.json().team).toMatchObject({ id: a.teamId, backendUserId: 1 });
-    await app.inject({ method: 'GET', url: '/v1/200/users/me', headers: bearer(aKey) });
-    expect(backend.requests.at(-1)!.jwt.sub).toBe(1);
+    expect(who.json().team).toMatchObject({ id: a.teamId, linked: true });
+  });
+
+  it('an unlinked workspace gets 409 team_not_linked and no upstream request is made', async () => {
+    const before = upstream.requests.length;
+    for (const url of ['/v1/accounts', '/v1/100/users/me']) {
+      const res = await app.inject({ method: 'GET', url, headers: bearer(bKey) });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('team_not_linked');
+    }
+    expect(upstream.requests.length).toBe(before);
+    const who = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(bKey) });
+    expect(who.json().team).toMatchObject({ id: b.teamId, linked: false });
   });
 
   it('a read key cannot write on any method', async () => {

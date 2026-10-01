@@ -15,6 +15,13 @@
       "when": 1790855052335,
       "tag": "0001_request_log",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790875635997,
+      "tag": "0002_drop_backend_user_id",
+      "breakpoints": true
     }
   ]
 }

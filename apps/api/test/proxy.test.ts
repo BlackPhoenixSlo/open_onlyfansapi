@@ -1,20 +1,17 @@
 import { createServer } from 'node:net';
-import { createDecoder } from 'fast-jwt';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { resolveUpstream } from '../src/modules/proxy/routes.js';
-import { startFakeBackend } from './fake-backend.js';
+import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
-const BACKEND_USER = 4242;
-const backend = await startFakeBackend(process.env.BACKEND_JWT_SECRET!, {
-  [BACKEND_USER]: [
-    { id: 12, label: 'Main', ofUsername: 'alpha', ofDisplayName: 'Alpha', ofAvatarUrl: null, status: 'active', egressPort: 9000, agencyId: 3, createdByUserId: 1 },
-    { id: 13, label: null, ofUsername: 'beta', ofDisplayName: 'Beta', ofAvatarUrl: null, status: 'expired', egressPort: 9001, agencyId: 3, createdByUserId: 1 },
-  ],
-});
-const app = await buildApp({ logger: false, backendUrl: backend.url });
+const TOKEN = process.env.UPSTREAM_TOKEN!;
+const upstream = await startFakeUpstream(TOKEN, [
+  { id: 12, label: 'Main', ofUsername: 'alpha', ofDisplayName: 'Alpha', ofAvatarUrl: null, status: 'active', egressPort: 9000, agencyId: 3, createdByUserId: 1 },
+  { id: 13, label: null, ofUsername: 'beta', ofDisplayName: 'Beta', ofAvatarUrl: null, status: 'expired', egressPort: 9001, agencyId: 3, createdByUserId: 1 },
+]);
+const app = await buildApp({ logger: false, upstreamUrl: upstream.url });
 
 let writeKey: string;
 let readKey: string;
@@ -27,21 +24,21 @@ beforeAll(async () => {
   const user = await signUp(app, 'proxy@example.test');
   cookie = user.cookie;
   userId = user.userId;
-  await linkTeam(user.teamId, BACKEND_USER);
+  await linkTeam(user.teamId);
   writeKey = (await createKey(app, cookie, { scope: 'write' })).secret;
   readKey = (await createKey(app, cookie, { scope: 'read' })).secret;
   limitedKey = (await createKey(app, cookie, { scope: 'write', allowedAccountIds: [12] })).secret;
 });
 afterAll(async () => {
   await app.close();
-  await backend.close();
+  await upstream.close();
   await pool.end();
 });
 
-const last = () => backend.requests.at(-1)!;
+const last = () => upstream.requests.at(-1)!;
 
 describe('proxy', () => {
-  it('forwards method, path, query, body and headers; mints a JWT for the linked user', async () => {
+  it('forwards method, path, query, body and headers, authenticated with the upstream token', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/12/chats/1/messages?limit=5&a%20b=c',
@@ -61,8 +58,9 @@ describe('proxy', () => {
     expect(r.headers['content-type']).toBe('application/json');
     expect(r.headers['x-request-id']).toBe(res.headers['x-request-id']);
     expect(r.headers.cookie).toBeUndefined();
-    expect(r.jwt.sub).toBe(BACKEND_USER);
-    expect(Object.keys(createDecoder()(String(r.headers.authorization).slice(7))).sort()).toEqual(['exp', 'iat', 'sub']);
+    // The upstream sees only the gateway's own credential: never the client's API key or session cookie.
+    expect(r.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.stringify(r.headers)).not.toMatch(/gk_|better-auth/);
   });
 
   it('forwards upstream errors and Retry-After unchanged', async () => {
@@ -76,6 +74,8 @@ describe('proxy', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/12/users/me', headers: { cookie, 'x-dashboard': '1' } });
     expect(res.statusCode).toBe(200);
     expect(last().url).toBe('/of/users/me');
+    expect(last().headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(last().headers.cookie).toBeUndefined();
   });
 
   it('proxies a session write with the CSRF headers and logs it without a key (playground)', async () => {
@@ -105,11 +105,11 @@ describe('proxy', () => {
   });
 
   it('read key cannot write', async () => {
-    const before = backend.requests.length;
+    const before = upstream.requests.length;
     const res = await app.inject({ method: 'POST', url: '/v1/12/chats/1/mute', headers: bearer(readKey) });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('insufficient_scope');
-    expect(backend.requests.length).toBe(before);
+    expect(upstream.requests.length).toBe(before);
     expect((await app.inject({ method: 'GET', url: '/v1/12/users/me', headers: bearer(readKey) })).statusCode).toBe(200);
   });
 
@@ -130,18 +130,18 @@ describe('proxy', () => {
     '/v1/12/users%2F..%2F..%2Fof-accounts',
     '/v1/12/users/..%5cof-accounts',
   ])('rejects path traversal %s with 400', async (url) => {
-    const before = backend.requests.length;
+    const before = upstream.requests.length;
     const res = await app.inject({ method: 'GET', url, headers: bearer(writeKey) });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('invalid_path');
-    expect(backend.requests.length).toBe(before);
+    expect(upstream.requests.length).toBe(before);
   });
 
   // inject() normalises literal dot segments before routing, so check the resolver on raw URLs directly.
   it.each(['/v1/12/../of-accounts', '/v1/12/%2e%2e/of-accounts', '/v1/12/users/%2E/me', '/v1/12/a\\..\\b'])(
     'resolver rejects raw %s',
     (raw) => {
-      expect(() => resolveUpstream(raw, 'http://backend.test')).toThrow(/disallowed segment/);
+      expect(() => resolveUpstream(raw)).toThrow(/disallowed segment/);
     },
   );
 
@@ -156,14 +156,16 @@ describe('proxy', () => {
     expect(limited.json().items.map((a: { id: number }) => a.id)).toEqual([12]);
   });
 
-  it('unlinked team gets 409 team_not_linked', async () => {
+  it('unlinked team gets 409 team_not_linked and reaches no upstream', async () => {
     const other = await signUp(app, 'unlinked@example.test');
     const { secret } = await createKey(app, other.cookie, { scope: 'write' });
+    const before = upstream.requests.length;
     for (const url of ['/v1/12/users/me', '/v1/accounts']) {
       const res = await app.inject({ method: 'GET', url, headers: bearer(secret) });
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('team_not_linked');
     }
+    expect(upstream.requests.length).toBe(before);
   });
 
   it('a body that stalls past the timeout is 504 upstream_timeout, not 500', async () => {
@@ -173,10 +175,10 @@ describe('proxy', () => {
   });
 
   it('an account id outside the int4 range is 404 and still logged', async () => {
-    const before = backend.requests.length;
+    const before = upstream.requests.length;
     const res = await app.inject({ method: 'GET', url: '/v1/99999999999/users/me', headers: bearer(writeKey) });
     expect(res.statusCode).toBe(404);
-    expect(backend.requests.length).toBe(before);
+    expect(upstream.requests.length).toBe(before);
     await waitForLogs([String(res.headers['x-request-id'])]);
   });
 
@@ -198,7 +200,7 @@ describe('proxy', () => {
         s.close(() => resolve(p));
       });
     });
-    const down = await buildApp({ logger: false, backendUrl: `http://127.0.0.1:${port}` });
+    const down = await buildApp({ logger: false, upstreamUrl: `http://127.0.0.1:${port}` });
     try {
       const res = await down.inject({ method: 'GET', url: '/v1/12/users/me', headers: bearer(writeKey) });
       expect(res.statusCode).toBe(502);

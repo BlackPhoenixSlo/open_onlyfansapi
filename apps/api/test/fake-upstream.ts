@@ -1,12 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
-import { createVerifier } from 'fast-jwt';
 
 export type Recorded = {
   method: string;
   url: string;
   headers: Record<string, string | string[] | undefined>;
   body: string | null;
-  jwt: Record<string, unknown>;
 };
 
 type FakeAccount = Record<string, unknown> & { id: number };
@@ -16,13 +15,13 @@ const of = (operationId: string, extra: Record<string, unknown> = {}) => ({ tags
 const pathParam = (name: string) => ({ schema: { type: 'integer' }, in: 'path', name, required: true });
 const queryParam = (name: string, schema: Record<string, unknown>) => ({ schema, in: 'query', name, required: false });
 
-/** Shaped like `@fastify/swagger` output from the backend: `/of/*` operations plus paths the gateway must not publish. */
-export const BACKEND_SPEC = {
+/** Shaped like `@fastify/swagger` output from the upstream: `/of/*` operations plus paths the gateway must not publish. */
+export const UPSTREAM_SPEC = {
   openapi: '3.0.3',
-  info: { title: 'Backend API', version: '1.0.0' },
+  info: { title: 'Upstream API', version: '1.0.0' },
   servers: [{ url: 'http://localhost:3001' }],
   components: {
-    securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
+    securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
     schemas: {
       User: { type: 'object', properties: { avatar: { $ref: '#/components/schemas/Media' } } },
       Media: { type: 'object', properties: { url: { type: 'string' } } },
@@ -35,7 +34,7 @@ export const BACKEND_SPEC = {
         responses: { 200: { description: 'Me', content: { 'application/json': { schema: { $ref: '#/components/schemas/User' } } } } },
       }),
     },
-    // An internal operation under /of/ that the backend does not tag as public.
+    // An internal operation under /of/ that the upstream does not tag as public.
     '/of/internal/egress': { get: { tags: ['internal'], operationId: 'internal.egress', responses: ok } },
     '/of/users/{userId}/posts': {
       get: of('users.posts.list', {
@@ -73,11 +72,10 @@ export const BACKEND_SPEC = {
 };
 
 /**
- * Stand-in for the backend: verifies the minted HS256 JWT like the real one, echoes `/of/*`,
- * serves `/of-accounts` per backend user id (`sub`) and a small OpenAPI spec at `/docs/json` (public, like the real one).
+ * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed,
+ * `/of-accounts` serves one account list and `/docs/json` a small OpenAPI spec.
  */
-export async function startFakeBackend(jwtSecret: string, accountsByUser: Record<number, FakeAccount[]> = {}) {
-  const verify = createVerifier({ key: jwtSecret, algorithms: ['HS256'] });
+export async function startFakeUpstream(token: string, accounts: FakeAccount[] = [], opts: { port?: number; host?: string } = {}) {
   const requests: Recorded[] = [];
   /** Test switch: make `/docs/json` answer 500. */
   const state = { specFails: false };
@@ -86,36 +84,19 @@ export async function startFakeBackend(jwtSecret: string, accountsByUser: Record
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
   app.addHook('onRequest', async (request, reply) => {
-    let jwt: Record<string, unknown> = {};
-    // The backend's spec is public.
-    if (request.url !== '/docs/json') {
-      try {
-        jwt = verify((request.headers.authorization ?? '').replace(/^Bearer /, ''));
-      } catch {
-        return reply.status(401).send({ error: 'TOKEN_EXPIRED' });
-      }
-    }
-    requests.push({
-      method: request.method,
-      url: request.url,
-      headers: request.headers,
-      body: null,
-      jwt,
-    });
+    requests.push({ method: request.method, url: request.url, headers: request.headers, body: null });
+    if (request.headers.authorization !== `Bearer ${token}`) return reply.status(401).send({ error: 'UNAUTHORIZED' });
   });
   app.addHook('preHandler', async (request) => {
     requests.at(-1)!.body = typeof request.body === 'string' ? request.body : null;
   });
 
-  app.get('/docs/json', async (_request, reply) => (state.specFails ? reply.status(500).send({ error: 'boom' }) : BACKEND_SPEC));
-  app.get('/of-accounts', async (request) => {
-    const sub = requests.at(-1)!.jwt.sub as number;
-    return accountsByUser[sub] ?? [];
-  });
+  app.get('/docs/json', async (_request, reply) => (state.specFails ? reply.status(500).send({ error: 'boom' }) : UPSTREAM_SPEC));
+  app.get('/of-accounts', async () => accounts);
   app.all('/of/*', async (request, reply) => {
     reply.header('x-of-cache', 'MISS').header('x-ratelimit-limit', '300').header('x-ratelimit-remaining', '299');
     if (request.url.startsWith('/of/rate-limited')) return reply.status(429).header('retry-after', '42').send({ error: 'RATE_LIMITED' });
-    // Headers, then a body that stalls past the gateway's timeout (BACKEND_TIMEOUT_MS=2000 in tests).
+    // Headers, then a body that stalls past the gateway's timeout (UPSTREAM_TIMEOUT_MS=2000 in tests).
     if (request.url.startsWith('/of/slow-body')) {
       reply.hijack();
       reply.raw.writeHead(200, { 'content-type': 'application/json' });
@@ -126,6 +107,16 @@ export async function startFakeBackend(jwtSecret: string, accountsByUser: Record
     return { echo: true, method: request.method, url: request.url };
   });
 
-  const address = await app.listen({ port: 0, host: '127.0.0.1' });
+  const address = await app.listen({ port: opts.port ?? 0, host: opts.host ?? '127.0.0.1' });
   return { url: address, requests, state, close: () => app.close() };
+}
+
+// `tsx test/fake-upstream.ts`: a dev upstream on FAKE_UPSTREAM_PORT (3001) with one seeded account.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { url } = await startFakeUpstream(
+    process.env.UPSTREAM_TOKEN ?? 'dev-upstream-token',
+    [{ id: 1, label: 'Demo', ofUsername: 'demo', ofDisplayName: 'Demo', ofAvatarUrl: null, status: 'active' }],
+    { port: Number(process.env.FAKE_UPSTREAM_PORT ?? 3001), host: '0.0.0.0' },
+  );
+  console.log(`fake upstream listening on ${url}`);
 }

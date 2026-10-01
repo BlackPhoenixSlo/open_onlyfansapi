@@ -55,7 +55,8 @@ export const whoami = z.object({
     id: z.string(),
     name: z.string(),
     slug: z.string(),
-    backendUserId: z.number().int().nullable(),
+    /** Whether the operator linked this workspace to the upstream (`link-team <slug>`). */
+    linked: z.boolean(),
   }),
   key: apiKey.pick({ id: true, name: true, scope: true, allowedAccountIds: true }).nullable(),
   user: z.object({ id: z.string() }).nullable(),

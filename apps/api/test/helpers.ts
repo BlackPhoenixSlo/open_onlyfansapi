@@ -45,8 +45,9 @@ export async function createKey(
   return res.json() as { key: { id: string; scope: string }; secret: string };
 }
 
-export async function linkTeam(teamId: string, backendUserId: number) {
-  await db.insert(teamBackend).values({ teamId, backendUserId });
+/** What `link-team <slug>` does: marks the workspace as allowed to reach the upstream. */
+export async function linkTeam(teamId: string) {
+  await db.insert(teamBackend).values({ teamId });
 }
 
 export const bearer = (secret: string) => ({ authorization: `Bearer ${secret}` });

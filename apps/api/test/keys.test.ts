@@ -35,7 +35,7 @@ describe('api keys', () => {
 
     const who = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(secret) });
     expect(who.statusCode).toBe(200);
-    expect(who.json()).toMatchObject({ team: { id: teamId, backendUserId: null }, key: { id: key.id, name: 'renamed' } });
+    expect(who.json()).toMatchObject({ team: { id: teamId, linked: false }, key: { id: key.id, name: 'renamed' } });
 
     const revoked = await app.inject({ method: 'DELETE', url: `/api/keys/${key.id}`, headers: dashboard(cookie) });
     expect(revoked.statusCode).toBe(204);

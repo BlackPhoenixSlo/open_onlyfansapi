@@ -3,11 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { LogList } from '../src/contracts.js';
 import { pool } from '../src/db/index.js';
-import { startFakeBackend } from './fake-backend.js';
+import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
-const backend = await startFakeBackend(process.env.BACKEND_JWT_SECRET!);
-const app = await buildApp({ logger: false, backendUrl: backend.url });
+const upstream = await startFakeUpstream(process.env.UPSTREAM_TOKEN!);
+const app = await buildApp({ logger: false, upstreamUrl: upstream.url });
 
 let owner: Awaited<ReturnType<typeof signUp>>;
 let writeKey: { id: string; secret: string };
@@ -28,7 +28,7 @@ const detail = (id: string, cookie = owner.cookie) => app.inject({ method: 'GET'
 beforeAll(async () => {
   await resetDb();
   owner = await signUp(app, 'logs@example.test');
-  await linkTeam(owner.teamId, 7);
+  await linkTeam(owner.teamId);
   const w = await createKey(app, owner.cookie, { name: 'writer', scope: 'write' });
   const r = await createKey(app, owner.cookie, { name: 'reader', scope: 'read' });
   writeKey = { id: w.key.id, secret: w.secret };
@@ -47,7 +47,7 @@ beforeAll(async () => {
   expect(forbidden.statusCode).toBe(403);
   ids.forbidden = forbidden.headers['x-request-id'] as string;
 
-  const down = await buildApp({ logger: false, backendUrl: `http://127.0.0.1:${await freePort()}` });
+  const down = await buildApp({ logger: false, upstreamUrl: `http://127.0.0.1:${await freePort()}` });
   const res = await down.inject({ method: 'GET', url: '/v1/12/users/me', headers: bearer(writeKey.secret) });
   expect(res.statusCode).toBe(502);
   ids.down = res.headers['x-request-id'] as string;
@@ -57,7 +57,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await app.close();
-  await backend.close();
+  await upstream.close();
   await pool.end();
 });
 
