@@ -12,7 +12,7 @@ Add the files an open-source repo needs before its first public push, plus a pre
 - `SECURITY.md` (new): how to report a vulnerability privately (an email placeholder `contact@jackbase.dev` the user replaces), what is in scope (gateway, dashboard, compose), and a short threat summary: the gateway holds one upstream token; API keys are stored hashed; cookie writes need Origin + header.
 - `scripts/prepublish-check.sh` (new, POSIX sh, executable): exits non-zero if any of these are true, printing each failure:
   1. `scripts/check-secrets.sh --all` fails.
-  2. A tracked file outside `docs/spec/`, `.gitignore` and `scripts/check-secrets.sh` contains the string `onlyfansapi` or `ofapi_` (case-insensitive).
+  2. A tracked file outside `docs/spec/`, `.gitignore` and `scripts/check-secrets.sh` contains the third-party brand string or its key prefix (case-insensitive; the patterns live in the script).
   3. `README.md` lacks a line containing "not affiliated".
   4. `LICENSE` is missing or does not contain "GNU AFFERO GENERAL PUBLIC LICENSE".
   5. `docs/spec/pages.md`, `docs/spec/endpoints.md` or `docs/spec/mapping.md` are tracked (they must be moved out or deleted before publishing; print the `git rm --cached` hint, do not run it).
