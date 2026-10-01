@@ -69,16 +69,14 @@ function WorkspaceCard({ team }: { team: Whoami['team'] }) {
           <Input id="ws-slug" value={team.slug} readOnly className="font-mono" />
         </div>
         <div className="space-y-2">
-          <Label>Backend link</Label>
-          {team.backendUserId === null ? (
+          <Label>Upstream link</Label>
+          {team.linked ? (
+            <p className="text-sm">Linked to the upstream</p>
+          ) : (
             <p className="text-sm text-muted-foreground">
               Not linked — run{' '}
-              <code className="rounded bg-muted px-1 py-0.5">
-                pnpm --filter @gateway/api link-team {team.slug} &lt;backendUserId&gt;
-              </code>
+              <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team {team.slug}</code>
             </p>
-          ) : (
-            <p className="text-sm">Linked to backend user #{team.backendUserId}</p>
           )}
         </div>
       </CardContent>

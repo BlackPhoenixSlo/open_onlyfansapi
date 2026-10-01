@@ -25,7 +25,7 @@ export type Op = {
   body: string | null;
 };
 
-export type Spec = { ops: Op[]; backendAvailable: boolean };
+export type Spec = { ops: Op[]; upstreamAvailable: boolean };
 
 const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 
@@ -36,7 +36,7 @@ export const specQuery = queryOptions({
     if (!res.ok) throw new Error(`Could not load the API spec (${res.status})`);
     return {
       ops: operations((await res.json()) as Document),
-      backendAvailable: res.headers.get('x-backend-spec') !== 'unavailable',
+      upstreamAvailable: res.headers.get('x-upstream-spec') !== 'unavailable',
     };
   },
   staleTime: 10 * 60_000,

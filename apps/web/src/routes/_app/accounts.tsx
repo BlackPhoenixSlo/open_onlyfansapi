@@ -8,7 +8,7 @@ import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
 
-const CONNECT_HINT = 'Accounts are connected through the backend app (the desktop app), not here.';
+const CONNECT_HINT = 'Accounts are connected in the upstream service, not here.';
 
 function Accounts() {
   const accounts = useQuery(accountsQuery);
@@ -21,10 +21,8 @@ function Accounts() {
       ) : accounts.isError ? (
         accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked' ? (
           <Empty title="Workspace not linked">
-            {CONNECT_HINT} This workspace isn't linked to a backend user yet. A workspace admin links it with{' '}
-            <code className="rounded bg-muted px-1 py-0.5">
-              pnpm --filter @gateway/api link-team &lt;slug&gt; &lt;backendUserId&gt;
-            </code>{' '}
+            {CONNECT_HINT} This workspace isn't linked to the upstream yet. A workspace admin links it with{' '}
+            <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>{' '}
             (the slug is shown in Settings).
           </Empty>
         ) : (
