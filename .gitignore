@@ -1,0 +1,31 @@
+# --- reference mirror must never enter this repo ---
+*.sitesucker*
+us.sitesucker.mac.sitesucker/
+onlyfansapi.com/
+app.onlyfansapi.com/
+mirror/
+reference/
+
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# deps / build
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+__pycache__/
+*.pyc
+.venv/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
