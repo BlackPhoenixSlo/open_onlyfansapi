@@ -5,6 +5,7 @@ import type { DeliveryStatus, WebhookDelivery, WebhookEndpoint, WebhookEventType
 import { env } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
+import { limiter } from '../../lib/limiter.js';
 import { newWebhookSecret } from '../../lib/signature.js';
 
 type EndpointRow = typeof webhookEndpoint.$inferSelect;
@@ -201,22 +202,7 @@ export async function listDeliveries(
 
 // emit() writes share the pg.Pool with the proxy and dashboard: an upstream burst queues here instead of
 // taking every connection.
-const EMIT_CONCURRENCY = 3;
-let emitting = 0;
-const emitQueue: (() => void)[] = [];
-
-async function limitEmit<T>(fn: () => Promise<T>): Promise<T> {
-  if (emitting < EMIT_CONCURRENCY) emitting++;
-  else await new Promise<void>((resolve) => emitQueue.push(resolve));
-  try {
-    return await fn();
-  } finally {
-    // Hand the slot straight to the next waiter, or free it.
-    const next = emitQueue.shift();
-    if (next) next();
-    else emitting--;
-  }
-}
+const limitEmit = limiter(3);
 
 /**
  * Queues one event for every enabled endpoint of the team that subscribes to `type` (empty events = all;

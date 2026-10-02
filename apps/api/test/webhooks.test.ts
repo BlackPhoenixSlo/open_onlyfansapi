@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
+import { deleteExpired } from '../src/jobs/retention.js';
 import { emit } from '../src/modules/webhooks/service.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
 import { bearer, createKey, dashboard, resetDb, signUp } from './helpers.js';
@@ -149,10 +150,37 @@ describe('webhooks API', () => {
     expect((await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}`, headers: bearer(writeKey) })).statusCode).toBe(404);
   });
 
+  it('shows the secret only to write-scope actors and refuses account-limited keys', async () => {
+    const endpoint = await createEndpoint();
+    const asRead = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}`, headers: bearer(readKey) });
+    expect(asRead.json().endpoint.id).toBe(endpoint.id);
+    expect(asRead.json().endpoint).not.toHaveProperty('secret');
+    const listed = await app.inject({ method: 'GET', url: '/v1/webhooks', headers: bearer(readKey) });
+    expect(listed.json().items[0]).not.toHaveProperty('secret');
+    const asWrite = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}`, headers: bearer(writeKey) });
+    expect(asWrite.json().endpoint.secret).toBe(endpoint.secret);
+    const asSession = await app.inject({ method: 'GET', url: '/v1/webhooks', headers: dashboard(cookie) });
+    expect(asSession.json().items[0].secret).toBe(endpoint.secret);
+
+    const limited = (await createKey(app, cookie, { scope: 'write', allowedAccountIds: [12] })).secret;
+    for (const [method, url] of [
+      ['GET', '/v1/webhooks'],
+      ['GET', '/v1/webhooks/events'],
+      ['GET', `/v1/webhooks/${endpoint.id}`],
+      ['POST', `/v1/webhooks/${endpoint.id}/test`],
+    ] as const) {
+      const res = await app.inject({ method, url, headers: bearer(limited) });
+      expect(res.statusCode, url).toBe(403);
+      expect(res.json().error.code).toBe('account_not_allowed');
+    }
+  });
+
   it('lists deliveries with filters and a cursor, and redelivers as a new row', async () => {
     const endpoint = await createEndpoint();
     const first = await sendTest(endpoint.id);
     const second = await sendTest(endpoint.id);
+    // Distinct timestamps so the newest-first order does not depend on the random ids.
+    await pool.query(`UPDATE webhook_delivery SET created_at = now() - interval '1 minute' WHERE id = $1`, [first]);
 
     const page1 = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}/deliveries?limit=1`, headers: bearer(readKey) });
     expect(page1.json().items.map((d: { id: string }) => d.id)).toEqual([second]);
@@ -293,29 +321,60 @@ describe('worker', () => {
     expect(ids).toHaveLength(50);
   });
 
-  it('refuses private and plain-http targets unless ALLOW_HTTP_WEBHOOKS', async () => {
-    for (const a of ['127.0.0.1', '10.1.2.3', '169.254.169.254', '172.16.0.1', '192.168.1.1', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1']) {
+  it('refuses private targets unless ALLOW_HTTP_WEBHOOKS, and link-local always', async () => {
+    const privateAddresses = ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '192.0.0.8', '198.18.0.1', '224.0.0.1', '240.0.0.1'];
+    for (const a of [...privateAddresses, '::1', 'fd00::1', '64:ff9b::7f00:1', '2002:7f00:1::1', '::ffff:127.0.0.1', '169.254.169.254', 'fe80::1']) {
       expect(isPrivateAddress(a), a).toBe(true);
     }
     for (const a of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111']) expect(isPrivateAddress(a), a).toBe(false);
+
+    // With the flag: loopback is fine, link-local (cloud metadata) is not.
+    await expect(assertDeliverable(new URL('http://127.0.0.1/h'))).resolves.toBeUndefined();
+    await expect(assertDeliverable(new URL('http://169.254.169.254/latest'))).rejects.toThrow('link-local');
+    await expect(assertDeliverable(new URL('http://[fe80::1]/h'))).rejects.toThrow('link-local');
 
     const endpoint = await createEndpoint();
     env.ALLOW_HTTP_WEBHOOKS = false;
     await expect(assertDeliverable(new URL('https://localhost/h'))).rejects.toThrow('private address');
     await expect(assertDeliverable(new URL('https://[::1]/h'))).rejects.toThrow('private address');
-    // An endpoint created while http was allowed is refused at delivery time, as a failed attempt.
+    // An endpoint saved while the flag was on is refused at delivery time, as a failed attempt.
     const id = await sendTest(endpoint.id);
     expect(await deliverDue()).toBe(1);
-    expect(await delivery(id)).toMatchObject({ status: 'pending', attempts: 1, last_status_code: null, last_error: 'webhook URLs must use https://' });
+    expect(await delivery(id)).toMatchObject({
+      status: 'pending',
+      attempts: 1,
+      last_status_code: null,
+      last_error: '127.0.0.1 resolves to a private address',
+    });
     expect(received).toHaveLength(0);
   });
 
-  it('completion only touches pending rows', async () => {
+  it('a completion that outlived its lease changes nothing', async () => {
     const endpoint = await createEndpoint();
     const id = await sendTest(endpoint.id);
-    await deliverDue();
-    await completeDelivery(id, endpoint.id, { statusCode: 500, error: 'HTTP 500' });
-    expect(await delivery(id)).toMatchObject({ status: 'succeeded', attempts: 1 });
+    const [stale] = await claimDeliveries();
+    // The lease ran out and another worker claimed the row again.
+    await pool.query(`UPDATE webhook_delivery SET next_attempt_at = now() + interval '60 seconds' WHERE id = $1`, [id]);
+    await completeDelivery(stale!, { statusCode: 200, error: null });
+    expect(await delivery(id)).toMatchObject({ status: 'pending', attempts: 0, last_status_code: null });
+    expect((await delivery(id)).due_in).toBeGreaterThan(55);
+
+    // The current lease holder completes normally; a repeat with the same lease is a no-op.
+    await makeDue(id);
+    const [current] = await claimDeliveries();
+    await completeDelivery(current!, { statusCode: 200, error: null });
+    await completeDelivery(current!, { statusCode: 500, error: 'HTTP 500' });
+    expect(await delivery(id)).toMatchObject({ status: 'succeeded', attempts: 1, last_status_code: 200 });
+  });
+
+  it('retention keeps pending deliveries', async () => {
+    const endpoint = await createEndpoint();
+    const pending = await sendTest(endpoint.id);
+    const done = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'succeeded' WHERE id = $1`, [done]);
+    await pool.query(`UPDATE webhook_delivery SET created_at = now() - interval '30 days'`);
+    expect(await deleteExpired('webhook_delivery', 7)).toBe(1);
+    expect((await pool.query('SELECT id FROM webhook_delivery')).rows).toEqual([{ id: pending }]);
   });
 });
 

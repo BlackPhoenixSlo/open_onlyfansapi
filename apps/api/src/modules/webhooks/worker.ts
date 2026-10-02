@@ -3,6 +3,7 @@ import { BlockList, isIPv4 } from 'node:net';
 import { sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { env } from '../../env.js';
+import { limiter } from '../../lib/limiter.js';
 import { envelope, signatureHeaders } from '../../lib/signature.js';
 
 /** Delay before retry n (after the nth finished attempt); the last step repeats. */
@@ -10,6 +11,9 @@ export const BACKOFF_SECONDS = [30, 120, 600, 3600, 21_600];
 /** A claim pushes `next_attempt_at` this far out so no other worker picks the row while it is in flight. */
 const LEASE_SECONDS = 60;
 const BATCH = 20;
+/** POSTs (with their completion writes) in flight at once: the pg.Pool is shared with the proxy and dashboard. */
+const CONCURRENCY = 5;
+/** Per attempt, DNS lookup included. */
 const TIMEOUT_MS = 10_000;
 const MAX_ERROR_LENGTH = 500;
 
@@ -21,6 +25,8 @@ export type Claimed = {
   payload: unknown;
   /** Postgres timestamptz text (raw `execute` rows are not mapped by drizzle). */
   createdAt: string;
+  /** The `next_attempt_at` this claim set, as exact Postgres text: completion is fenced on it. */
+  leasedUntil: string;
   url: string;
   secret: string;
 };
@@ -44,62 +50,89 @@ export async function claimDeliveries(limit = BATCH): Promise<Claimed[]> {
       returning *
     )
     select c.id, c.endpoint_id as "endpointId", c.event_type as "eventType", c.account_id as "accountId",
-      c.payload, c.created_at as "createdAt", e.url, e.secret
+      c.payload, c.created_at as "createdAt", c.next_attempt_at as "leasedUntil", e.url, e.secret
     from claimed c join webhook_endpoint e on e.id = c.endpoint_id`);
   return res.rows;
 }
 
-const blocked = new BlockList();
-for (const [net, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.168.0.0', 16],
-] as const) {
-  blocked.addSubnet(net, prefix, 'ipv4');
-}
-for (const [net, prefix] of [
-  ['::', 128],
-  ['::1', 128],
-  ['fc00::', 7],
-  ['fe80::', 10],
-] as const) {
-  blocked.addSubnet(net, prefix, 'ipv6');
+function blockList(ipv4: [string, number][], ipv6: [string, number][]): BlockList {
+  const list = new BlockList();
+  for (const [net, prefix] of ipv4) list.addSubnet(net, prefix, 'ipv4');
+  for (const [net, prefix] of ipv6) list.addSubnet(net, prefix, 'ipv6');
+  return list;
 }
 
-/** True for private, loopback, link-local and unspecified addresses (IPv4-mapped IPv6 included). */
-export function isPrivateAddress(address: string): boolean {
+/** Link-local, including cloud metadata (169.254.169.254): refused even with ALLOW_HTTP_WEBHOOKS. */
+const linkLocal = blockList([['169.254.0.0', 16]], [['fe80::', 10]]);
+/** Private, loopback, unspecified and special-purpose ranges: refused unless ALLOW_HTTP_WEBHOOKS. */
+const privateNets = blockList(
+  [
+    ['0.0.0.0', 8],
+    ['10.0.0.0', 8],
+    ['100.64.0.0', 10],
+    ['127.0.0.0', 8],
+    ['172.16.0.0', 12],
+    ['192.0.0.0', 24],
+    ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
+  ],
+  [
+    ['::', 128],
+    ['::1', 128],
+    ['64:ff9b::', 96],
+    ['2002::', 16],
+    ['fc00::', 7],
+  ],
+);
+
+/** IPv4-mapped IPv6 (`::ffff:a.b.c.d`) is checked as IPv4. */
+function inList(list: BlockList, address: string): boolean {
   const mapped = /^::ffff:(.+)$/i.exec(address)?.[1];
-  if (mapped && isIPv4(mapped)) return blocked.check(mapped, 'ipv4');
-  return isIPv4(address) ? blocked.check(address, 'ipv4') : blocked.check(address, 'ipv6');
+  if (mapped && isIPv4(mapped)) return list.check(mapped, 'ipv4');
+  return isIPv4(address) ? list.check(address, 'ipv4') : list.check(address, 'ipv6');
 }
 
-/** Refuses non-https URLs and hosts that resolve to a private address, unless ALLOW_HTTP_WEBHOOKS. */
-export async function assertDeliverable(url: URL): Promise<void> {
-  if (env.ALLOW_HTTP_WEBHOOKS) return;
-  if (url.protocol !== 'https:') throw new Error('webhook URLs must use https://');
+export const isLinkLocalAddress = (address: string) => inList(linkLocal, address);
+export const isPrivateAddress = (address: string) => isLinkLocalAddress(address) || inList(privateNets, address);
+
+/** Rejects when `signal` aborts first (dns.lookup takes no signal). */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/**
+ * Refuses hosts that resolve to a link-local address and, unless ALLOW_HTTP_WEBHOOKS, to a private one.
+ * (https-only is enforced when the URL is saved, in service.ts.)
+ */
+export async function assertDeliverable(url: URL, signal: AbortSignal = AbortSignal.timeout(TIMEOUT_MS)): Promise<void> {
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  const addresses = await lookup(host, { all: true });
-  if (addresses.some((a) => isPrivateAddress(a.address))) {
-    throw new Error(`${host} resolves to a private address`);
+  const addresses = await abortable(lookup(host, { all: true }), signal);
+  for (const { address } of addresses) {
+    if (isLinkLocalAddress(address)) throw new Error(`${host} resolves to a link-local address`);
+    if (!env.ALLOW_HTTP_WEBHOOKS && isPrivateAddress(address)) throw new Error(`${host} resolves to a private address`);
   }
 }
 
-/** One POST. Never throws: the outcome is the status code or an error message. */
+/** One POST under a single 10 s deadline. Never throws: the outcome is the status code or an error message. */
 async function post(c: Claimed): Promise<{ statusCode: number | null; error: string | null }> {
+  const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
     const url = new URL(c.url);
-    await assertDeliverable(url);
+    await assertDeliverable(url, signal);
     const body = envelope({ id: c.id, type: c.eventType, createdAt: new Date(c.createdAt), accountId: c.accountId, data: c.payload });
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'user-agent': 'Gateway-Webhooks', ...signatureHeaders(c.secret, c.id, body) },
       body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal,
     });
     await res.body?.cancel();
     return { statusCode: res.status, error: res.status >= 200 && res.status < 300 ? null : `HTTP ${res.status}` };
@@ -111,10 +144,14 @@ async function post(c: Claimed): Promise<{ statusCode: number | null; error: str
 
 /**
  * Records a finished attempt: `attempts + 1`, and `next_attempt_at` overwritten with the real backoff (replacing the
- * lease). 2xx resets the endpoint's breaker; the last failed attempt marks the delivery failed and counts towards
- * pausing the endpoint at WEBHOOK_PAUSE_AFTER consecutive failures.
+ * lease). Fenced on the lease: if this worker outlived it and the row was claimed again (or already completed),
+ * nothing changes. 2xx resets the endpoint's breaker; the last failed attempt marks the delivery failed and counts
+ * towards pausing the endpoint at WEBHOOK_PAUSE_AFTER consecutive failures.
  */
-export async function completeDelivery(id: string, endpointId: string, outcome: { statusCode: number | null; error: string | null }) {
+export async function completeDelivery(
+  c: Pick<Claimed, 'id' | 'endpointId' | 'leasedUntil'>,
+  outcome: { statusCode: number | null; error: string | null },
+) {
   const ok = outcome.error === null;
   const backoff = sql`array[${sql.raw(BACKOFF_SECONDS.join(','))}]`;
   await db.transaction(async (tx) => {
@@ -126,12 +163,12 @@ export async function completeDelivery(id: string, endpointId: string, outcome: 
         last_error = ${outcome.error},
         status = case when ${ok} then 'succeeded' when attempts + 1 >= ${env.WEBHOOK_MAX_ATTEMPTS} then 'failed' else 'pending' end,
         next_attempt_at = now() + make_interval(secs => (${backoff})[least(attempts + 1, ${BACKOFF_SECONDS.length})])
-      where id = ${id} and status = 'pending'
+      where id = ${c.id} and status = 'pending' and next_attempt_at = ${c.leasedUntil}::timestamptz
       returning status`);
     const status = res.rows[0]?.status;
     if (status === 'succeeded') {
       await tx.execute(sql`
-        update webhook_endpoint set consecutive_failures = 0 where id = ${endpointId} and consecutive_failures <> 0`);
+        update webhook_endpoint set consecutive_failures = 0 where id = ${c.endpointId} and consecutive_failures <> 0`);
     } else if (status === 'failed') {
       const pause = sql`consecutive_failures + 1 >= ${env.WEBHOOK_PAUSE_AFTER}`;
       await tx.execute(sql`
@@ -140,29 +177,24 @@ export async function completeDelivery(id: string, endpointId: string, outcome: 
           paused_reason = case when enabled and ${pause} then 'failures' else paused_reason end,
           enabled = case when ${pause} then false else enabled end,
           updated_at = now()
-        where id = ${endpointId}`);
+        where id = ${c.endpointId}`);
     }
   });
 }
 
-/** One worker tick: claim a batch, POST each concurrently, record the outcomes. Returns the number delivered. */
+const limit = limiter(CONCURRENCY);
+
+/**
+ * One worker tick: claim a batch, POST up to CONCURRENCY at a time, record the outcomes. The whole batch settles
+ * before this returns (so the job's overrun guard holds); then it throws if any completion write failed.
+ * Returns the number of deliveries attempted.
+ */
 export async function deliverDue(): Promise<number> {
   const batch = await claimDeliveries();
-  await Promise.all(batch.map(async (c) => completeDelivery(c.id, c.endpointId, await post(c))));
-  return batch.length;
-}
-
-const RETENTION_BATCH = 10_000;
-
-/** Deletes deliveries older than `days`, in batches like the request-log retention. */
-export async function deleteExpiredDeliveries(days: number): Promise<number> {
-  let deleted = 0;
-  for (;;) {
-    const res = await db.execute(sql`
-      delete from webhook_delivery where id in (
-        select id from webhook_delivery where created_at < now() - make_interval(days => ${days}) limit ${RETENTION_BATCH}
-      )`);
-    deleted += res.rowCount ?? 0;
-    if ((res.rowCount ?? 0) < RETENTION_BATCH) return deleted;
+  const results = await Promise.allSettled(batch.map((c) => limit(async () => completeDelivery(c, await post(c)))));
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    throw new AggregateError(failed.map((r) => r.reason), `${failed.length} of ${batch.length} delivery completions failed`);
   }
+  return batch.length;
 }

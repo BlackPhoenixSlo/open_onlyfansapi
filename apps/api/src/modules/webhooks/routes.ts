@@ -11,9 +11,11 @@ import {
   webhookEndpoint,
   webhookEndpointList,
   webhookEventList,
-  type WebhookEventType,
+  webhookEventType,
+  type WebhookEndpoint,
 } from '../../contracts.js';
-import { assertWriteScope } from '../../plugins/actor.js';
+import { AppError } from '../../lib/errors.js';
+import { assertWriteScope, type Actor } from '../../plugins/actor.js';
 import {
   createEndpoint,
   deleteEndpoint,
@@ -33,17 +35,32 @@ const deliveriesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 
-/** Webhook endpoints and their deliveries (API key or dashboard session; writes need write scope). Mounted under /v1. */
+/** The signing secret is shown only to actors that may write (session or write key). */
+function forActor(actor: Actor, endpoint: WebhookEndpoint): WebhookEndpoint {
+  if (actor.scope === 'write') return endpoint;
+  const { secret: _secret, ...rest } = endpoint;
+  return rest;
+}
+
+/**
+ * Webhook endpoints and their deliveries (API key or dashboard session; writes need write scope). Mounted under /v1.
+ * Keys limited to some accounts are refused: endpoints receive every account's events.
+ */
 export default async function webhooksRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', async (request) => assertWriteScope(request.actor, request.method));
+  r.addHook('preHandler', async (request) => {
+    if (request.actor.accountIds !== null) {
+      throw new AppError(403, 'account_not_allowed', 'API keys limited to specific accounts cannot manage webhooks');
+    }
+    assertWriteScope(request.actor, request.method);
+  });
   const params = z.object({ id: z.string() });
   const tags = ['webhooks'];
   const endpointBody = z.object({ endpoint: webhookEndpoint });
   const deliveryBody = z.object({ delivery: webhookDelivery });
 
   r.get('/webhooks', { schema: { tags, response: { 200: webhookEndpointList } } }, async (request) => ({
-    items: await listEndpoints(request.actor.teamId),
+    items: (await listEndpoints(request.actor.teamId)).map((e) => forActor(request.actor, e)),
   }));
 
   r.post('/webhooks', { schema: { tags, body: createWebhookBody, response: { 201: endpointBody } } }, async (request, reply) => {
@@ -52,11 +69,11 @@ export default async function webhooksRoutes(app: FastifyInstance) {
   });
 
   r.get('/webhooks/events', { schema: { tags, response: { 200: webhookEventList } } }, async () => ({
-    items: Object.entries(WEBHOOK_EVENTS).map(([type, description]) => ({ type: type as WebhookEventType, description })),
+    items: webhookEventType.options.map((type) => ({ type, description: WEBHOOK_EVENTS[type] })),
   }));
 
   r.get('/webhooks/:id', { schema: { tags, params, response: { 200: endpointBody } } }, async (request) => ({
-    endpoint: await getEndpoint(request.actor.teamId, request.params.id),
+    endpoint: forActor(request.actor, await getEndpoint(request.actor.teamId, request.params.id)),
   }));
 
   r.patch(

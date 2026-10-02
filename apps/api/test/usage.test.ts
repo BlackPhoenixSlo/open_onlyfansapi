@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { requestLog } from '../src/db/schema.js';
-import { deleteExpiredLogs } from '../src/jobs/retention.js';
+import { deleteExpired } from '../src/jobs/retention.js';
 import { newId } from '../src/lib/ids.js';
 import { createKey, resetDb, signUp } from './helpers.js';
 
@@ -106,7 +106,7 @@ describe('usage', () => {
   });
 
   it('retention deletes only logs older than the cutoff', async () => {
-    expect(await deleteExpiredLogs(14)).toBe(1);
+    expect(await deleteExpired('request_log', 14)).toBe(1);
     expect((await get('/api/overview')).json().requests7d).toBe(6);
   });
 });

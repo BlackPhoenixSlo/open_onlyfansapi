@@ -43,7 +43,7 @@ export const envSchema = z.object({
   LOG_BODIES: z.enum(['errors', 'all', 'none']).default('errors'),
   LOG_BODY_MAX_BYTES: z.coerce.number().int().positive().default(16_384),
   LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(14),
-  /** Local development only: lets webhook endpoints use http:// and private, loopback or link-local hosts. */
+  /** Dev / trusted network only: allows http:// webhook URLs and also relaxes the private-host check (link-local stays blocked). */
   ALLOW_HTTP_WEBHOOKS: bool.default(false),
   /** Attempts per delivery before it is marked failed. */
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().positive().default(6),

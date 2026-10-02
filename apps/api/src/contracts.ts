@@ -154,8 +154,8 @@ export const webhookEndpoint = z.object({
   description: z.string().nullable(),
   /** Empty = every event. */
   events: z.array(z.string()),
-  /** `whsec_…`: verify deliveries with it (Standard Webhooks). */
-  secret: z.string(),
+  /** `whsec_…`: verify deliveries with it (Standard Webhooks). Omitted for read-only keys. */
+  secret: z.string().optional(),
   enabled: z.boolean(),
   /** Why the endpoint is disabled: `failures` = paused by the breaker. */
   pausedReason: z.enum(['failures', 'manual']).nullable(),
