@@ -90,7 +90,7 @@ function Webhooks() {
             <TableRow>
               <TableHead>URL</TableHead>
               <TableHead>Events</TableHead>
-              <TableHead>Health</TableHead>
+              <TableHead className="w-36 min-w-36">Health</TableHead>
               <TableHead>Enabled</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="w-12" />
@@ -106,7 +106,7 @@ function Webhooks() {
                   {w.description && <div className="text-xs text-muted-foreground">{w.description}</div>}
                 </TableCell>
                 <TableCell className="text-xs">{w.events.length === 0 ? 'All events' : w.events.join(', ')}</TableCell>
-                <TableCell>
+                <TableCell className="w-36 min-w-36">
                   <WebhookHealth endpoint={w} />
                 </TableCell>
                 <TableCell>

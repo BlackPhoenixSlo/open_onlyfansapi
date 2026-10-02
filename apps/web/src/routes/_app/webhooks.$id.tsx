@@ -22,7 +22,12 @@ function WebhookPage() {
   const endpoint = useQuery(webhookQuery(id));
   const catalogue = useQuery(webhookEventsQuery);
   const [filters, setFilters] = useState<DeliveryFilters>({});
-  const deliveries = useInfiniteQuery(webhookDeliveriesQuery(id, filters));
+  const deliveries = useInfiniteQuery({
+    ...webhookDeliveriesQuery(id, filters),
+    // Poll while anything listed is still pending.
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((p) => p.items.some((d) => d.status === 'pending')) ? 3000 : false,
+  });
   const [open, setOpen] = useState<WebhookDelivery | null>(null);
 
   const redeliver = useMutation({

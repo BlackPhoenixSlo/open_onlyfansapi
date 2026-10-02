@@ -65,7 +65,8 @@ function toRow(request: FastifyRequest, reply: FastifyReply, { payload, duration
 }
 
 /**
- * Adds request-log hooks to the `/v1` scope (after `authenticate`). Requests without an actor (401s) are not logged.
+ * Adds request-log hooks to the `/v1` scope (after `authenticate`). Requests without an actor (401s) are not logged,
+ * nor are the dashboard session's calls to gateway routes (its own polling); its proxied calls (playground) are.
  * Each row is inserted off the response path; a failed insert is logged, never thrown. Pending inserts finish on close.
  */
 export function captureRequestLogs(scope: FastifyInstance) {
@@ -79,6 +80,7 @@ export function captureRequestLogs(scope: FastifyInstance) {
 
   scope.addHook('onResponse', async (request, reply) => {
     if (!request.actor) return;
+    if (request.actor.keyId === null && request.routeOptions.url !== PROXY_ROUTE) return;
     const durationMs = Math.round(reply.elapsedTime);
     const captured = { payload: payloads.get(request), durationMs, createdAt: new Date(Date.now() - durationMs) };
     setImmediate(() => {

@@ -92,12 +92,16 @@ describe('request logs', () => {
     expect(JSON.stringify(forbidden)).not.toMatch(/hunter2|gk_/);
   });
 
-  it('does not log requests without an actor', async () => {
+  it("does not log requests without an actor, or the dashboard session's calls to gateway routes", async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer('gk_invalid') });
     expect(res.statusCode).toBe(401);
+    const session = await app.inject({ method: 'GET', url: '/v1/whoami', headers: { cookie: owner.cookie, 'x-dashboard': '1' } });
+    expect(session.statusCode).toBe(200);
     const who = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(writeKey.secret) });
     await waitForLogs([who.headers['x-request-id'] as string]);
-    const { rows } = await pool.query('SELECT id, endpoint FROM request_log WHERE id = $1', [res.headers['x-request-id']]);
+    const { rows } = await pool.query('SELECT id, endpoint FROM request_log WHERE id = ANY($1)', [
+      [res.headers['x-request-id'], session.headers['x-request-id']],
+    ]);
     expect(rows).toEqual([]);
     expect((await detail(who.headers['x-request-id'] as string)).json().endpoint).toBe('GET /v1/whoami');
   });

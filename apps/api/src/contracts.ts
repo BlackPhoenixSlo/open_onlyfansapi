@@ -149,8 +149,8 @@ export type WebhookEventType = z.infer<typeof webhookEventType>;
 export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
   'message.received': 'A connected account received a message.',
   'account.session_expired': "A connected account's session expired; reconnect it.",
-  'webhook.test': "Sent by the test route; delivered whatever the endpoint's events filter says.",
-  'upstream.*': 'Any other upstream event, passed through as `upstream.<name>`.',
+  'webhook.test': "Sent by the Test action, regardless of the endpoint's event filter.",
+  'upstream.*': 'Any other upstream event, passed through as upstream.<name>.',
 };
 export const webhookEventList = z.object({ items: z.array(z.object({ type: webhookEventType, description: z.string() })) });
 

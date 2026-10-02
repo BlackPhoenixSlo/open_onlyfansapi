@@ -104,7 +104,8 @@ response, including errors, comes back unchanged.
 - **Playground** (`/playground` in the dashboard): pick an operation (grouped by tag, with search) and an
   account, edit path parameters, query rows and a JSON body, then press Send. You see the status, latency,
   headers and JSON response, and a curl snippet that uses `$API_KEY`. Requests use your dashboard session,
-  so no key is needed in the browser; they are logged with the key "Dashboard".
+  so no key is needed in the browser; account operations sent from it are logged with the key "Dashboard". The
+  dashboard's own calls to gateway routes (such as `/v1/webhooks`) are not logged.
 - **`GET /openapi.json`**: the OpenAPI spec. It holds the gateway's own `/v1` routes plus the upstream's
   account operations, mapped to `/v1/{account}/...` under the `platform` tag. If the upstream's spec can't be
   fetched, you get the gateway routes only and the response header `x-upstream-spec: unavailable`. The spec

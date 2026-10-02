@@ -28,6 +28,24 @@ export class ApiError extends Error {
 
 type Init = Omit<RequestInit, 'body'> & { body?: unknown };
 
+const FIELD_NAMES: Record<string, string> = { url: 'URL', id: 'ID' };
+
+/** `/url Invalid URL; /events/0 Invalid option` (the API's validation_error message) → `URL: Invalid URL; Events 0: Invalid option`. */
+export function formatValidationError(detail: string) {
+  return detail
+    .split('; ')
+    .map((part) => {
+      const m = /^\/(\S*) ([\s\S]*)$/.exec(part);
+      if (!m) return part;
+      const [, path = '', message = ''] = m;
+      if (!path) return message;
+      const [field = '', ...rest] = path.split('/');
+      const name = FIELD_NAMES[field] ?? field.charAt(0).toUpperCase() + field.slice(1);
+      return `${[name, ...rest].join(' ')}: ${message}`;
+    })
+    .join('; ');
+}
+
 export async function api<T>(path: string, init: Init = {}): Promise<T> {
   const { body, ...rest } = init;
   const headers = new Headers(rest.headers);
@@ -43,7 +61,9 @@ export async function api<T>(path: string, init: Init = {}): Promise<T> {
 
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as ErrorBody | null;
-    throw new ApiError(err?.error?.code ?? 'http_error', err?.error?.message ?? res.statusText, res.status);
+    const code = err?.error?.code ?? 'http_error';
+    const message = err?.error?.message ?? res.statusText;
+    throw new ApiError(code, code === 'validation_error' ? formatValidationError(message) : message, res.status);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

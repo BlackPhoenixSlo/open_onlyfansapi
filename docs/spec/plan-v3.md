@@ -188,11 +188,11 @@ parallel with P1a; in the stated order it merges **after** P1a, rebasing.
 - `webhooks.index.tsx`: list with a health badge (ok / failing / paused), enable toggle, create/edit dialog
   (url, events multiselect from `GET /v1/webhooks/events`, reveal secret). Calls the P1a routes.
 - `webhooks.$id.tsx`: deliveries table (status/event filters, cursor "load more"), payload drawer, **Redeliver**.
-- `/api/overview`: add `pausedWebhooks` count and a `needsAttention` list (paused/failing endpoints; optionally
-  accounts not `active`). Home renders the list under the 3 KPI cards; keep it to that — no charts, no onboarding
-  checklist (those stay cut, §7). (The upstream "event gap" indicator is a P1b add, post-1.0; v1.0 Home shows
-  paused/failing endpoints only: there is no local accounts table, and Home must not block on the upstream
-  `/v1/accounts` call, so `needsAttention` items are `kind: 'webhook'` only.)
+- `/api/overview`: add `pausedWebhooks` count and a `needsAttention` list (paused/failing endpoints). Home renders
+  the list under the 3 KPI cards; keep it to that — no charts, no onboarding checklist (those stay cut, §7). (The
+  upstream "event gap" indicator is a P1b add, post-1.0; v1.0 Home shows paused/failing endpoints only: there is no
+  local accounts table, and Home must not block on the upstream `/v1/accounts` call, so `needsAttention` items are
+  `kind: 'webhook'` only.)
 
 **Acceptance.**
 ```
