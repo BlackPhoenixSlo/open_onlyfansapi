@@ -156,6 +156,15 @@ tail), the three plan-v4 §2.1 paths that differ (§1.1), §2.3 event names and 
     Transport failures keep v4's 502 and 504.
   - Responses are buffered, not streamed (api2 is JSON).
   - No ledger rows and no events.
+  - **Query canonicalisation (P1b0, decided in code).** curl_cffi re-quotes the URL after `OFClient` has signed
+    it (`requote_uri`: unreserved escapes decoded, characters outside RFC 3986 reserved/unreserved encoded, every
+    `%` encoded when an escape is invalid). The handler therefore runs `f"{API_BASE}/{path}?{raw query}"` through
+    the same `curl_cffi.requests.utils.requote_uri` before `client.request`, so `Sign` covers exactly the request
+    target OF receives. A wire-level test in `test_passthrough.py` proves signed == sent. `of_client.py` unchanged.
+  - A request body on GET is `400 invalid_body`; a JSON `null` body is sent as no body; lists and scalars pass as-is.
+  - **Known risk, not fixed:** `_http_call` follows redirects; on a cross-host 3xx libcurl re-sends the custom
+    `Sign`/`User-ID`/`X-BC`/`App-Token` headers. Pre-existing for the named routes; fix is `allow_redirects=False`
+    in `of_client.py` if OF ever redirects api2 calls.
   - OpenAPI: one operation per method (`of.passthrough.get`, …), tag `of-api`.
 
 ### 2.2 Named-route responses (the upstream returns the value, the gateway wraps it)
@@ -248,7 +257,7 @@ Signature: <64 lowercase hex>     # HMAC-SHA256(key = UTF-8 bytes of the endpoin
 
 ### 2.5 Parity audit `scripts/parity-audit.mjs` (node:fs only)
 - **`extract <mirror page.html>`** reads only the `<script data-page="app">` JSON → `props.ziggy.routes`, and writes
-  `docs/spec/parity/onlyfansapi-routes.txt`.
+  `docs/spec/parity/reference-routes.txt`.
   - It prints nothing else from the page.
   - The output has one line per `api/` route: `METHODS uri name`, with methods comma-joined, HEAD dropped, sorted by
     uri.
@@ -367,7 +376,7 @@ names (yaml), not v4's: `me` → `fans.py`, `chats*` → `chats.py`, `posts*` an
 - Bootstrap emits `connected` and then `reconnected`.
 
 ### P1c — parity audit
-**Owns.** `scripts/parity-audit.mjs`, `docs/spec/parity/onlyfansapi-routes.txt`, the first
+**Owns.** `scripts/parity-audit.mjs`, `docs/spec/parity/reference-routes.txt`, the first
 `docs/spec/parity/baseline.txt`, and `.github/workflows/ci.yml` (the §2.5 step).
 
 **Acceptance.**
@@ -480,7 +489,7 @@ v5 is released as v2.0.0 (§1.8).
 - **P1b alone:** `services/upstream/{app,events,pump,of_client}.py` (`app.py` after P1b0),
   `routes/{__init__,shape}.py` (`__init__` after P1b0), `tests/conftest.py` (after P1b0), `README.md`,
   `docs/getting-started.md`, `deploy/hostinger.md`, `docs/runbook/ws7-operator-smoke.md`, `docs/video-script.md`.
-- **P1c alone:** `scripts/parity-audit.mjs`, `.github/workflows/ci.yml`, `docs/spec/parity/onlyfansapi-routes.txt`,
+- **P1c alone:** `scripts/parity-audit.mjs`, `.github/workflows/ci.yml`, `docs/spec/parity/reference-routes.txt`,
   and the first `docs/spec/parity/baseline.txt`.
 - **Orchestrator alone:** `docs/spec/parity/baseline.txt` after P1c, and `docs/spec/plan-v5-inventory.md`.
 
@@ -557,7 +566,7 @@ personal data and API key previews.
    already DELETE through the passthrough.*
 4. **Key `account_scope`.** Theirs is `global|inclusive|exclusive`. Our allowlist covers global and inclusive.
    *Default: exclusive scoping stays out.*
-5. **Committing the derived route list.** *Default: commit `docs/spec/parity/onlyfansapi-routes.txt`. It holds only
+5. **Committing the derived route list.** *Default: commit `docs/spec/parity/reference-routes.txt`. It holds only
    the method, URI and name for each route, which is factual. Never commit the yaml, mirror pages or example
    payloads.*
 6. **Passthrough mapping.** Their docs do not say what `_of/{path}` maps to on OnlyFans (inventory G). *Default:
