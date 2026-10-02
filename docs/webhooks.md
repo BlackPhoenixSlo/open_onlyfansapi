@@ -54,13 +54,18 @@ All routes are under `/v1` and accept an API key or the dashboard session (see
 **TBC** types are in the catalogue so you can subscribe now, but the upstream does not emit them yet; until it maps
 those OnlyFans frames they arrive as `upstream.<name>`. Amounts are OnlyFans' gross figures in cents.
 
-`message.received` and `message.sent` carry the fan's message text, and every event goes to every workspace linked
-to the upstream (`link-team`), so anyone with an endpoint in a linked workspace receives that text. The gateway's
+Every event goes to every workspace linked to the upstream (`link-team`). `message.received` and `message.sent`
+carry the fan's message text, and `upstream.*` events carry the upstream's raw payload, which reaches every endpoint
+whose `events` filter is empty. So anyone with an endpoint in a linked workspace receives that text. The gateway's
 own event ledger (used for `/v1/stats`) stores no payloads.
 
-Delivery from the upstream is **at-most-once**: there is no replay. Events that happen while the gateway is down or
-reconnecting to the upstream are not sent; resync from the REST API when you need a complete view. An event the
-upstream sends twice with the same id is delivered once.
+Delivery from the upstream is **at-most-once**: there is no replay. Events are not sent when they happen while the
+gateway is down or reconnecting to the upstream, or while the gateway is more than 1000 events behind, or when the
+ledger insert fails; resync from the REST API when you need a complete view. A catalogued event (not `upstream.*`)
+the upstream sends twice with the same id is queued once.
+
+Run one API process with `RUN_JOBS=true`: each such process opens its own upstream socket, and events the ledger
+cannot deduplicate (`upstream.*`, or sent without an id) are then queued once per process.
 
 ## The request
 
@@ -70,7 +75,10 @@ Every delivery is a `POST` with a JSON body:
 { "id": "whd_...", "type": "message.received", "createdAt": "2026-10-02T12:00:00.000Z", "accountId": 12, "data": { } }
 ```
 
-and three headers:
+The `id` is the delivery's own (`whd_...`): a redelivery gets a new one, and it differs from the event id
+(`evt_...`) the same event carries on the client WebSocket.
+
+It comes with three headers:
 
 | Header | Value |
 |---|---|

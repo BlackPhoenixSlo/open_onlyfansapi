@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { pool } from '../src/db/index.js';
+import { db, pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { subscribe, type GatewayEvent } from '../src/lib/event-bus.js';
 import { startEventSource, type SourceTimings } from '../src/modules/events/source.js';
@@ -15,6 +15,7 @@ const defaults = { ...env };
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger & {
   warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
 };
 const FAST: SourceTimings = { backoffMinMs: 20, backoffMaxMs: 100, staleMs: 5000 };
 
@@ -54,6 +55,7 @@ beforeEach(async () => {
   await pool.query('TRUNCATE event, webhook_delivery');
   seen.length = 0;
   log.warn.mockClear();
+  log.error.mockClear();
   fake.ws.connections = 0;
   fake.ws.maxOpen = 0;
   env.UPSTREAM_WS_URL = wsUrl;
@@ -86,9 +88,9 @@ const frame = (over: Record<string, unknown> = {}) => ({
 });
 
 const eventRows = async () =>
-  (await pool.query('SELECT id, account_id, type, amount_cents, dedup_key, created_at FROM event ORDER BY created_at')).rows;
+  (await pool.query('SELECT id, account_id, type, amount_cents, dedup_key, created_at FROM event ORDER BY created_at, type')).rows;
 const deliveries = async () =>
-  (await pool.query('SELECT team_id, event_type, account_id, payload, status FROM webhook_delivery ORDER BY team_id')).rows as {
+  (await pool.query('SELECT team_id, event_type, account_id, payload, status FROM webhook_delivery ORDER BY team_id, event_type')).rows as {
     team_id: string;
     event_type: string;
     account_id: number;
@@ -138,26 +140,50 @@ describe('upstream event source', () => {
     }
   });
 
-  it('the same id twice: one row, one delivery; amount types fill amount_cents', async () => {
+  it('the same id twice: one row, one delivery; a null id is never deduplicated; amount types fill amount_cents', async () => {
     await connected();
     const tip = frame({ id: 'tip.received:117183:9', type: 'tip.received', payload: { fanId: 42, amountCents: 500 } });
+    const post = frame({ id: null, type: 'post.expired', ts: '2026-10-02T12:01:00.000Z', payload: { postId: 7 } });
     fake.pushFrame(tip);
     fake.pushFrame(tip);
-    fake.pushFrame(frame({ id: null, type: 'post.expired', payload: { postId: 7 } })); // marks the end of the queue
-    await waitFor(async () => (await eventRows()).length === 2, 'two rows');
-    await waitFor(() => seen.length === 2, 'two bus events');
+    fake.pushFrame(post);
+    fake.pushFrame(post);
+    await waitFor(() => seen.length === 3, 'three bus events');
+    await waitFor(async () => (await deliveries()).length === 3, 'three deliveries');
 
     const rows = await eventRows();
     expect(rows.map((r) => [r.type, r.amount_cents, r.dedup_key])).toEqual([
       ['tip.received', 500, 'tip.received:117183:9'],
       ['post.expired', null, null],
+      ['post.expired', null, null],
     ]);
-    expect(seen.map((e) => e.type)).toEqual(['tip.received', 'post.expired']);
+    expect(seen.map((e) => e.type)).toEqual(['tip.received', 'post.expired', 'post.expired']);
     // A subscribes to everything, B only to message.received.
     expect((await deliveries()).map((d) => [d.team_id, d.event_type])).toEqual([
-      [teams.a, 'tip.received'],
       [teams.a, 'post.expired'],
+      [teams.a, 'post.expired'],
+      [teams.a, 'tip.received'],
     ]);
+  });
+
+  it('an amount outside int32 is stored as null; a failed ledger insert is published, not emitted', async () => {
+    await connected();
+    fake.pushFrame(frame({ id: 'tip.received:117183:10', type: 'tip.received', payload: { fanId: 42, amountCents: 2 ** 40 } }));
+    await waitFor(async () => (await deliveries()).length === 1, 'the tip delivery');
+    expect((await eventRows()).map((r) => [r.type, r.amount_cents])).toEqual([['tip.received', null]]);
+
+    const insert = vi.spyOn(db, 'insert').mockImplementationOnce(() => {
+      throw new Error('Failed query: insert … params: hi', { cause: new Error('connection refused') });
+    });
+    fake.pushFrame(frame());
+    await waitFor(() => seen.length === 2, 'the second bus event');
+    await sleep(100);
+    insert.mockRestore();
+    expect(seen[1]!.type).toBe('message.received');
+    expect(await eventRows()).toHaveLength(1);
+    expect(await deliveries()).toHaveLength(1);
+    expect(log.error).toHaveBeenCalledOnce();
+    expect(log.error.mock.calls[0]![0].err.message).toBe('connection refused');
   });
 
   it('upstream.<name>: delivered and published with a fresh evt_ id, not stored', async () => {
@@ -179,15 +205,24 @@ describe('upstream event source', () => {
     fake.pushFrame(frame({ ts: 'yesterday' }));
     fake.pushFrame(frame({ type: 'nope.thing' }));
     fake.pushFrame(frame({ type: 'webhook.test' }));
+    fake.pushFrame(frame({ id: undefined })); // id is required (null allowed)
     fake.pushFrame({ type: 'heartbeat', ts: '2026-10-02T12:00:30.000Z' });
     fake.pushFrame(frame());
     await waitFor(async () => (await deliveries()).length === 2, 'the valid frame');
 
     expect(seen.map((e) => e.type)).toEqual(['message.received']);
     expect(await eventRows()).toHaveLength(1);
-    expect(log.warn).toHaveBeenCalledTimes(6);
     expect(fake.ws.connections).toBe(1);
     expect(fake.sockets.size).toBe(1);
+
+    // Drops are summarised (at most one warning a minute; the rest is flushed on stop), not logged per frame.
+    await source!.stop();
+    source = null;
+    const reports = log.warn.mock.calls.filter((c) => c[1] === 'upstream event frames dropped');
+    expect(reports.length).toBeLessThanOrEqual(2);
+    const total = { malformed: 0, unknown_type: 0, queue_full: 0 };
+    for (const [{ dropped }] of reports) for (const k of Object.keys(total) as (keyof typeof total)[]) total[k] += dropped[k];
+    expect(total).toEqual({ malformed: 5, unknown_type: 2, queue_full: 0 });
   });
 
   it('dropSockets(): exactly one reconnect, never two sockets; a second start reuses the running source', async () => {
@@ -201,6 +236,27 @@ describe('upstream event source', () => {
 
     fake.pushFrame(frame());
     await waitFor(() => seen.length === 1, 'an event on the new socket');
+  });
+
+  it('stop() right after a drop does not reconnect', async () => {
+    await connected();
+    fake.dropSockets();
+    await source!.stop();
+    source = null;
+    await sleep(200);
+    expect(fake.ws.connections).toBe(1);
+  });
+
+  it('a refused handshake is retried with growing backoff and a hint', async () => {
+    env.UPSTREAM_TOKEN = 'wrong-token-0123';
+    source = startEventSource(log, { ...FAST, backoffMinMs: 20, backoffMaxMs: 1000 });
+    const attempts = () => fake.requests.filter((r) => r.url === '/ws').length;
+    const before = attempts();
+    await sleep(600);
+    expect(fake.ws.connections).toBe(0);
+    expect(attempts() - before).toBeGreaterThanOrEqual(2);
+    expect(attempts() - before).toBeLessThanOrEqual(6);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('refused or unreachable: check UPSTREAM_WS_URL / UPSTREAM_TOKEN'));
   });
 
   it('reconnects after the stale window when the upstream goes silent; heartbeats keep it open', async () => {

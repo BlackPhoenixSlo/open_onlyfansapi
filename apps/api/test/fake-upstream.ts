@@ -78,14 +78,10 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
 /**
  * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed,
  * `/of-accounts` serves one account list and `/docs/json` a small OpenAPI spec. `/ws` (plan-v4 §2.2) instead needs
- * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every `heartbeatMs` and
- * whatever `pushFrame()` is given.
+ * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
+ * `pushFrame()` is given.
  */
-export async function startFakeUpstream(
-  token: string,
-  accounts: FakeAccount[] = [],
-  opts: { port?: number; host?: string; heartbeatMs?: number } = {},
-) {
+export async function startFakeUpstream(token: string, accounts: FakeAccount[] = [], opts: { port?: number; host?: string } = {}) {
   const requests: Recorded[] = [];
   /** Test switch: make `/docs/json` answer 500. */
   const state = { specFails: false };
@@ -118,10 +114,7 @@ export async function startFakeUpstream(
     sockets.add(socket);
     ws.connections++;
     ws.maxOpen = Math.max(ws.maxOpen, sockets.size);
-    const heartbeat = setInterval(
-      () => socket.send(JSON.stringify({ type: 'heartbeat', ts: new Date().toISOString() })),
-      opts.heartbeatMs ?? 30_000,
-    );
+    const heartbeat = setInterval(() => socket.send(JSON.stringify({ type: 'heartbeat', ts: new Date().toISOString() })), 30_000);
     socket.on('close', () => {
       clearInterval(heartbeat);
       sockets.delete(socket);

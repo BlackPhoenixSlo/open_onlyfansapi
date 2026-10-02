@@ -10,8 +10,8 @@ let current: { stop: () => Promise<void> } | null = null;
 
 /**
  * The single upstream event socket (`UPSTREAM_WS_URL`; unset = nothing opened). Reconnects with jittered backoff
- * (reset on the first frame of a connection) and when no frame (heartbeats included) arrives within the stale window.
- * `stop()` closes the socket, clears every timer and waits for queued frames to be ingested.
+ * (reset by every frame) and when no frame (heartbeats included) arrives within the stale window.
+ * `stop()` closes the socket, clears every timer, discards queued frames and waits for the one in flight.
  */
 export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings = TIMINGS): { stop: () => Promise<void> } {
   const url = env.UPSTREAM_WS_URL;
@@ -51,30 +51,30 @@ export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings 
   function connect() {
     const sock = new WebSocket(url!, protocols);
     socket = sock;
-    let first = true;
+    let opened = false;
     armStale(sock); // also bounds a handshake that never completes
-    sock.onopen = () => log.info('upstream event socket connected');
+    sock.onopen = () => {
+      opened = true;
+      log.info('upstream event socket connected');
+    };
     sock.onmessage = (ev) => {
       if (socket !== sock) return;
       armStale(sock);
-      if (first) {
-        first = false;
-        backoff = timings.backoffMinMs;
-      }
-      if (typeof ev.data !== 'string') {
-        log.warn('upstream event frame is binary; dropped');
-        return;
-      }
-      const frame = parseFrame(ev.data, log);
-      if (frame && frame !== 'heartbeat') queue.push(frame);
+      backoff = timings.backoffMinMs;
+      const frame = typeof ev.data === 'string' ? parseFrame(ev.data) : 'malformed';
+      if (frame === 'heartbeat') return;
+      if (typeof frame === 'string') queue.drop(frame);
+      else queue.push(frame);
     };
-    sock.onclose = (ev) => {
+    // A refused handshake fires `error` and, in Node's undici, no `close`: either one means reconnect.
+    const down = (close?: { code: number; reason: string }) => {
       if (socket !== sock) return;
-      log.warn({ code: ev.code, reason: ev.reason }, 'upstream event socket closed; reconnecting');
+      if (opened) log.warn({ ...close }, 'upstream event socket closed; reconnecting');
+      else log.warn('upstream event socket refused or unreachable: check UPSTREAM_WS_URL / UPSTREAM_TOKEN; retrying');
       reconnect(sock);
     };
-    // An error is always followed by a close event.
-    sock.onerror = () => {};
+    sock.onclose = (ev) => down({ code: ev.code, reason: ev.reason });
+    sock.onerror = () => down();
   }
 
   connect();
@@ -84,6 +84,7 @@ export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings 
       clearTimeout(reconnectTimer);
       if (socket) reconnect(socket);
       if (current === handle) current = null;
+      queue.clear();
       await queue.idle();
     },
   };
