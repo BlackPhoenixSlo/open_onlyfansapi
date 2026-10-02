@@ -423,6 +423,9 @@ table's first path segment; section A is canonical per row.
   - `POST chats/{chat_id}/messages` has no `client:` mark, but it already exists from v4, so it ships.
 - **Baseline growth.** `baseline.txt` holds 8 operations after Phase 1 and 99 once all three waves have merged
   (P3's `PUT/PATCH user-lists/{userListId}` is two operations).
+  **Actual (2026-10-02 execution):** 8 after Phase 1, 30 after P2, 41 after P4, **73** after P3. The 26-operation
+  gap is the `?` rows listed in the inventory's "v5 execution notes" (OF path or body unknown; skipped, not
+  guessed, per the rule below) and stays reachable through the passthrough.
 
 **Every wave:**
 - Implement each shipping row in the inventory for its groups. The upstream returns the `data` value and
