@@ -163,7 +163,7 @@ function check(specFile, flags) {
 function shape(value, path = '$', acc = new Map()) {
   const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
   const prev = acc.get(path);
-  acc.set(path, prev && prev !== type ? `${prev}|${type}` : type);
+  acc.set(path, prev ? [...new Set([...prev.split('|'), type])].sort().join('|') : type);
   if (type === 'array') value.forEach((v) => shape(v, `${path}[]`, acc));
   else if (type === 'object') for (const k of Object.keys(value)) shape(value[k], `${path}.${k}`, acc);
   return acc;

@@ -15,7 +15,7 @@ const VIEWPORT = { width: 1440, height: 900 };
 const DASHBOARD = { origin: BASE_URL, 'x-dashboard': '1' };
 /** Proxied calls for the logs and usage pages; the fake upstream echoes any `/of/*` path. */
 const SEED_PATHS = [
-  ...Array(5).fill('/v1/1/users/me'),
+  ...Array(5).fill('/v1/1/me'),
   '/v1/1/users/42/posts?limit=10&order=desc',
   '/v1/1/chats/7/messages?limit=20',
 ];
@@ -95,14 +95,14 @@ const ready = {
   docs: (p) => p.getByText('Gateway API'),
 };
 
-/** Playground: picks the users/me operation, sends it and waits for the response. */
+/** Playground: picks the me operation, sends it and waits for the response. */
 async function sendUsersMe(page, { typed = false } = {}) {
   await page.getByRole('button', { name: 'Send' }).waitFor();
   if (typed) {
     await page.getByLabel('Search operations').pressSequentially('users me', { delay: 90 });
     await beat(page, 900);
   }
-  await page.getByRole('button').filter({ hasText: /\/users\/me$/ }).click();
+  await page.getByRole('button').filter({ hasText: /^GET \/v1\/\{account\}\/me$/ }).click();
   if (typed) await beat(page, 900);
   await page.getByRole('button', { name: 'Send' }).click();
   await page.getByText(/^\d+ ms$/).waitFor();

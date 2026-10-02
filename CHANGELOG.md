@@ -62,7 +62,11 @@ so a mixed pair loses events until both run 2.0. The database migration runs on 
    full OnlyFans message object), and amounts are no longer read from the payload. See the event table.
 4. **Three per-account paths were renamed**, with no aliases: `users/me` is now `me`, `vault/media` is now
    `media/vault`, and `vault/media/{mediaId}` is now `media/vault/{media_id}`. The query parameters of the moved
-   routes use the reference API's names. `/v1/{account}/_of/users/me` still returns OF's own body.
+   routes use the reference API's names: `chats` takes `limit` (1-50), `offset`, `order` (`recent`|`old`),
+   `skip_users` (`all`|`none`), `filter` and `query`; `chats/{chat_id}/messages` takes `limit` (1-100), `order`
+   (`desc`|`asc`), `first_id` (desc cursor) and `offset` (asc only); `posts` takes `limit` (1-100) and `offset`;
+   `media/vault` takes `limit` (1-100), `offset`, `query`, `field`, `sort`, `type` (`all`|`photo`|`gif`|`video`|`audio`)
+   and `list`. `/v1/{account}/_of/users/me` still returns OF's own body.
 5. **Per-account responses are wrapped.** A `2xx` JSON response of a named `/v1/{account}/...` route is now
    `{"data": <1.x body>, "_meta": {}}`, plus `"_pagination": {"next_page": "<absolute URL>"}` when there is a next
    page. Errors, `204` and empty responses, the `_of` passthrough, and the team-level routes (`/v1/whoami`,

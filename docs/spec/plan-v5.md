@@ -174,12 +174,19 @@ tail), the three plan-v4 §2.1 paths that differ (§1.1), §2.3 event names and 
   - A paged list sets `x-next-page: /<tail>?<next query>` only when the page is full (as many items as the limit)
     **and** OF reports `hasMore`. OF's `hasMore` is unreliable (of_client.py:766, :1147, :1340), so a short or empty
     page always ends pagination. The header is new: nothing sets or reads it today.
+    **Exception (P1b, decided in code):** `chats/{chat_id}/messages` with `order=desc` sets the header whenever the
+    page is non-empty and `hasMore` is true, because OF ignores `limit` there (of_client.py ~457: 50 → 34) and the
+    cursor is an id, so a short page is safe. `order=asc` pages by `offset` under the full-page rule. Every `limit`
+    is bounded (`ge=1, le=<cap>`) so a full page is reachable, and the next query is built from the handler's
+    declared parameters only.
   - Query and body field names are theirs (yaml), and the handler maps them to OF's wire names.
   - Query parameters are plain typed values with defaults (v4 §2.1 rule).
 - **Gateway** (`modules/proxy/routes.ts`, the only place per-account responses pass). The proxy wraps a 2xx response
   whose `content-type` is JSON, except when:
-  - the response has a `content-encoding` header;
-  - the status is 204 or the body is empty;
+  - the body is not exactly one complete JSON value (validated with `JSON.parse`, result discarded; this also
+    covers 204 and empty bodies). A `content-encoding` header is **not** a reason to skip: undici decodes gzip/br
+    before the proxy sees the body, so the body is always plaintext (P1a, decided in code);
+  - `_pagination` is added only when `x-next-page` matches `^/(?!/)`;
   - the first path segment after `/v1/{account}/`, **decoded**, is `_of` (so `%5Fof` cannot bypass the rule).
 
   Team-level routes (`/v1/whoami`, `/v1/accounts`, `/v1/webhooks*`) are separate Fastify routes and never reach the

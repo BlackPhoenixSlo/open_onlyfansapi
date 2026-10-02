@@ -187,6 +187,9 @@ docker compose up -d --build
 docker image prune -f      # drops the image the build replaced
 ```
 
+Before updating across a major version, read the "Upgrading" section of `CHANGELOG.md` (2.0 renames events,
+changes the webhook signature and wraps responses; both images are rebuilt together by the commands above).
+
 Migrations run on start and are **forward-only**: there is no down path, so take the backup above before every
 update. Only one gateway instance runs, so migrations never race.
 
