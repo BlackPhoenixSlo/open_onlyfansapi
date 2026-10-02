@@ -116,6 +116,7 @@ describe('request logs', () => {
     expect(await pick('?q=%2F12%2Fchats')).toEqual([ids.forbidden]); // path only
     expect(await pick('?q=%3Aid%2FMUTE')).toEqual([ids.forbidden]); // endpoint only, case-insensitive
     expect(await pick('?q=%25')).toEqual([]); // LIKE wildcards are literal
+    expect(await pick('?q=v1%2F12')).toEqual([ids.down, ids.forbidden, ids.ok]); // not an id: substring search
     expect(await pick(`?to=${new Date(Date.now() + 60_000).toISOString()}&from=2020-01-01T00:00:00Z&status=2xx`)).toContain(ids.ok);
   });
 

@@ -148,7 +148,8 @@ no new routes and no `routeTree.gen.ts` change.
 **Changes.**
 - **Log search.** Extend `q` so it also matches a `path`/`endpoint` substring (currently request-id only), keep it
   index-friendly (prefix match inside the bounded range). `method`/`endpoint`/`status`/`keyId`/`accountId` filters
-  already ship, so this is the only log gap.
+  already ship, so this is the only log gap. As built, `q` is a substring (not prefix) match, since the
+  `q=users/me` acceptance below can only match as a substring; a `req_…` value stays an id lookup.
 - **Per-key usage link (web only).** From `keys.tsx`, link each key to `/usage?groupBy=key` (reuses the shipped
   `groupBy=key` aggregation; the user spots their key in the grouped table — no new endpoint, no `usage.tsx` change).
 - **Verify (no build).** Key scope + account-allowlist editing already persists via `PATCH /api/keys/:id` (shipped

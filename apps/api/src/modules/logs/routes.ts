@@ -16,7 +16,7 @@ const listQuery = z.object({
   method: z.string().toUpperCase().optional(),
   /** case-insensitive substring of the normalised endpoint */
   endpoint: z.string().optional(),
-  /** request id, or a case-insensitive substring of the path or endpoint */
+  /** request id (`req_…`), else a case-insensitive substring of the path or endpoint */
   q: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -80,9 +80,15 @@ export default async function logsRoutes(app: FastifyInstance) {
     if (f.method) where.push(eq(requestLog.method, f.method));
     if (f.endpoint) where.push(ilike(requestLog.endpoint, contains(f.endpoint)));
     if (f.q?.trim()) {
-      // Evaluated as a filter while walking the (team_id, created_at) index range, so the scan stays bounded by LIMIT.
       const q = f.q.trim();
-      where.push(or(eq(requestLog.id, q), ilike(requestLog.path, contains(q)), ilike(requestLog.endpoint, contains(q))));
+      // Request ids carry a `req_` prefix that paths/endpoints never do, so an id stays a primary-key lookup.
+      // The substring search has no index of its own; it is bounded by the team's (team_id, created_at) index range,
+      // the retention window (LOG_RETENTION_DAYS) and from/to.
+      where.push(
+        q.startsWith('req_')
+          ? eq(requestLog.id, q)
+          : or(ilike(requestLog.path, contains(q)), ilike(requestLog.endpoint, contains(q))),
+      );
     }
     if (f.cursor) {
       const [ts, id] = decodeCursor(f.cursor);
