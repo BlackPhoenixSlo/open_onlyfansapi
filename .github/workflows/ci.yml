@@ -62,5 +62,11 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: ruff check .
       - run: pytest -q
+      - name: parity audit (plan-v5 §2.5)
+        env:
+          UPSTREAM_TOKEN: ci-dummy-upstream-token
+        run: >-
+          python -c 'import json, app; print(json.dumps(app.app.openapi()))' > /tmp/up.json &&
+          node ../../scripts/parity-audit.mjs check /tmp/up.json
       - name: image builds
         run: docker build -t gateway-upstream:ci .

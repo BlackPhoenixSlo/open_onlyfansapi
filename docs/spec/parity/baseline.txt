@@ -1,0 +1,5 @@
+GET chats
+GET chats/{}/messages
+GET posts
+GET posts/{}
+POST chats/{}/messages
