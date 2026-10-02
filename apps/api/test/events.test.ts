@@ -274,6 +274,14 @@ describe('upstream event source', () => {
     expect(fake.ws.maxOpen).toBe(1);
   });
 
+  it('a stale socket whose upstream never answers the close is torn down, not left open', async () => {
+    fake.state.ignoreClose = true;
+    await connected({ ...FAST, staleMs: 250 });
+    fake.state.ignoreClose = false;
+    await waitFor(() => fake.ws.connections === 2, 'the stale reconnect');
+    await waitFor(() => fake.sockets.size === 1, 'the unanswered socket to be closed', 2000);
+  });
+
   it('opens no socket when UPSTREAM_WS_URL is unset', async () => {
     env.UPSTREAM_WS_URL = undefined;
     source = startEventSource(log, FAST);

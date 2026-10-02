@@ -1,4 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
+// `ws`, not the global WebSocket (deviates from plan-v4 §1.2): only `ws` can terminate() a peer that never answers close.
+import WebSocket from 'ws';
 import { env } from '../../env.js';
 import { createIngestQueue, parseFrame } from './ingest.js';
 
@@ -28,12 +30,12 @@ export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings 
   let reconnectTimer: NodeJS.Timeout | undefined;
   let staleTimer: NodeJS.Timeout | undefined;
 
-  /** Forgets the socket (its late events are ignored), closes it and schedules the next connect. */
+  /** Forgets the socket (its late events are ignored), drops its TCP connection and schedules the next connect. */
   function reconnect(sock: WebSocket) {
     if (socket !== sock) return;
     socket = null;
     clearTimeout(staleTimer);
-    sock.close();
+    sock.terminate();
     if (stopped) return;
     const delay = backoff / 2 + Math.random() * (backoff / 2);
     backoff = Math.min(backoff * 2, timings.backoffMaxMs);
@@ -66,15 +68,15 @@ export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings 
       if (typeof frame === 'string') queue.drop(frame);
       else queue.push(frame);
     };
-    // A refused handshake fires `error` and, in Node's undici, no `close`: either one means reconnect.
-    const down = (close?: { code: number; reason: string }) => {
+    // A refused handshake closes with 1006 before `open`: hence the hint.
+    const down = (close: { code: number; reason: string }) => {
       if (socket !== sock) return;
-      if (opened) log.warn({ ...close }, 'upstream event socket closed; reconnecting');
+      if (opened) log.warn(close, 'upstream event socket closed; reconnecting');
       else log.warn('upstream event socket refused or unreachable: check UPSTREAM_WS_URL / UPSTREAM_TOKEN; retrying');
       reconnect(sock);
     };
     sock.onclose = (ev) => down({ code: ev.code, reason: ev.reason });
-    sock.onerror = () => down();
+    sock.onerror = () => {}; // ws always follows error with close; a listener is still required
   }
 
   connect();

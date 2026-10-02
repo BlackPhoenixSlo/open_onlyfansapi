@@ -83,8 +83,8 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
  */
 export async function startFakeUpstream(token: string, accounts: FakeAccount[] = [], opts: { port?: number; host?: string } = {}) {
   const requests: Recorded[] = [];
-  /** Test switch: make `/docs/json` answer 500. */
-  const state = { specFails: false };
+  /** Test switches: make `/docs/json` answer 500; make `/ws` sockets accepted from now on never answer a close. */
+  const state = { specFails: false, ignoreClose: false };
   /** Open `/ws` sockets, and how many were ever accepted. */
   const sockets = new Set<WebSocket>();
   const ws = { connections: 0, maxOpen: 0 };
@@ -112,6 +112,7 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
   app.get('/of-accounts', async () => accounts);
   app.get('/ws', { websocket: true }, (socket) => {
     sockets.add(socket);
+    if (state.ignoreClose) socket.close = () => {}; // an unresponsive peer: the client's close frame gets no reply
     ws.connections++;
     ws.maxOpen = Math.max(ws.maxOpen, sockets.size);
     const heartbeat = setInterval(() => socket.send(JSON.stringify({ type: 'heartbeat', ts: new Date().toISOString() })), 30_000);

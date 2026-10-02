@@ -30,7 +30,7 @@ never enters history.
 1. **One repo** (owner, 2026-10-02): `services/upstream/` is tracked. Prepublish 2b stays as the guard for a future
    public publish, reworded (P0a).
 2. **`@fastify/websocket`** (v11 for Fastify 5; brings `ws`) serves the client socket — overrides plan-v3 §2.5. No
-   other new gateway dependency; the upstream consumer keeps Node's global `WebSocket`.
+   other new gateway dependency; the upstream consumer uses `ws` too, since global `WebSocket` has no `terminate()` and a stale socket against an unresponsive upstream leaked (follow-up v4fu/stale-reconnect).
 3. **One upstream socket, in-process fan-out.** The plan-v3 P1b singleton (`RUN_JOBS` + `UPSTREAM_WS_URL`) feeds the
    event ledger, webhooks (`emit` per linked workspace) and client sockets (in-process bus). One gateway process.
 4. **The upstream normalises.** OF frame → catalogue type happens in `services/upstream/events.py`, the only code that
