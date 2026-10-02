@@ -7,7 +7,8 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from deps import Client
+from deps import ApiError, Client
+from of_client import API_BASE
 from routes.shape import next_page, page_items
 
 router = APIRouter(prefix="/of", tags=["of-api"])
@@ -134,8 +135,13 @@ def chats_messages_like(client: Client, chat_id: int, message_id: int) -> Any:
 
 @router.post("/chats/{chat_id}/messages/{message_id}/pin", operation_id="chats.messages.pin")
 def chats_messages_pin(client: Client, chat_id: int, message_id: int) -> Any:
-    # OF's pin is a toggle: pinning a pinned message unpins it and still answers success.
-    pinned = client.get_pinned_messages(chat_id)
+    # OF's pin is a toggle: pinning a pinned message unpins it and still answers success. Read the
+    # pinned list first and refuse rather than toggle blind when OF's answer is not the expected page.
+    page = client.request_json("GET", f"{API_BASE}/chats/{chat_id}/messages", params={
+        "limit": 50, "order": "desc", "skip_users": "all", "filter": "pinned"})
+    pinned = page_items(page)
+    if pinned is None:
+        raise ApiError(502, "of_unexpected_response", "OF's pinned list had an unexpected shape")
     if any(isinstance(m, dict) and m.get("id") == message_id for m in pinned):
         return {"success": True}
     return client.pin_message(message_id, chat_id)
@@ -159,7 +165,8 @@ def mass_messaging_list(
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    page = client.scheduled_messages(limit=limit, offset=offset)  # OF's message queue
+    # Queue entries (yaml: id/isReady/isDone/total/pending), so OF's message queue; history is the overview.
+    page = client.scheduled_messages(limit=limit, offset=offset)
     next_page(request, response, page, limit, {}, offset=offset + limit)
     return page
 
@@ -169,8 +176,9 @@ class MassMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str
-    userIds: list[int] = Field(min_length=1, max_length=1)  # one recipient per queue entry
-    scheduledDate: str  # ISO 8601 with an offset
+    userIds: list[int] = Field(min_length=1, max_length=1, description=(
+        "Exactly one recipient; multi-recipient lists and send-now go through the passthrough."))
+    scheduledDate: str = Field(description="Required: ISO 8601 with an offset.")
     price: float = 0
     mediaFiles: list[int] = []
     previews: list[int] = []
@@ -186,12 +194,18 @@ def mass_messaging_create(client: Client, body: MassMessage) -> Any:
 
 @router.get("/mass-messaging/overview", operation_id="massMessaging.overview")
 def mass_messaging_overview(
-    client: Client,
+    request: Request, response: Response, client: Client,
     startDate: str,  # 'YYYY-MM-DD HH:MM:SS'
     endDate: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    return client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit)
+    # yaml: takes startDate/endDate, returns {hasMore, items} with sentCount/viewedCount: OF's stats history.
+    page = client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
+    if isinstance(page, dict):  # OF's `{hasMore, items}` page, read as `{list, hasMore}`
+        next_page(request, response, {"list": page.get("items"), "hasMore": page.get("hasMore")}, limit,
+                  {"startDate": startDate, "endDate": endDate}, offset=offset + limit)
+    return page
 
 
 @router.delete("/mass-messaging/{mass_messaging}", operation_id="massMessaging.delete")

@@ -51,8 +51,8 @@ def _page(n, has_more):
     ("post", "/of/mass-messaging",
      {"text": "hi", "userIds": [1002], "scheduledDate": "2026-10-03T18:00:00+00:00"},
      ("POST", f"{OF}/messages/queue", SENT), {"id": 1005, "isReady": False}),
-    ("get", "/of/mass-messaging/overview?startDate=2026-10-01%2000:00:00&endDate=2026-10-02%2000:00:00", None,
-     ("GET", f"{OF}/users/me/stats/messages/group?{DATES}&limit=50&offset=0", None),
+    ("get", "/of/mass-messaging/overview?startDate=2026-10-01%2000:00:00&endDate=2026-10-02%2000:00:00&offset=5", None,
+     ("GET", f"{OF}/users/me/stats/messages/group?{DATES}&limit=50&offset=5", None),
      {"hasMore": False, "items": [{"id": 1005, "sentCount": 2}]}),
     ("delete", "/of/mass-messaging/1005", None,
      ("DELETE", f"{OF}/messages/queue/1005", None), {"success": True, "queue": {"id": 1005}}),
@@ -91,6 +91,15 @@ def test_pinned_returns_the_rows(client, of_fake):
 PINNED = ("GET", f"{OF}/chats/1002/messages?limit=50&order=desc&skip_users=all&filter=pinned", None)
 
 
+@pytest.mark.parametrize("body", [[{"id": 1003}], {"list": None, "hasMore": False}, {"hasMore": False}, "text"])
+def test_pin_refuses_when_the_pinned_list_is_unreadable(client, of_fake, body):
+    """An unexpected answer could hide that the message is pinned: refuse rather than toggle it off."""
+    of_fake.respond(body)
+    r = client.post("/of/chats/1002/messages/1003/pin", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "of_unexpected_response")
+    assert of_fake.calls == [PINNED]
+
+
 def test_pin_pins_an_unpinned_message(client, of_fake):
     of_fake.respond({"list": [{"id": 1004}], "hasMore": False})
     of_fake.respond(OK)
@@ -118,6 +127,24 @@ def test_offset_lists_set_a_next_page(client, of_fake, path, header):
     assert "x-next-page" not in client.get(path, headers=H).headers
 
 
+def _items(n, has_more):
+    return {"hasMore": has_more, "items": [{"id": 1010 - i} for i in range(n)]}
+
+
+@pytest.mark.parametrize(("body", "header"), [
+    (_items(2, True), "/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=6"),
+    (_items(1, True), None),   # short page
+    (_items(2, False), None),  # OF says no more
+    ({"hasMore": True, "items": None}, None),
+])
+def test_overview_pages_its_items(client, of_fake, body, header):
+    of_fake.respond(body)
+    r = client.get("/of/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=4",
+                   headers=H)
+    assert r.json() == body  # OF's `{hasMore, items}` is the `data` value
+    assert r.headers.get("x-next-page") == header
+
+
 def test_mass_message_maps_the_body_to_of(client, of_fake):
     of_fake.respond({"id": 1005})
     r = client.post("/of/mass-messaging", headers=H, json={
@@ -141,15 +168,16 @@ def test_mass_message_rejects_what_it_cannot_send(client, of_fake, body):
     assert of_fake.calls == []
 
 
-@pytest.mark.parametrize("path", [
-    "/of/chats/1002/media?limit=0", "/of/chats/1002/media?limit=101", "/of/chats/1002/media?offset=-1",
-    "/of/chats/1002/messages/pinned?limit=51", "/of/chats/1002/messages/search", "/of/chats/1002/messages/search?query=",
-    "/of/mass-messaging?limit=101", "/of/mass-messaging/overview?startDate=2026-10-01",
-    "/of/queue?publishDateStart=2026-10-01&publishDateEnd=2026-10-31", "/of/queue/counts",
-    "/of/giphy/search", "/of/giphy/trending?limit=51", "/of/chats/fan_1/hide",
+@pytest.mark.parametrize(("method", "path"), [
+    ("get", "/of/chats/1002/media?limit=0"), ("get", "/of/chats/1002/media?limit=101"),
+    ("get", "/of/chats/1002/media?offset=-1"), ("get", "/of/chats/1002/messages/pinned?limit=51"),
+    ("get", "/of/chats/1002/messages/search"), ("get", "/of/chats/1002/messages/search?query="),
+    ("get", "/of/mass-messaging?limit=101"), ("get", "/of/mass-messaging/overview?startDate=2026-10-01"),
+    ("get", "/of/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&offset=-1"),
+    ("get", "/of/queue?publishDateStart=2026-10-01&publishDateEnd=2026-10-31"), ("get", "/of/queue/counts"),
+    ("get", "/of/giphy/search"), ("get", "/of/giphy/trending?limit=51"), ("post", "/of/chats/fan_1/hide"),
 ])
-def test_bad_parameters_are_422(client, of_fake, path):
-    method = "post" if path.endswith("/hide") else "get"
+def test_bad_parameters_are_422(client, of_fake, method, path):
     assert client.request(method, path, headers=H).status_code == 422
     assert of_fake.calls == []
 
