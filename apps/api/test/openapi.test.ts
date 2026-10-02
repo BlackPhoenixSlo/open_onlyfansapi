@@ -48,7 +48,7 @@ describe('openapi', () => {
       '/v1/whoami',
       '/v1/{account}/_of/{path}',
       '/v1/{account}/chats/{chatId}/messages',
-      '/v1/{account}/users/me',
+      '/v1/{account}/me',
       '/v1/{account}/users/{userId}/posts',
     ]);
 
@@ -71,7 +71,7 @@ describe('openapi', () => {
 
   it('publishes named-route 2xx JSON schemas wrapped, the passthrough unwrapped, and only the referenced schemas', async () => {
     const spec = (await app.inject({ method: 'GET', url: '/openapi.json' })).json();
-    expect(spec.paths['/v1/{account}/users/me'].get.responses[200].content['application/json'].schema).toEqual({
+    expect(spec.paths['/v1/{account}/me'].get.responses[200].content['application/json'].schema).toEqual({
       type: 'object',
       required: ['data', '_meta'],
       properties: {
@@ -104,7 +104,7 @@ describe('openapi', () => {
       const stale = await get();
       expect(specHits() - before).toBe(2);
       expect(stale.headers['x-upstream-spec']).toBeUndefined();
-      expect(Object.keys(stale.json().paths)).toContain('/v1/{account}/users/me');
+      expect(Object.keys(stale.json().paths)).toContain('/v1/{account}/me');
       await get();
       expect(specHits() - before).toBe(2);
 

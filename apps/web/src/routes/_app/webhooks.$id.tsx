@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ApiError, type DeliveryFilters, api, webhookDeliveriesQuery, webhookEventsQuery, webhookQuery } from '@/lib/api';
 
-const STATUSES: DeliveryStatus[] = ['pending', 'succeeded', 'failed'];
+const STATUSES: DeliveryStatus[] = ['pending', 'succeeded', 'failed', 'dropped'];
 
 export const Route = createFileRoute('/_app/webhooks/$id')({ component: WebhookPage });
 
@@ -192,5 +192,7 @@ function lastResponse(d: WebhookDelivery) {
 function DeliveryBadge({ status }: { status: DeliveryStatus }) {
   if (status === 'failed') return <Badge variant="destructive">failed</Badge>;
   if (status === 'pending') return <Badge variant="secondary">pending</Badge>;
+  // A pending 1.x delivery cancelled by the 2.0 migration; never sent.
+  if (status === 'dropped') return <Badge variant="outline">dropped</Badge>;
   return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">succeeded</Badge>;
 }

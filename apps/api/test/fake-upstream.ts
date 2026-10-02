@@ -31,8 +31,8 @@ export const UPSTREAM_SPEC = {
     },
   },
   paths: {
-    '/of/users/me': {
-      get: of('users.me', {
+    '/of/me': {
+      get: of('me', {
         responses: { 200: { description: 'Me', content: { 'application/json': { schema: { $ref: '#/components/schemas/User' } } } } },
       }),
     },
