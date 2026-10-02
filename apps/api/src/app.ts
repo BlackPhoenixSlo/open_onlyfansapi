@@ -62,7 +62,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(sessionPlugin);
   // Client messages are ignored, so a small cap. Select `bearer` only when offered: the key travels as `bearer.<key>`.
   await app.register(websocket, {
-    options: { maxPayload: 4096, handleProtocols: (p) => (p.has('bearer') ? 'bearer' : false) },
+    options: { maxPayload: 4096, clientTracking: false, handleProtocols: (p) => (p.has('bearer') ? 'bearer' : false) },
   });
 
   app.get('/healthz', async () => ({ ok: true }));
