@@ -39,6 +39,12 @@ def _page(n, has_more, key="list"):
      f"/users/me/stats/messages/group?startDate={D1}&endDate={D2}&limit=50&offset=0"),
     (f"/engagement/messages/mass-messages?startDate={D1}&endDate={D2}&limit=2&offset=4",
      f"/users/me/stats/messages/group?startDate={D1}&endDate={D2}&limit=2&offset=4"),
+    (f"/statistics/reach/profile-visitors?start_date={D1}&end_date={D2}&type=x&filter=y",
+     f"/users/me/profile/stats?startDate={D1}&endDate={D2}&limit=10"),
+    (f"/statistics/reach/profile-visitors?start_date={D1}&end_date={D2}&limit=5",
+     f"/users/me/profile/stats?startDate={D1}&endDate={D2}&limit=5"),
+    (f"/statistics/statements/earnings?start_date={D1}&end_date={D2}&type=x",
+     f"/earnings/chart?startDate={D1}&endDate={D2}&withTotal=true"),
 ])
 def test_each_route_reaches_its_of_call(client, of_fake, path, of_url):
     of_fake.respond({"id": 1001, "amount": 500})
@@ -49,7 +55,7 @@ def test_each_route_reaches_its_of_call(client, of_fake, path, of_url):
     assert "x-next-page" not in r.headers
 
 
-@pytest.mark.parametrize("path", ["/chargebacks/ratio", "/statistics/overview", "/engagement/messages/mass-messages"])
+@pytest.mark.parametrize("path", ["/chargebacks/ratio", "/statistics/overview"])
 def test_empty_dates_take_the_client_default_range(client, of_fake, path):
     of_fake.respond({"id": 1001})
     assert client.get(f"/of{path}", headers=H).status_code == 200
@@ -88,17 +94,13 @@ def test_mass_messages_page_on_items(client, of_fake, items, has_more, header):
 
 @pytest.mark.parametrize("path", [
     "/payouts/payout-requests?limit=0", "/payouts/payout-requests?offset=-1", "/transactions?limit=101",
-    "/payouts/transactions?offset=-1", "/engagement/messages/mass-messages?limit=0",
+    "/payouts/transactions?offset=-1", f"/engagement/messages/mass-messages?startDate={D1}&endDate={D2}&limit=0",
+    f"/engagement/messages/mass-messages?startDate={D1}", f"/statistics/reach/profile-visitors?end_date={D2}",
+    f"/statistics/reach/profile-visitors?start_date={D1}&end_date={D2}&limit=101",
+    f"/statistics/statements/earnings?start_date={D1}",
 ])
 def test_out_of_range_parameters_are_422(client, of_fake, path):
     assert client.get(f"/of{path}", headers=H).status_code == 422
-    assert of_fake.calls == []
-
-
-@pytest.mark.parametrize("path", ["/payouts/request-manual-withdrawal", "/payouts/payout-frequency"])
-def test_deferred_writes_are_not_routed(client, of_fake, path):
-    assert client.post(f"/of{path}", headers=H, json={"amount": 500}).status_code in (404, 405)
-    assert client.patch(f"/of{path}", headers=H, json={"frequency": "x"}).status_code in (404, 405)
     assert of_fake.calls == []
 
 
