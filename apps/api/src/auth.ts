@@ -2,7 +2,8 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { organization } from 'better-auth/plugins/organization';
-import { and, eq, isNull, TransactionRollbackError } from 'drizzle-orm';
+import { eq, TransactionRollbackError } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from './db/index.js';
 import * as schema from './db/schema.js';
 import { appOrigin, env } from './env.js';
@@ -42,11 +43,9 @@ export async function ensureWorkspace(user: { id: string; name: string; email: s
         .returning({ id: schema.member.id });
       // Another request created the membership first: drop this organization row.
       if (inserted.length === 0) tx.rollback();
-      // Sign-up creates the session before this runs; a session with no workspace yet gets this one.
-      await tx
-        .update(schema.session)
-        .set({ activeOrganizationId: orgId })
-        .where(and(eq(schema.session.userId, user.id), isNull(schema.session.activeOrganizationId)));
+      // Sign-up creates the session before this runs. With one membership per user any other active id is stale
+      // (it has no FK, so it survives an org delete): point every session of the user at this workspace.
+      await tx.update(schema.session).set({ activeOrganizationId: orgId }).where(eq(schema.session.userId, user.id));
     });
   } catch (err) {
     if (!(err instanceof TransactionRollbackError)) throw err;
@@ -61,11 +60,13 @@ export async function ensureWorkspace(user: { id: string; name: string; email: s
  * set-active, leave), so a user can never gain a second membership. Renaming the workspace (Settings) is the one
  * allowed write; the slug stays fixed because `link-team` matches on it.
  */
+export const ORG_WRITE_REFUSED = 'Workspaces and memberships cannot be changed through the auth API';
+const renameOnly = z.object({ data: z.object({ name: z.string() }).strict() });
+
 const blockOrganizationWrites = createAuthMiddleware(async (ctx) => {
   if (!ctx.path.startsWith('/organization/') || ctx.request?.method === 'GET') return;
-  const data = (ctx.body as { data?: Record<string, unknown> } | undefined)?.data;
-  if (ctx.path === '/organization/update' && data && Object.keys(data).every((k) => k === 'name')) return;
-  throw new APIError('FORBIDDEN', { message: 'Workspaces and memberships cannot be changed through the auth API' });
+  if (ctx.path === '/organization/update' && renameOnly.safeParse(ctx.body).success) return;
+  throw new APIError('FORBIDDEN', { message: ORG_WRITE_REFUSED });
 });
 
 export const auth = betterAuth({

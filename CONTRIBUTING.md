@@ -15,6 +15,7 @@ container, `.env`, migrations and the first API call. The short version is in th
 pnpm -r typecheck            # both apps
 pnpm -r test                 # vitest; uses the gateway_test database from docker compose
 pnpm db:generate             # after a schema change: commit the generated migration
+# re-running auth:generate drops the hand-added unique index on member.user_id; re-apply it before db:generate
 sh scripts/check-secrets.sh --all
 ```
 
