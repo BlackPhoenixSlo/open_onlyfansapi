@@ -31,6 +31,41 @@ Status rules: "have" = same resource + verb and compatible request/response; "pa
 
 **Global response-shape gap:** their yaml examples wrap responses as `{data, _meta}` (218 ops) or `{data, _meta, _pagination}` (34 ops), with `_meta = {_cache, _credits, _rate_limits}` (235) or `{_cache, _credits}` (17). The upstream `/of` routes return the raw OnlyFans body, so every proxied route is at best "partial" until an envelope adapter exists. Their `GET api/accounts` (bare array) and `GET api/whoami` (`{api_key, team}`) are the unwrapped exceptions.
 
+## v5 execution notes (2026-10-02, orchestrator)
+
+Status column of section A is as of the plan date; the live list is `docs/spec/parity/baseline.txt` (`check --have`).
+Shipped by the waves: P2 chats 22 new (25 with v4), P3 fans 33 operations, P4 money 11. The rows below did not ship.
+
+**`?` rows (OF path or body unknown; skipped, not guessed; reachable only through `_of/`):**
+- P2: `GET chats/{chat_id}/messages/{message_id}`, `GET mass-messaging/{mass_messaging}`.
+- P3: `GET me/top-percentage`, `GET session` (reference-side session record, no OF call), `GET users/blocked`,
+  `GET users/restricted` (both give 422 from `users/{username}` on purpose), `GET fans/{fan_id}/notes`,
+  `GET fans/{user_id}/subscriptions-history`, `GET user-lists/{userListId}/users/pinned`.
+- P4: all 7 `banking/*`, `GET chargebacks`, `GET chargebacks/statistics`, `GET engagement/messages/direct-messages`,
+  `…/direct-messages/chart`, `…/mass-messages/chart`, `…/top-message`, `…/{message_id}/buyers`,
+  `GET statistics/subscriber-metrics`, `GET statistics/total-transactions`,
+  `GET workflows/account-performance/starting-revenues`.
+
+**deferred-write rows (plan §Phases 2–4):** unchanged, 10 rows.
+
+**Mapping corrections and reshapes decided in code:**
+- `GET mass-messaging` → `scheduled_messages` (OF `/messages/queue`); `GET mass-messaging/overview` →
+  `mass_message_history` (OF `/users/me/stats/messages/group`, also behind `GET engagement/messages/mass-messages`).
+- `POST mass-messaging` ships single-recipient only (`userIds` max 1, `scheduledDate` required, extra fields 422).
+- `GET chats/{chat_id}/messages/pinned` returns the rows, not OF's `{list,hasMore}` (hasMore is wrong on that filter).
+- `POST chats/{chat_id}/messages/{message_id}/pin` guards OF's toggle with a pinned read; unexpected shape → 502.
+- `users/{user_id}/posts` pages only for `order=publish_date&sort=desc` (tailMarker cursor).
+- `POST user-lists/{userListId}/users` loops one OF call per id (≤50); partial state is reported in the body.
+- `GET subscribers/statistics` → `subscribers_chart`; `GET statistics/reach/profile-visitors` → `my_profile_stats`;
+  `GET statistics/statements/earnings` → `earnings_chart`; `GET engagement/messages/mass-messages` →
+  `mass_message_history` (all from client docstrings, not the inventory's `client:` notes).
+- Reference parameters the client cannot send are accepted and dropped; each handler docstring lists them.
+
+**Owner live-check list (inferred OF paths or query names):** `GET fans/latest`, `GET fans/top`,
+`GET subscribers/statistics`, `GET users/{user_id}/posts` order/sort composition, `GET statistics/reach/profile-visitors`,
+`GET statistics/statements/earnings`, P4 date formats (`YYYY-MM-DD` vs `YYYY-MM-DD HH:MM:SS`), and the §9 Q6
+passthrough mapping.
+
 ## A. Per-account named routes
 
 Paths are relative: theirs to `api/{account}`, ours to `/v1/{account}`. Ours resolve via the gateway proxy to upstream `/of/<rest>`. Note column: Laravel route name (omitted when auto-generated), `client:` = an `OFClient` method in `services/upstream/of_client.py` that already wraps the matching OnlyFans call (route not exposed), "not in yaml" = route table only. No streams routes exist in either of their sources.
@@ -111,9 +146,9 @@ yaml tags: Engagement / Messages, Mass Messaging
 | GET | `/engagement/messages/mass-messages/chart` | — | missing | — |
 | GET | `/engagement/messages/top-message` | — | missing | — |
 | GET | `/engagement/messages/{message_id}/buyers` | — | missing | `engagement.messages.buyers` |
-| GET | `/mass-messaging` | — | missing | `mass-messaging.index`; client: `mass_message_history` |
+| GET | `/mass-messaging` | — | missing | `mass-messaging.index`; client: `scheduled_messages` (v5 execution: the index returns queue entries; `mass_message_history` backs `/mass-messaging/overview`) |
 | POST | `/mass-messaging` | — | missing | `mass-messaging.store`; client: `schedule_message` |
-| GET | `/mass-messaging/overview` | — | missing | — |
+| GET | `/mass-messaging/overview` | — | missing | client: `mass_message_history` (v5 execution) |
 | GET | `/mass-messaging/{mass_messaging}` | — | missing | `mass-messaging.show` |
 | PUT/PATCH | `/mass-messaging/{mass_messaging}` | — | missing | `mass-messaging.update` |
 | DELETE | `/mass-messaging/{mass_messaging}` | — | missing | `mass-messaging.destroy`; client: `cancel_scheduled` |
