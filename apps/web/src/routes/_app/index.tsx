@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { WebhookHealthBadge } from '@/components/webhook-health';
 import { overviewQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/')({ component: Home });
@@ -28,7 +28,7 @@ function Home() {
             <ul className="space-y-2 text-sm">
               {o.needsAttention.map((item) => (
                 <li key={item.id} className="flex items-center gap-2">
-                  <Badge variant={item.reason === 'paused' ? 'destructive' : 'secondary'}>{item.reason}</Badge>
+                  <WebhookHealthBadge health={item.reason} />
                   <span>Webhook</span>
                   <Link to="/webhooks/$id" params={{ id: item.id }} className="font-mono text-xs break-all hover:underline">
                     {item.url}

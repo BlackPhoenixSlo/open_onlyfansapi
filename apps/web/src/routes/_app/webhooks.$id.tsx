@@ -1,19 +1,18 @@
 import type { DeliveryStatus, WebhookDelivery } from '@api/contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
-import { Fragment, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
+import { FilterSelect } from '@/components/filter-select';
+import { Pairs } from '@/components/pairs';
 import { WebhookHealth } from '@/components/webhook-health';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ApiError, type DeliveryFilters, api, webhookDeliveriesQuery, webhookEventsQuery, webhookQuery } from '@/lib/api';
 
 const STATUSES: DeliveryStatus[] = ['pending', 'succeeded', 'failed'];
-/** Radix Select can't use '' as an item value. */
-const ALL = 'all';
 
 export const Route = createFileRoute('/_app/webhooks/$id')({ component: WebhookPage });
 
@@ -66,13 +65,15 @@ function WebhookPage() {
             <FilterSelect
               all="All statuses"
               value={filters.status}
-              options={STATUSES}
+              options={STATUSES.map((s) => ({ value: s, label: s }))}
+              className="w-48"
               onChange={(v) => setFilters((f) => ({ ...f, status: STATUSES.find((s) => s === v) }))}
             />
             <FilterSelect
               all="All events"
               value={filters.event}
-              options={eventTypes}
+              options={eventTypes.map((t) => ({ value: t, label: t }))}
+              className="w-48"
               onChange={(event) => setFilters((f) => ({ ...f, event }))}
             />
             {filtered && (
@@ -187,45 +188,4 @@ function DeliveryBadge({ status }: { status: DeliveryStatus }) {
   if (status === 'failed') return <Badge variant="destructive">failed</Badge>;
   if (status === 'pending') return <Badge variant="secondary">pending</Badge>;
   return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">succeeded</Badge>;
-}
-
-function Pairs({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
-      {rows.map(([k, v]) => (
-        <Fragment key={k}>
-          <dt className="text-muted-foreground">{k}</dt>
-          <dd className="min-w-0">{v}</dd>
-        </Fragment>
-      ))}
-    </dl>
-  );
-}
-
-function FilterSelect({
-  all,
-  value,
-  options,
-  onChange,
-}: {
-  all: string;
-  value: string | undefined;
-  options: string[];
-  onChange: (value: string | undefined) => void;
-}) {
-  return (
-    <Select value={value ?? ALL} onValueChange={(v) => onChange(v === ALL ? undefined : v)}>
-      <SelectTrigger className="w-48" aria-label={all}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{all}</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o} value={o}>
-            {o}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
 }

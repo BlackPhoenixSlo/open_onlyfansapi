@@ -2,17 +2,15 @@ import type { LogStatus } from '@api/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
 import type { FormEvent } from 'react';
+import { FilterSelect } from '@/components/filter-select';
 import { StatusBadge } from '@/components/status-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { type LogFilters, accountsQuery, keysQuery, logsQuery } from '@/lib/api';
 
 const STATUSES: LogStatus[] = ['2xx', '4xx', '5xx', 'error'];
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-/** Radix Select can't use '' as an item value. */
-const ALL = 'all';
 
 /** Search values arrive JSON-parsed, so ids can come back as numbers. */
 function str(v: unknown) {
@@ -147,33 +145,5 @@ function Logs() {
         </>
       )}
     </div>
-  );
-}
-
-function FilterSelect({
-  all,
-  value,
-  options,
-  onChange,
-}: {
-  all: string;
-  value: string | undefined;
-  options: { value: string; label: string }[];
-  onChange: (value: string | undefined) => void;
-}) {
-  return (
-    <Select value={value ?? ALL} onValueChange={(v) => onChange(v === ALL ? undefined : v)}>
-      <SelectTrigger className="w-40" aria-label={all}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{all}</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }

@@ -153,6 +153,7 @@ function Webhooks() {
           editing={formTarget === 'new' ? null : formTarget}
           onClose={() => setFormTarget(null)}
           onCreated={setFormTarget}
+          refresh={refresh}
         />
       )}
 
@@ -181,17 +182,20 @@ function EndpointFormDialog({
   editing,
   onClose,
   onCreated,
+  refresh,
 }: {
   editing: WebhookEndpoint | null;
   onClose: () => void;
   /** Reopens the dialog on the new endpoint, so its secret can be revealed. */
   onCreated: (endpoint: WebhookEndpoint) => void;
+  /** Refetches the endpoint list and the Home overview. */
+  refresh: () => Promise<unknown>;
 }) {
-  const queryClient = useQueryClient();
   const catalogue = useQuery(webhookEventsQuery);
   const [url, setUrl] = useState(editing?.url ?? '');
   const [description, setDescription] = useState(editing?.description ?? '');
-  const [events, setEvents] = useState<string[]>(editing?.events ?? []);
+  // Stored endpoints only hold catalogue types (the API validates them on write).
+  const [events, setEvents] = useState<WebhookEventType[]>((editing?.events ?? []) as WebhookEventType[]);
   const [revealed, setRevealed] = useState(false);
 
   const save = useMutation({
@@ -210,17 +214,17 @@ function EndpointFormDialog({
         toast.success('Endpoint updated');
         onClose();
       }
-      void queryClient.invalidateQueries({ queryKey: webhooksQuery.queryKey });
+      void refresh();
     },
     onError: (e) => toast.error(e.message),
   });
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    save.mutate({ url: url.trim(), description: description.trim() || null, events: events as WebhookEventType[] });
+    save.mutate({ url: url.trim(), description: description.trim() || null, events });
   }
 
-  const toggleEvent = (type: string, on: boolean) =>
+  const toggleEvent = (type: WebhookEventType, on: boolean) =>
     setEvents((prev) => (on ? [...prev, type] : prev.filter((t) => t !== type)));
   const secret = editing?.secret;
 
