@@ -1,6 +1,7 @@
 import type {
   Account,
   ApiKey,
+  DeliveryStatus,
   ErrorBody,
   LogDetail,
   LogList,
@@ -8,6 +9,9 @@ import type {
   Overview,
   Usage,
   UsageGroupBy,
+  WebhookDeliveryList,
+  WebhookEndpoint,
+  WebhookEventType,
   Whoami,
 } from '@api/contracts';
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
@@ -102,3 +106,31 @@ export const overviewQuery = queryOptions({
   queryKey: ['overview'],
   queryFn: () => api<Overview>('/api/overview'),
 });
+
+export const webhooksQuery = queryOptions({
+  queryKey: ['webhooks'],
+  queryFn: () => api<{ items: WebhookEndpoint[] }>('/v1/webhooks'),
+});
+
+export const webhookQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['webhooks', 'detail', id],
+    queryFn: () => api<{ endpoint: WebhookEndpoint }>(`/v1/webhooks/${encodeURIComponent(id)}`),
+  });
+
+export const webhookEventsQuery = queryOptions({
+  queryKey: ['webhooks', 'events'],
+  queryFn: () => api<{ items: { type: WebhookEventType; description: string }[] }>('/v1/webhooks/events'),
+  staleTime: Infinity,
+});
+
+export type DeliveryFilters = { status?: DeliveryStatus; event?: string };
+
+export const webhookDeliveriesQuery = (id: string, filters: DeliveryFilters) =>
+  infiniteQueryOptions({
+    queryKey: ['webhooks', 'deliveries', id, filters],
+    queryFn: ({ pageParam }) =>
+      api<WebhookDeliveryList>(`/v1/webhooks/${encodeURIComponent(id)}/deliveries?${qs({ ...filters, cursor: pageParam })}`),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });

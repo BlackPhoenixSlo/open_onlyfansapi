@@ -20,6 +20,8 @@ import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as AppLogsIndexRouteImport } from './routes/_app/logs.index'
 import { Route as AppLogsIdRouteImport } from './routes/_app/logs.$id'
+import { Route as AppWebhooksIndexRouteImport } from './routes/_app/webhooks.index'
+import { Route as AppWebhooksIdRouteImport } from './routes/_app/webhooks.$id'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -75,6 +77,16 @@ const AppLogsIdRoute = AppLogsIdRouteImport.update({
   path: '/logs/$id',
   getParentRoute: () => AppRoute,
 } as any)
+const AppWebhooksIndexRoute = AppWebhooksIndexRouteImport.update({
+  id: '/webhooks/',
+  path: '/webhooks/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWebhooksIdRoute = AppWebhooksIdRouteImport.update({
+  id: '/webhooks/$id',
+  path: '/webhooks/$id',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -86,7 +98,9 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/usage': typeof AppUsageRoute
   '/logs/$id': typeof AppLogsIdRoute
+  '/webhooks/$id': typeof AppWebhooksIdRoute
   '/logs/': typeof AppLogsIndexRoute
+  '/webhooks/': typeof AppWebhooksIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -98,7 +112,9 @@ export interface FileRoutesByTo {
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
   '/logs/$id': typeof AppLogsIdRoute
+  '/webhooks/$id': typeof AppWebhooksIdRoute
   '/logs': typeof AppLogsIndexRoute
+  '/webhooks': typeof AppWebhooksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -112,7 +128,9 @@ export interface FileRoutesById {
   '/_app/usage': typeof AppUsageRoute
   '/_app/': typeof AppIndexRoute
   '/_app/logs/$id': typeof AppLogsIdRoute
+  '/_app/webhooks/$id': typeof AppWebhooksIdRoute
   '/_app/logs/': typeof AppLogsIndexRoute
+  '/_app/webhooks/': typeof AppWebhooksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -126,7 +144,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/logs/$id'
+    | '/webhooks/$id'
     | '/logs/'
+    | '/webhooks/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -138,7 +158,9 @@ export interface FileRouteTypes {
     | '/usage'
     | '/'
     | '/logs/$id'
+    | '/webhooks/$id'
     | '/logs'
+    | '/webhooks'
   id:
     | '__root__'
     | '/_app'
@@ -151,7 +173,9 @@ export interface FileRouteTypes {
     | '/_app/usage'
     | '/_app/'
     | '/_app/logs/$id'
+    | '/_app/webhooks/$id'
     | '/_app/logs/'
+    | '/_app/webhooks/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -239,6 +263,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLogsIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/webhooks/': {
+      id: '/_app/webhooks/'
+      path: '/webhooks'
+      fullPath: '/webhooks/'
+      preLoaderRoute: typeof AppWebhooksIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/webhooks/$id': {
+      id: '/_app/webhooks/$id'
+      path: '/webhooks/$id'
+      fullPath: '/webhooks/$id'
+      preLoaderRoute: typeof AppWebhooksIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -250,7 +288,9 @@ interface AppRouteChildren {
   AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLogsIdRoute: typeof AppLogsIdRoute
+  AppWebhooksIdRoute: typeof AppWebhooksIdRoute
   AppLogsIndexRoute: typeof AppLogsIndexRoute
+  AppWebhooksIndexRoute: typeof AppWebhooksIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -261,7 +301,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
   AppLogsIdRoute: AppLogsIdRoute,
+  AppWebhooksIdRoute: AppWebhooksIdRoute,
   AppLogsIndexRoute: AppLogsIndexRoute,
+  AppWebhooksIndexRoute: AppWebhooksIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

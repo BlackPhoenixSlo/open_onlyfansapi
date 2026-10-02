@@ -26,6 +26,7 @@ const nav = [
   { to: '/keys', label: 'API keys' },
   { to: '/logs', label: 'Logs' },
   { to: '/usage', label: 'Usage' },
+  { to: '/webhooks', label: 'Webhooks' },
   { to: '/playground', label: 'Playground' },
   { to: '/settings', label: 'Settings' },
 ] as const;
