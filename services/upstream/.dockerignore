@@ -11,3 +11,4 @@ proxies.json
 Dockerfile
 .dockerignore
 **/.DS_Store
+ruff.toml

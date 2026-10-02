@@ -60,10 +60,7 @@ jobs:
           cache: pip
           cache-dependency-path: services/upstream/requirements*.txt
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: ruff (lifted modules held to F,E9; service code to ruff defaults)
-        run: |
-          ruff check --select F,E9 .
-          ruff check app.py pump.py events.py connect.py tests
+      - run: ruff check .
       - run: pytest -q
       - name: image builds
         run: docker build -t gateway-upstream:ci .
