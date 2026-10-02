@@ -8,18 +8,22 @@ from __future__ import annotations
 import json
 import re
 
+from curl_cffi.requests.utils import requote_uri
 from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from app import ApiError, Client
+from deps import ApiError, Client
 from of_client import API_BASE
 
 _PATH = re.compile(r"[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*")
 
 DESCRIPTION = f"""Raw passthrough: sends the request to OnlyFans at `{API_BASE}/{{path}}` with the query string
 unchanged, signed with the account's session, and returns OnlyFans' status, body bytes and `content-type` unchanged.
-OnlyFans' 4xx and 5xx responses are returned as they are. The body, if any, must be JSON. No client header is
-forwarded and no other OnlyFans header is returned.
+OnlyFans' 4xx and 5xx responses are returned as they are. No client header is forwarded and no other OnlyFans header
+is returned.
+
+A request body must be `application/json`; GET takes none. An empty body or a JSON `null` is sent as no body; objects,
+lists and scalars are sent as they are.
 
 The reference API does not document what its `_of/{{path}}` maps to. Mapping it to OnlyFans' `/api2/v2/{{path}}` is
 this gateway's assumption and may differ from the reference product's mapping."""
@@ -37,6 +41,8 @@ async def _json_body(request: Request) -> object | None:
     raw = await request.body()
     if not raw:
         return None
+    if request.method == "GET":
+        raise ApiError(400, "invalid_body", "GET takes no request body")
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if media_type != "application/json":
         raise ApiError(415, "unsupported_media_type", "the request body must be application/json")
@@ -53,6 +59,9 @@ async def passthrough(request: Request, client: Client, path: str) -> Response:
     url = f"{API_BASE}/{path}"
     if request.url.query:
         url += f"?{request.url.query}"
+    # curl_cffi re-quotes every URL before sending it; doing the same here first means Sign covers
+    # exactly the request target OF receives (`%7e` becomes `~`, `{` becomes `%7B`).
+    url = requote_uri(url)
     r = await run_in_threadpool(client.request, request.method, url, json_body=json_body)
     content_type = r.headers.get("content-type")
     return Response(r.content, status_code=r.status_code,

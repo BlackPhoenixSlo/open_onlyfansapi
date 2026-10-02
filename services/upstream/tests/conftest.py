@@ -82,12 +82,18 @@ FAKE_SESSION = {
 }
 
 
+class _NoRawHttp:
+    def __getattr__(self, name):
+        raise AssertionError("raw self.http call bypasses _http_call")
+
+
 class OFFake(OFClient):
     """A real OFClient cut at `_http_call`: each call is recorded as `(method, url, json_body)`
-    and answered from the queue; an empty queue fails the test."""
+    and answered from the queue; an empty queue fails the test, and so does any use of `self.http`."""
 
     def __init__(self):
         super().__init__(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"})
+        self.http = _NoRawHttp()
         self.calls = []
         self._queue = []
 

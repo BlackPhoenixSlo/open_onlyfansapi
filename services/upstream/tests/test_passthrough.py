@@ -1,10 +1,16 @@
-"""Raw passthrough `/of/_of/{path}` (plan-v5 §2.1), against `of_fake`."""
+"""Raw passthrough `/of/_of/{path}` (plan-v5 §2.1), against `of_fake` and once on the wire."""
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
 import pytest
-from conftest import AUTH
+from conftest import AUTH, FAKE_SESSION
 from curl_cffi.requests import exceptions as curl_errors
 from fastapi.testclient import TestClient
 
 import app as upstream
+import of_client
+from routes import passthrough
 
 H = {**AUTH, "x-of-proxy-account-id": "1001"}
 OF = "https://onlyfans.com/api2/v2"
@@ -37,6 +43,25 @@ def test_no_query_and_an_empty_body_send_neither(client, of_fake):
     r = client.post("/of/_of/users/me", headers={**H, "content-type": "text/plain"}, content=b"")
     assert r.status_code == 200
     assert of_fake.calls == [("POST", f"{OF}/users/me", None)]
+
+
+def test_a_json_null_body_is_sent_as_no_body(client, of_fake):
+    of_fake.respond({})
+    r = client.post("/of/_of/users/me", headers={**H, "content-type": "application/json"}, content=b"null")
+    assert r.status_code == 200
+    assert of_fake.calls == [("POST", f"{OF}/users/me", None)]
+
+
+def test_a_get_with_a_body_is_400(client, of_fake):
+    r = client.request("GET", "/of/_of/users/me", headers={**H, "content-type": "application/json"},
+                       content=b'{"a":1}')
+    assert (r.status_code, r.json()["error"]["code"]) == (400, "invalid_body")
+    assert of_fake.calls == []
+
+
+def test_of_fake_refuses_raw_http(of_fake):
+    with pytest.raises(AssertionError, match="bypasses _http_call"):
+        of_fake.http.get("https://onlyfans.com/api2/v2/users/me")
 
 
 @pytest.mark.parametrize("path", [
@@ -123,3 +148,50 @@ def test_openapi_has_one_operation_per_method():
     for op in item.values():
         assert op["tags"] == ["of-api"]
         assert "/api2/v2/{path}" in op["description"] and "assumption" in op["description"]
+
+
+@pytest.mark.parametrize(("query", "sent"), [
+    ("a%20b=c%26d&x=%5B1%5D&e=&f=~-._", "a%20b=c%26d&x=%5B1%5D&e=&f=~-._"),
+    ("z=%7e&y=%7E&w=a+b&p=%", "z=~&y=~&w=a+b&p=%"),
+    ("u={a}&r=a^b`c&v=|", "u=%7Ba%7D&r=a%5Eb%60c&v=|"),
+    ("q=%zz&s=%20", "q=%25zz&s=%2520"),  # an invalid escape: curl_cffi quotes every `%`
+])
+def test_the_signed_query_is_the_query_sent(monkeypatch, query, sent):
+    """A real OFClient (no proxy) against a local server: OF checks `Sign` over the request target
+    it receives, so the path and query curl sends must be exactly the ones that were signed."""
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(self.path)
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    signed = []
+    real_sign = of_client.sign
+    monkeypatch.setattr(of_client, "sign", lambda url, *a, **kw: signed.append(url) or real_sign(url, *a, **kw))
+    monkeypatch.setattr(passthrough, "API_BASE", f"http://127.0.0.1:{server.server_port}/api2/v2")
+    for var in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(var, raising=False)
+    real = of_client.OFClient(FAKE_SESSION)
+    real._x_hash = "test-x-hash"  # skip the CDN warm-up
+    upstream.app.dependency_overrides[upstream.account_client] = lambda: real
+    try:
+        with TestClient(upstream.app) as c:
+            r = c.get(f"/of/_of/users/list?{query}", headers=H)
+    finally:
+        upstream.app.dependency_overrides.pop(upstream.account_client, None)
+        server.shutdown()
+        server.server_close()
+    assert (r.status_code, r.content) == (200, b"{}")
+    target = urlsplit(signed[0])
+    assert received == [f"{target.path}?{target.query}"]
+    assert received == [f"/api2/v2/users/list?{sent}"]

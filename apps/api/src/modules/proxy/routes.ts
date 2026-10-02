@@ -87,7 +87,6 @@ export default async function proxyRoutes(app: FastifyInstance) {
     res.headers.forEach((value, key) => {
       if (FORWARDED_RESPONSE_HEADERS.has(key) || key.startsWith('x-ratelimit-')) reply.header(key, value);
     });
-    // The response wrapper (plan-v5 §2.2) goes here and skips `isPassthrough(path)`.
     return reply.send(res.body);
   });
 }

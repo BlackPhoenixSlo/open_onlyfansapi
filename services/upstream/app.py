@@ -10,13 +10,12 @@ import asyncio
 import hmac
 import logging
 import os
-import re
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from curl_cffi.requests import exceptions as curl_errors
-from fastapi import APIRouter, Depends, FastAPI, Header, Path, Request, WebSocket
+from fastapi import APIRouter, FastAPI, Path, Request, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -26,8 +25,10 @@ import client_pool
 import config
 import proxies
 import session_bootstrap
+from deps import ApiError, Client, account_client  # noqa: F401  (tests override it)
 from of_client import OFAPIError, OFClient
 from pump import Hub, Supervisor
+from routes import ROUTERS
 
 logging.basicConfig(
     level=(os.environ.get("LOG_LEVEL") or "info").upper(),
@@ -77,15 +78,10 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+app.state.supervisor = supervisor  # read by deps.account_client
 
 
 # ─── Errors and auth ──────────────────────────────────────────────
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str | None = None) -> None:
-        super().__init__(code)
-        self.status, self.code, self.message = status, code, message
 
 
 def _error(http_status: int, code: str, **extra: Any) -> JSONResponse:
@@ -127,35 +123,6 @@ async def healthz() -> dict:
 
 # ─── /of/* ────────────────────────────────────────────────────────
 
-_ACCOUNT_ID = re.compile(r"[0-9]{1,19}")
-
-
-def account_client(
-    x_of_proxy_account_id: Annotated[str | None, Header(include_in_schema=False)] = None,
-) -> OFClient:
-    """The pooled OFClient for `x-of-proxy-account-id`. Tests override this."""
-    raw = (x_of_proxy_account_id or "").strip()
-    if not _ACCOUNT_ID.fullmatch(raw):
-        raise ApiError(400, "invalid_account_id", "x-of-proxy-account-id must be an integer")
-    aid = str(int(raw))
-    if not accounts.is_account(aid):
-        raise ApiError(404, "unknown_account")
-    blocked = supervisor.blocker(aid)
-    if blocked == "no_session":
-        raise ApiError(409, "no_session")
-    if blocked == "no_proxy":
-        raise ApiError(409, "proxy_required")
-    # session_expired is not blocked here: OF's own 401 passes through as of_error.
-    try:
-        client = client_pool.get(aid)
-    except FileNotFoundError as e:
-        raise ApiError(409, "no_session") from e
-    if supervisor.require_proxy and not getattr(client, "proxy_url", None):
-        raise ApiError(409, "proxy_required")  # never fall back to this host's IP
-    return client
-
-
-Client = Annotated[OFClient, Depends(account_client)]
 of = APIRouter(prefix="/of", tags=["of-api"])
 
 
@@ -218,9 +185,6 @@ def vault_media_get(client: Client, media_id: Annotated[int, Path(alias="mediaId
 
 
 app.include_router(of)
-
-# Route modules import `ApiError` and `Client` from this module, so they load once both exist.
-from routes import ROUTERS
 
 for _router in ROUTERS:
     app.include_router(_router)
