@@ -26,7 +26,7 @@ const eventFrame = z.object({
   type: z.string().min(1),
   account_id: z.int32().positive(),
   ts: z.iso.datetime({ offset: true }),
-  payload: z.unknown(),
+  payload: z.unknown().refine((v) => v !== undefined),
 });
 const heartbeat = z.object({ type: z.literal('heartbeat'), ts: z.string() });
 export type EventFrame = z.infer<typeof eventFrame>;
@@ -57,7 +57,7 @@ const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Er
  */
 export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Promise<void> {
   const { type, account_id: accountId } = frame;
-  const data = frame.payload ?? {};
+  const data = frame.payload;
   const createdAt = new Date(frame.ts);
   const id = newId('evt');
   if (STORED.has(type)) {

@@ -216,6 +216,23 @@ describe('webhooks API', () => {
     });
     expect(missing.statusCode).toBe(404);
   });
+
+  it('a null payload is stored as jsonb null, delivered as data: null and redelivered as null', async () => {
+    const endpoint = await createEndpoint();
+    expect(await emit(teamId, 'post.expired', 117183, null)).toBe(1);
+    const { rows } = await pool.query('SELECT id, jsonb_typeof(payload) AS kind FROM webhook_delivery');
+    expect(rows).toEqual([{ id: expect.any(String), kind: 'null' }]);
+    expect(await deliverDue()).toBe(1);
+    expect(JSON.parse(received[0]!.body)).toMatchObject({ id: rows[0].id, type: 'post.expired', data: null });
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/v1/webhooks/${endpoint.id}/deliveries/${rows[0].id}/redeliver`,
+      headers: bearer(writeKey),
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(replay.json().delivery).toMatchObject({ replayOf: rows[0].id, payload: null });
+  });
 });
 
 describe('signature', () => {

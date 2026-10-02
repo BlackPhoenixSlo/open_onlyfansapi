@@ -197,6 +197,16 @@ describe('upstream event source', () => {
     expect(seen[0]!.id).toMatch(/^evt_/);
   });
 
+  it('a null payload reaches the bus and the deliveries as null, not {}', async () => {
+    await connected();
+    fake.pushFrame(frame({ payload: null }));
+    await waitFor(async () => (await deliveries()).length === 2, 'two deliveries');
+
+    expect(seen.map((e) => e.data)).toEqual([null]);
+    const { rows } = await pool.query('SELECT jsonb_typeof(payload) AS kind FROM webhook_delivery');
+    expect(rows).toEqual([{ kind: 'null' }, { kind: 'null' }]);
+  });
+
   it('drops malformed frames, unknown types and heartbeats; the socket stays up', async () => {
     await connected();
     fake.pushFrame('not json');
@@ -206,6 +216,7 @@ describe('upstream event source', () => {
     fake.pushFrame(frame({ type: 'nope.thing' }));
     fake.pushFrame(frame({ type: 'webhook.test' }));
     fake.pushFrame(frame({ id: undefined })); // id is required (null allowed)
+    fake.pushFrame(frame({ payload: undefined })); // payload is required (null allowed)
     fake.pushFrame({ type: 'heartbeat', ts: '2026-10-02T12:00:30.000Z' });
     fake.pushFrame(frame());
     await waitFor(async () => (await deliveries()).length === 2, 'the valid frame');
@@ -222,7 +233,7 @@ describe('upstream event source', () => {
     expect(reports.length).toBeLessThanOrEqual(2);
     const total = { malformed: 0, unknown_type: 0, queue_full: 0 };
     for (const [{ dropped }] of reports) for (const k of Object.keys(total) as (keyof typeof total)[]) total[k] += dropped[k];
-    expect(total).toEqual({ malformed: 5, unknown_type: 2, queue_full: 0 });
+    expect(total).toEqual({ malformed: 6, unknown_type: 2, queue_full: 0 });
   });
 
   it('dropSockets(): exactly one reconnect, never two sockets; a second start reuses the running source', async () => {
