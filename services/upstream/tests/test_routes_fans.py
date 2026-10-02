@@ -1,6 +1,7 @@
 """Fans, users, lists and the account (`routes/fans.py`, plan-v5 Phase 3), against `of_fake`."""
 import pytest
 from conftest import AUTH
+from curl_cffi.requests import exceptions as curl_errors
 from fastapi.testclient import TestClient
 
 import app as upstream
@@ -93,9 +94,16 @@ FANS_Q = "filter%5Bonline%5D=1&filter%5Btotal_spent%5D=50&filter%5Btips%5D=5"
      _page(2, False), None),
     ("/of/following/expired?offset=3&limit=1", (f"{OF}/subscriptions/subscribes?type=expired&limit=1&offset=3"
      "&format=infinite"), _page(1, True), "/following/expired?limit=1&offset=4"),
+    ("/of/users/1002/posts?limit=2", (f"{OF}/users/1002/posts?limit=2&skip_users=all"
+     "&order=publish_date_desc&format=infinite"), _page(2, True, tailMarker="1700000000.000000"),
+     "/users/1002/posts?order=publish_date&sort=desc&limit=2&beforePublishTime=1700000000.000000"),
     ("/of/users/1002/posts?limit=2&order=tips_summ&sort=asc", (f"{OF}/users/1002/posts?limit=2&skip_users=all"
-     "&order=tips_summ_asc&format=infinite"), _page(2, True, tailMarker="1700000000.000000"),
-     "/users/1002/posts?order=tips_summ&sort=asc&limit=2&beforePublishTime=1700000000.000000"),
+     "&order=tips_summ_asc&format=infinite"), _page(2, True, tailMarker="1700000000.000000"), None),  # not a cursor
+    ("/of/users/1002/posts?limit=2&sort=asc", (f"{OF}/users/1002/posts?limit=2&skip_users=all"
+     "&order=publish_date_asc&format=infinite"), _page(2, True, tailMarker="1700000000.000000"), None),
+    ("/of/users/1002/posts?limit=2&beforePublishTime=1700000000.000000", (f"{OF}/users/1002/posts?limit=2"
+     "&skip_users=all&order=publish_date_desc&format=infinite&beforePublishTime=1700000000.000000"),
+     _page(2, True, tailMarker="1700000000.000000"), None),  # the cursor did not move
     ("/of/users/1002/posts?beforePublishTime=1700000000.000000", (f"{OF}/users/1002/posts?limit=10&skip_users=all"
      "&order=publish_date_desc&format=infinite&beforePublishTime=1700000000.000000"), _page(2, True), None),
     ("/of/user-lists?limit=2", f"{OF}/lists?limit=2&offset=0&format=infinite", _page(2, True),
@@ -122,20 +130,46 @@ def test_add_users_calls_of_once_per_user(client, of_fake):
     assert of_fake.calls == [("POST", f"{OF}/lists/1004/users/1002", None), ("POST", f"{OF}/lists/1004/users/1003", None)]
 
 
-def test_add_users_skip_invalid_reports_failures(client, of_fake):
-    of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=400)
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_add_users_skip_invalid_reports_per_id_failures(client, of_fake, status):
+    of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=status)
     of_fake.respond({"id": 1004})
     r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003], "skip_invalid": True})
-    assert (r.status_code, r.json()) == (200, {"added": [1003], "failed": {"1002": "of_error 400"}})
+    assert (r.status_code, r.json()) == (200, {"added": [1003], "failed": {"1002": f"of_error {status}"}})
     assert len(of_fake.calls) == 2
 
 
-def test_add_users_stops_at_the_first_of_error(client, of_fake):
+@pytest.mark.parametrize("status", [401, 429, 500])
+def test_add_users_skip_invalid_stops_at_other_of_errors(client, of_fake, status):
+    of_fake.respond({"id": 1004})
+    of_fake.respond({"error": {"code": 0, "message": "No"}}, status=status)
+    r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003, 1005], "skip_invalid": True})
+    assert (r.status_code, r.json()) == (status, {"error": {"code": "of_error", "status": status}})
+    assert len(of_fake.calls) == 2
+
+
+def test_add_users_skip_invalid_stops_at_transport_errors(client, of_fake):
+    of_fake.fail(curl_errors.Timeout("timed out"))
+    r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003], "skip_invalid": True})
+    assert (r.status_code, r.json()) == (504, {"error": {"code": "of_timeout"}})
+    assert len(of_fake.calls) == 1
+
+
+def test_add_users_first_error_names_the_ids_already_added(client, of_fake):
+    of_fake.respond({"id": 1004})
     of_fake.respond({"id": 1004})
     of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=400)
-    r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003, 1005]})
-    assert (r.status_code, r.json()) == (400, {"error": {"code": "of_error", "status": 400}})
-    assert len(of_fake.calls) == 2
+    r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003, 1005, 1006]})
+    assert r.status_code == 400
+    assert r.json() == {"error": {"code": "of_error", "message": "stopped at user 1005; already added: 1002,1003"}}
+    assert len(of_fake.calls) == 3
+
+
+def test_add_users_first_id_error_passes_through(client, of_fake):
+    of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=404)
+    r = client.post("/of/user-lists/1004/users", headers=H, json={"ids": [1002, 1003]})
+    assert (r.status_code, r.json()) == (404, {"error": {"code": "of_error", "status": 404}})
+    assert len(of_fake.calls) == 1
 
 
 # ─── validation and OF errors ──────────────────────────────────────
@@ -150,6 +184,10 @@ def test_add_users_stops_at_the_first_of_error(client, of_fake):
     ("get", "/of/users/list", None),
     ("get", "/of/users/list?ids=1002,fan_1", None),
     ("get", "/of/users/..x", None),
+    ("get", "/of/users/blocked", None),  # not a username; the list route is not served
+    ("get", "/of/users/restricted", None),
+    ("get", "/of/users/1002/posts?limit=51", None),
+    ("get", "/of/user-lists?limit=51", None),
     ("get", "/of/users/1002/posts?order=recent", None),
     ("get", "/of/user-lists/a.b", None),
     ("get", "/of/user-lists/1004/users?limit=21", None),

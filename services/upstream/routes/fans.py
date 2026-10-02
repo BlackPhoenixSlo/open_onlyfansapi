@@ -6,9 +6,9 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Path, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
-from deps import Client
+from deps import ApiError, Client
 from of_client import API_BASE, OFAPIError
 from routes.shape import next_page
 
@@ -139,9 +139,18 @@ def users_list(
     return client.request_json("GET", f"{API_BASE}/users/list?{query}")
 
 
+def _not_a_list_route(username: str) -> str:
+    """`users/blocked` and `users/restricted` are the reference API's list routes (not served: OF path unknown),
+    never usernames. pydantic's default regex engine has no lookahead, so this is a validator, not the pattern."""
+    if username in ("blocked", "restricted"):
+        raise ValueError("not a username")
+    return username
+
+
 @router.get("/users/{username}", operation_id="users.get")
 def users_get(
-    client: Client, username: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$")],
+    client: Client,
+    username: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$"), AfterValidator(_not_a_list_route)],
 ) -> Any:
     return client.get_user(username)  # a username or a numeric id
 
@@ -168,7 +177,8 @@ def users_unrestrict(client: Client, user_id: int) -> Any:
 
 @router.post("/users/{user_id}/subscribe", operation_id="users.subscribe")
 def users_subscribe(client: Client, user_id: int) -> Any:
-    """Subscribe to a user. Free only when their subscription price is 0; otherwise OF charges the account."""
+    """Subscribe to a user. Free only when their subscription price is 0; otherwise OF charges the account.
+    Check `subscribePrice` with GET users/{username} first."""
     return client.follow_user(user_id)
 
 
@@ -189,15 +199,16 @@ def users_labels(client: Client, user_id: int) -> Any:
 @router.get("/users/{user_id}/posts", operation_id="users.posts")
 def users_posts(
     request: Request, response: Response, client: Client, user_id: int,
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
     order: Literal["publish_date", "favorites_count", "tips_summ"] = "publish_date",
     sort: Literal["desc", "asc"] = "desc",
     beforePublishTime: Annotated[str, Query(max_length=32)] = "",  # the previous page's `tailMarker`
 ) -> Any:
     page = client.user_posts(user_id, limit=limit, order=f"{order}_{sort}", format="infinite",
                              before_publish_time=beforePublishTime or None)
+    # `tailMarker` is a publish time: it is a cursor only for newest-first order, and only while it moves.
     tail = page.get("tailMarker") if isinstance(page, dict) else None
-    if isinstance(tail, str) and tail:
+    if (order, sort) == ("publish_date", "desc") and isinstance(tail, str) and tail and tail != beforePublishTime:
         next_page(request, response, page, limit, {"order": order, "sort": sort}, beforePublishTime=tail)
     return page
 
@@ -217,7 +228,7 @@ class ListName(BaseModel):
 @router.get("/user-lists", operation_id="user-lists.index")
 def user_lists_index(
     request: Request, response: Response, client: Client,
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
     page = client.get_lists(limit=limit, offset=offset)
@@ -262,21 +273,29 @@ class AddUsers(BaseModel):
     skip_invalid: bool = False
 
 
+_PER_ID_ERRORS = {400, 404, 422}  # OF rejected this one id; anything else (401, 429, 5xx) is not per id
+
+
 @router.post("/user-lists/{userListId}/users", operation_id="user-lists.users.add")
 def user_lists_users_add(client: Client, userListId: ListId, body: AddUsers) -> Any:
-    """One OF call per user, in order. Without `skip_invalid` the first OF error is returned, and the users
-    before it stay added; with it, failures are reported as `{added, failed}`."""
+    """One OF call per user, in order. With `skip_invalid`, an OF 400/404/422 for one id is reported in
+    `{added, failed}`; any other error stops the request. Without it, the first OF error stops the request,
+    and its message names the ids already added (they stay added)."""
     added: list[int] = []
     failed: dict[str, str] = {}
     for uid in body.ids:
         try:
             client.add_user_to_list(userListId, uid)
         except OFAPIError as e:
-            if not body.skip_invalid:
-                raise
-            failed[str(uid)] = f"of_error {getattr(e.response, 'status_code', None) or 502}"
-        else:
-            added.append(uid)
+            status = getattr(e.response, "status_code", None) or 502
+            if body.skip_invalid and status in _PER_ID_ERRORS:
+                failed[str(uid)] = f"of_error {status}"
+                continue
+            if added and not body.skip_invalid:
+                raise ApiError(status, "of_error",
+                               f"stopped at user {uid}; already added: {','.join(map(str, added))}") from e
+            raise
+        added.append(uid)
     return {"added": added, "failed": failed} if body.skip_invalid else {userListId: added}
 
 
