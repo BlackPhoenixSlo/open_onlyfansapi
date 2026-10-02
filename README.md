@@ -1,14 +1,14 @@
 # Gateway
 
-A self-hosted API gateway and dashboard for a creator-platform service you already run.
+A self-hosted API gateway and dashboard for a creator-platform service, with the upstream service included.
 
 [![CI](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 
-Gateway sits in front of an upstream service that you supply. Each workspace creates its own scoped API keys
-and calls `/v1/{account}/...`. Gateway checks the key, forwards the call with one upstream bearer token, and
-records it. Your upstream stays private, your users never see its credential, and you get logs, usage, a
-playground and an API reference without building them.
+Gateway sits in front of an upstream service, the one in `services/upstream` or your own. Each workspace creates
+its own scoped API keys and calls `/v1/{account}/...`. Gateway checks the key, forwards the call with one upstream
+bearer token, and records it. Your upstream stays private, your users never see its credential, and you get logs,
+usage, a playground and an API reference without building them.
 
 > **Not affiliated.** This project is unofficial and is not affiliated with, endorsed by or connected to any
 > content platform or its operators. You are responsible for complying with the terms of the platforms you use.
@@ -43,33 +43,41 @@ playground and an API reference without building them.
 
 ```
  client (curl, script, browser)
-        │  HTTPS · Authorization: Bearer gk_...
+        │  HTTPS · Authorization: Bearer gk_... · REST and /v1/ws
         ▼
- ┌──────────────┐  http   ┌────────────────────────┐  Bearer UPSTREAM_TOKEN  ┌────────────────────┐
- │ Caddy (TLS)  │───────▶ │ Gateway :4000          │───────────────────────▶ │ your upstream      │
- └──────────────┘         │ API + dashboard        │                         │ UPSTREAM_URL       │
-                          └───────────┬────────────┘                         └────────────────────┘
-                                      │
-                          ┌───────────▼────────────┐
-                          │ Postgres 17            │
-                          │ keys, sessions, logs   │
+ ┌──────────────┐  http   ┌────────────────────────┐  Bearer UPSTREAM_TOKEN  ┌────────────────────────┐
+ │ Caddy (TLS)  │───────▶ │ Gateway :4000          │───────────────────────▶ │ upstream :8000         │
+ └──────────────┘         │ API + dashboard        │◀──── events (/ws) ──────│ services/upstream      │
+                          │ webhooks, /v1/ws       │                         │ OF sessions, proxies   │
+                          └───────────┬────────────┘                         └───────────┬────────────┘
+                                      │                                                  │ one proxy
+                          ┌───────────▼────────────┐                                     │ per account
+                          │ Postgres 17            │                                     ▼
+                          │ keys, sessions, logs,  │                                     OF
+                          │ event ledger           │
                           └────────────────────────┘
 ```
 
-The upstream is yours to supply. This repo does not include one, and connecting accounts happens there, not in
-Gateway. It must answer three calls, each sent with `Authorization: Bearer $UPSTREAM_TOKEN`:
+The upstream lives in [services/upstream](services/upstream). It holds each OF account's session and proxy, signs
+the account's calls to OF, and streams its events to Gateway over one WebSocket, which Gateway fans out to
+webhooks and `/v1/ws` clients. The deploy stack runs it under the `upstream` compose profile with no published
+port; accounts are connected to it from the VPS shell, not in Gateway
+([deploy guide §7](deploy/hostinger.md#7-connect-an-of-account)). Any service that answers the same calls can
+replace it. Each call carries `Authorization: Bearer $UPSTREAM_TOKEN`:
 
 | Call | Gateway sends | Upstream returns |
 |---|---|---|
 | `listAccounts` | `GET /of-accounts` | A JSON array of accounts, each with a numeric `id`. |
 | `forward` | `<METHOD> /of/<rest>` with `x-of-proxy-account-id: <account>` | Anything. It is passed through unchanged. |
 | `openapi` (optional) | `GET /docs/json` | An OpenAPI 3 document. Operations under `/of/` tagged `of-api` are merged into `/openapi.json`. |
+| `events` (optional, `UPSTREAM_WS_URL`) | WebSocket `GET /ws`, subprotocols `bearer` + `bearer.<token>`; the server must select `bearer` | One JSON event per text frame (plan-v4 §2.2) and a `heartbeat` frame at least every 90 s (the gateway reconnects after 90 s of silence). |
 
 Everything a client sends to `/v1/{account}/<rest>` lands on `/of/<rest>`, and Gateway refuses any path that
 would leave that prefix. The client's `authorization`, `cookie` and `host` headers are never forwarded. The
 interface is specified in [docs/spec/plan-v2.md §4](docs/spec/plan-v2.md#4-upstream-adapter-appsapisrclibupstreamts)
-and implemented in [apps/api/src/lib/upstream.ts](apps/api/src/lib/upstream.ts).
-[apps/api/test/fake-upstream.ts](apps/api/test/fake-upstream.ts) is a small working example of all three.
+and [docs/spec/plan-v4.md §2](docs/spec/plan-v4.md#2-contracts-every-phase-codes-against-these), and implemented
+in [apps/api/src/lib/upstream.ts](apps/api/src/lib/upstream.ts).
+[apps/api/test/fake-upstream.ts](apps/api/test/fake-upstream.ts) is a small working example of the contract.
 
 ## Deploy on a VPS (10 minutes)
 
@@ -82,15 +90,14 @@ cd /opt/gateway/deploy
 cp .env.example .env && chmod 600 .env
 ```
 
-Fill in five values in `deploy/.env`:
+Fill in four values in `deploy/.env` (the rest default to the bundled upstream):
 
 | Variable | Value |
 |---|---|
 | `PUBLIC_URL` | `https://gw.example.com`: your hostname, no trailing slash |
 | `POSTGRES_PASSWORD` | output of `openssl rand -hex 24` |
 | `BETTER_AUTH_SECRET` | output of `openssl rand -base64 32` |
-| `UPSTREAM_URL` | your upstream's origin, e.g. `https://upstream.example.com` |
-| `UPSTREAM_TOKEN` | the bearer token your upstream issued (16 characters or more) |
+| `UPSTREAM_TOKEN` | output of `openssl rand -hex 32` (letters, digits and `-._~` only, so not base64) |
 
 Start the stack. Migrations run on every start, and Caddy fetches a certificate on first boot.
 
@@ -106,9 +113,16 @@ approve it from the VPS shell:
 docker compose exec gateway node dist/db/link-team.js <slug>
 ```
 
-Reload **Accounts** to see your upstream's accounts. The [full deploy guide](deploy/hostinger.md) covers the
-firewall, updates, backups and restore, and troubleshooting. To expose no ports at all, run behind a
-[Cloudflare Tunnel](deploy/hostinger.md#10-optional-cloudflare-tunnel-instead-of-open-ports) instead of Caddy.
+Connect an OF account with a curl copied from your browser and a proxy of its own, then reload **Accounts**:
+
+```sh
+docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt
+```
+
+The [full deploy guide](deploy/hostinger.md) covers capturing the curl, account statuses, the firewall, updates,
+backups and restore (the upstream volume holds credentials), and troubleshooting. To expose no ports at all, run
+behind a [Cloudflare Tunnel](deploy/hostinger.md#11-optional-cloudflare-tunnel-instead-of-open-ports) instead of
+Caddy.
 
 ## Develop locally
 
@@ -161,7 +175,8 @@ Upstream responses, errors included, come back as the upstream sent them. Every 
 
 A running Gateway serves the full reference at `/docs` and the spec at `/openapi.json`, with no login needed.
 [docs/authentication.md](docs/authentication.md) covers keys, scopes, sessions, rate limits and every error
-code.
+code. [docs/webhooks.md](docs/webhooks.md) covers signed event delivery to your endpoints, and
+[docs/realtime.md](docs/realtime.md) the `/v1/ws` event socket.
 
 ## Security
 

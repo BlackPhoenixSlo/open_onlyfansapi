@@ -7,7 +7,7 @@ This guide runs the gateway on your machine, links a workspace to the upstream a
 - Node 22.12 or newer
 - pnpm 10
 - Docker (for Postgres)
-- An upstream service the gateway can reach, and its bearer token (or the fake upstream from step 3)
+- An upstream: the one in `services/upstream`, the fake one the tests use, or your own (step 3)
 
 ## 1. Start the database
 
@@ -48,7 +48,11 @@ pnpm dev
 The API listens on `http://localhost:4000` and the dashboard on `http://localhost:5173`. In development the
 dashboard forwards `/api` and `/v1` to the API.
 
-Without a real upstream, run the fake one the tests use in a second terminal:
+### The upstream
+
+Both options below listen on port 3001 (the default `UPSTREAM_URL`), so run one or the other.
+
+**The fake upstream** needs no OF account. In a second terminal:
 
 ```sh
 UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts
@@ -56,6 +60,35 @@ UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-
 
 It listens on `0.0.0.0:3001` (`FAKE_UPSTREAM_PORT` to change that), requires
 `authorization: Bearer dev-upstream-token` and serves one account with id `1`.
+
+**The real upstream** (`services/upstream`) talks to OF. The root compose file runs it under the `upstream`
+profile on `127.0.0.1:3001`, with its sessions in the `upstream-data` volume. It takes `UPSTREAM_TOKEN` from
+your shell or the root `.env` (default `dev-upstream-token`):
+
+```sh
+docker compose --profile upstream up -d --build upstream
+```
+
+Connect an account with a curl copied from Chrome (DevTools → Network → a request to `onlyfans.com/api2/v2/…` →
+Copy as cURL; it must carry the cookies as `-b '…'`) and a proxy for that account. The upstream refuses an account
+without a proxy (`OF_REQUIRE_PROXY` defaults to `true`), so the account's traffic never leaves from your own IP:
+
+```sh
+docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt
+```
+
+OF's static signing parameter comes from `--static-param <value>` on that command, or from `STATIC_PARAM` in
+the upstream's environment (`STATIC_PARAM=… docker compose --profile upstream up -d upstream`). The deploy
+equivalent is in [deploy/hostinger.md §7](../deploy/hostinger.md#7-connect-an-of-account).
+
+**Events.** To feed webhooks and the `/v1/ws` socket ([realtime.md](realtime.md)), point the gateway at the
+upstream's event socket in `.env` and restart `pnpm dev`. Both upstreams above serve it:
+
+```sh
+UPSTREAM_WS_URL=ws://localhost:3001/ws
+```
+
+Left empty, there is no event source and `/v1/ws` answers 503.
 
 ## 4. Sign up and link your workspace
 
