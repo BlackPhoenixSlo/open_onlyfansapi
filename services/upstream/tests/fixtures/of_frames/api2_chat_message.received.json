@@ -1,0 +1,35 @@
+{
+  "api2_chat_message": {
+    "responseType": "message",
+    "text": "<p>hey, are you there?</p>",
+    "giphyId": null,
+    "lockedText": false,
+    "isFree": true,
+    "price": 0,
+    "isMediaReady": true,
+    "mediaCount": 1,
+    "media": [
+      {"id": 3000001, "type": "photo", "convertedToVideo": false, "canView": true, "hasError": false,
+       "createdAt": "2026-10-02T12:00:00+00:00", "isReady": true,
+       "files": {"thumb": {"url": "https://cdn.example.invalid/redacted/thumb.jpg", "width": 300, "height": 300}}}
+    ],
+    "previews": [],
+    "isTip": false,
+    "isReportedByMe": false,
+    "isCouplePeopleMedia": false,
+    "queueId": null,
+    "fromUser": {"id": 200002, "_view": "s"},
+    "isFromQueue": false,
+    "id": 5551234,
+    "isOpened": false,
+    "isNew": true,
+    "createdAt": "2026-10-02T12:00:00+00:00",
+    "changedAt": "2026-10-02T12:00:00+00:00",
+    "cancelSeconds": 0,
+    "isLiked": false,
+    "canPurchase": false,
+    "canReport": true,
+    "canBePinned": true,
+    "isPinned": false
+  }
+}

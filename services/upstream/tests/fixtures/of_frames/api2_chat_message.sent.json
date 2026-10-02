@@ -1,0 +1,31 @@
+{
+  "api2_chat_message": {
+    "responseType": "message",
+    "text": "<p>hi! here now</p>",
+    "giphyId": null,
+    "lockedText": false,
+    "isFree": false,
+    "price": 5,
+    "isMediaReady": true,
+    "mediaCount": 0,
+    "media": [],
+    "previews": [],
+    "isTip": false,
+    "isReportedByMe": false,
+    "isCouplePeopleMedia": false,
+    "queueId": null,
+    "fromUser": {"id": 100001, "_view": "s"},
+    "isFromQueue": false,
+    "id": 5551235,
+    "isOpened": false,
+    "isNew": false,
+    "createdAt": "2026-10-02T12:00:05.250+00:00",
+    "changedAt": "2026-10-02T12:00:05.250+00:00",
+    "cancelSeconds": 86400,
+    "isLiked": false,
+    "canPurchase": false,
+    "canReport": false,
+    "canBePinned": true,
+    "isPinned": false
+  }
+}

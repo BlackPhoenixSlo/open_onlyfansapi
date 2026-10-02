@@ -1,0 +1,14 @@
+# Only the service source enters the image: no tests, venvs, caches or local state.
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+tests
+data
+sessions
+proxies.json
+Dockerfile
+.dockerignore
+**/.DS_Store
+ruff.toml

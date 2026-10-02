@@ -1,0 +1,6 @@
+# Service code (app, pump, events, connect, tests) is held to ruff's default rules.
+# The lifted modules are held to E9/F only: they are edited for breakage, never restyled.
+[lint.per-file-ignores]
+"{accounts,client_pool,live_rev,of_client,of_signer,of_ws,proxies,session_bootstrap}.py" = [
+    "BLE", "DTZ", "E4", "E7", "EXE", "I", "PIE", "PYI", "RUF", "S", "SIM", "UP",
+]
