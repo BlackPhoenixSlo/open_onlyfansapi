@@ -27,6 +27,11 @@ if [ -n "$brand_hits" ]; then
   echo "$brand_hits"
 fi
 
+# 2b. the private upstream must never be tracked
+if git ls-files --error-unmatch services >/dev/null 2>&1; then
+  report "services/ is tracked; the upstream source must stay in the private image (see docs/spec/handoff-of-serving.md §6.1)"
+fi
+
 # 3. README disclaimer
 if ! grep -qi 'not affiliated' README.md 2>/dev/null; then
   report "README.md has no line containing \"not affiliated\"."
