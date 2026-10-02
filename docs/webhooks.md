@@ -4,8 +4,8 @@ The gateway can push events to your own HTTPS endpoints. Each delivery is signed
 [Standard Webhooks](https://www.standardwebhooks.com) scheme, retried with backoff, and an endpoint that keeps
 failing is paused.
 
-In this release only `webhook.test` is actually sent (from the test route). The other event types are in the
-catalogue so you can subscribe to them now; they are emitted once the upstream event source ships.
+Events come from the upstream's event socket (`UPSTREAM_WS_URL`), which the API process reads when `RUN_JOBS=true`.
+Without `UPSTREAM_WS_URL` only `webhook.test` is sent (from the test route).
 
 ## Endpoints
 
@@ -37,12 +37,30 @@ All routes are under `/v1` and accept an API key or the dashboard session (see
 
 ### Event types
 
-| Type | Sent when |
-|---|---|
-| `message.received` | A connected account received a message |
-| `account.session_expired` | A connected account's session expired |
-| `webhook.test` | You call the test route. It ignores the endpoint's `events` filter |
-| `upstream.*` | Any other upstream event, as `upstream.<name>`. Subscribing to `upstream.*` covers all of them |
+| Type | Sent when | `data` |
+|---|---|---|
+| `message.received` | A connected account received a message | `{ messageId, fanId, text, price, mediaCount }` |
+| `message.sent` | A connected account sent a message | same as `message.received` |
+| `tip.received` | **TBC.** A fan tipped | `{ fanId, amountCents, messageId?, postId? }` |
+| `ppv.unlocked` | **TBC.** A fan unlocked paid content | `{ fanId, amountCents, messageId?, postId? }` |
+| `subscription.new` | **TBC.** A fan subscribed | `{ fanId, amountCents? }` |
+| `subscription.renewed` | **TBC.** A fan renewed | `{ fanId, amountCents? }` |
+| `subscription.expired` | **TBC.** A fan's subscription expired | `{ fanId }` |
+| `post.expired` | A post of a connected account expired | `{ postId }` |
+| `account.session_expired` | A connected account's session expired; reconnect it | `{}` |
+| `webhook.test` | You call the test route. It ignores the endpoint's `events` filter | `{ message }` |
+| `upstream.*` | Any other upstream event, as `upstream.<name>`. Subscribing to `upstream.*` covers all of them | the upstream's raw value |
+
+**TBC** types are in the catalogue so you can subscribe now, but the upstream does not emit them yet; until it maps
+those OnlyFans frames they arrive as `upstream.<name>`. Amounts are OnlyFans' gross figures in cents.
+
+`message.received` and `message.sent` carry the fan's message text, and every event goes to every workspace linked
+to the upstream (`link-team`), so anyone with an endpoint in a linked workspace receives that text. The gateway's
+own event ledger (used for `/v1/stats`) stores no payloads.
+
+Delivery from the upstream is **at-most-once**: there is no replay. Events that happen while the gateway is down or
+reconnecting to the upstream are not sent; resync from the REST API when you need a complete view. An event the
+upstream sends twice with the same id is delivered once.
 
 ## The request
 
