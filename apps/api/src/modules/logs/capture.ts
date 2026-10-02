@@ -29,9 +29,10 @@ function gatewayErrorCode(body: string | Buffer | null, requestId: string): stri
   }
 }
 
-type Captured = { payload: unknown; durationMs: number; createdAt: Date };
+export type Captured = { payload: unknown; ip: string; durationMs: number; createdAt: Date };
 
-function toRow(request: FastifyRequest, reply: FastifyReply, { payload, durationMs, createdAt }: Captured): typeof requestLog.$inferInsert {
+/** The request_log row for one request (also the `/v1/ws` session row, built at open). */
+export function toRow(request: FastifyRequest, reply: FastifyReply, { payload, ip, durationMs, createdAt }: Captured): typeof requestLog.$inferInsert {
   const { actor, url } = request;
   const q = url.indexOf('?');
   const path = q === -1 ? url : url.slice(0, q);
@@ -51,7 +52,7 @@ function toRow(request: FastifyRequest, reply: FastifyReply, { payload, duration
     path,
     endpoint: normaliseEndpoint(request.method, request.routeOptions.url, path),
     query: redactQuery(q === -1 ? '' : url.slice(q + 1)),
-    ip: request.ip,
+    ip,
     statusCode: status,
     durationMs,
     reqBytes: reqBody ? Buffer.byteLength(reqBody) : Number(request.headers['content-length']) || 0,
@@ -70,11 +71,13 @@ function toRow(request: FastifyRequest, reply: FastifyReply, { payload, duration
  * Each row is inserted off the response path; a failed insert is logged, never thrown. Pending inserts finish on close.
  */
 export function captureRequestLogs(scope: FastifyInstance) {
-  const payloads = new WeakMap<FastifyRequest, unknown>();
+  // The ip is read in onSend: on a refused WebSocket upgrade, @fastify/websocket destroys the socket before our
+  // onResponse runs, and request.ip reads the socket.
+  const sent = new WeakMap<FastifyRequest, { payload: unknown; ip: string }>();
   const pending = new Set<Promise<void>>();
 
   scope.addHook('onSend', async (request, _reply, payload) => {
-    payloads.set(request, payload);
+    sent.set(request, { payload, ip: request.ip });
     return payload;
   });
 
@@ -82,7 +85,8 @@ export function captureRequestLogs(scope: FastifyInstance) {
     if (!request.actor) return;
     if (request.actor.keyId === null && request.routeOptions.url !== PROXY_ROUTE) return;
     const durationMs = Math.round(reply.elapsedTime);
-    const captured = { payload: payloads.get(request), durationMs, createdAt: new Date(Date.now() - durationMs) };
+    const { payload, ip } = sent.get(request) ?? { payload: undefined, ip: request.ip };
+    const captured = { payload, ip, durationMs, createdAt: new Date(Date.now() - durationMs) };
     setImmediate(() => {
       const write: Promise<void> = (async () => {
         await db.insert(requestLog).values(toRow(request, reply, captured));
