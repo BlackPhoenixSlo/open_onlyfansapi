@@ -7,6 +7,7 @@ const BATCH = 10_000;
 const KEEP = {
   request_log: sql``,
   webhook_delivery: sql`and status <> 'pending'`,
+  event: sql``,
 };
 
 /** Deletes rows of `table` older than `days`, 10k rows per statement so no single delete holds locks for long. */

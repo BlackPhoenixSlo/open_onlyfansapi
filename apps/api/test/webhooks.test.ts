@@ -126,6 +126,13 @@ describe('webhooks API', () => {
     const events = await app.inject({ method: 'GET', url: '/v1/webhooks/events', headers: bearer(readKey) });
     expect(events.json().items.map((e: { type: string }) => e.type)).toEqual([
       'message.received',
+      'message.sent',
+      'tip.received',
+      'ppv.unlocked',
+      'subscription.new',
+      'subscription.renewed',
+      'subscription.expired',
+      'post.expired',
       'account.session_expired',
       'webhook.test',
       'upstream.*',

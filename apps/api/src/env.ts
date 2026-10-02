@@ -16,11 +16,13 @@ export function parseTrustProxy(value: string): boolean | string[] | ((address: 
 }
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
+/** Hosts the upstream may be reached on over plain http/ws: local, the Docker host, the compose service. */
+const UPSTREAM_PLAIN_HOSTS = [...LOCAL_HOSTS, 'host.docker.internal', 'upstream'];
 
-/** True for an `http:` URL whose host is not one of `allowedHosts`. */
-function isPlainHttp(value: string, allowedHosts: string[]) {
+/** True for an unencrypted (`http:` or `ws:`) URL whose host is not one of `allowedHosts`. */
+function isPlainHttp(value: string, allowedHosts: string[], protocol: 'http:' | 'ws:' = 'http:') {
   const url = URL.parse(value);
-  return url?.protocol === 'http:' && !allowedHosts.includes(url.hostname);
+  return url?.protocol === protocol && !allowedHosts.includes(url.hostname);
 }
 
 export const envSchema = z.object({
@@ -37,6 +39,12 @@ export const envSchema = z.object({
   UPSTREAM_URL: z.string().url(),
   UPSTREAM_TOKEN: z.string().min(16),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  /** The upstream's event socket (`ws://…/ws`). Unset or empty = no event source, and `/v1/ws` answers 503. */
+  UPSTREAM_WS_URL: z
+    .literal('')
+    .or(z.url({ protocol: /^wss?$/ }))
+    .optional()
+    .transform((v) => v || undefined),
   KEY_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
   RUN_JOBS: bool.default(true),
   /** Which request logs keep bodies: `errors` = status >= 400 only. */
@@ -50,6 +58,8 @@ export const envSchema = z.object({
   /** Consecutive failed deliveries that pause an endpoint. */
   WEBHOOK_PAUSE_AFTER: z.coerce.number().int().positive().default(20),
   WEBHOOK_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
+  /** Days the event ledger (`/v1/stats`) keeps. */
+  EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
 }).superRefine((e, ctx) => {
   if (e.NODE_ENV !== 'production') return;
   for (const key of ['APP_URL', 'BETTER_AUTH_URL'] as const) {
@@ -70,8 +80,11 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-if (isPlainHttp(env.UPSTREAM_URL, [...LOCAL_HOSTS, 'host.docker.internal'])) {
+if (isPlainHttp(env.UPSTREAM_URL, UPSTREAM_PLAIN_HOSTS)) {
   console.warn('UPSTREAM_URL is plain http:// to a remote host: UPSTREAM_TOKEN and request bodies travel unencrypted.');
+}
+if (env.UPSTREAM_WS_URL && isPlainHttp(env.UPSTREAM_WS_URL, UPSTREAM_PLAIN_HOSTS, 'ws:')) {
+  console.warn('UPSTREAM_WS_URL is plain ws:// to a remote host: UPSTREAM_TOKEN and events travel unencrypted.');
 }
 /** Every variable the API reads (`.env.example` must list them all). */
 export const ENV_KEYS = Object.keys(envSchema.shape);

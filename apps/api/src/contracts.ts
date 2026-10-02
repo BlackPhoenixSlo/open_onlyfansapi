@@ -143,11 +143,34 @@ export const overview = z.object({
 export type Overview = z.infer<typeof overview>;
 
 // Webhooks
-/** The event catalogue. `upstream.*` subscribes to every opaque upstream event (`upstream.<name>`). */
-export const webhookEventType = z.enum(['message.received', 'account.session_expired', 'webhook.test', 'upstream.*']);
+/**
+ * The event catalogue. `upstream.*` subscribes to every opaque upstream event (`upstream.<name>`).
+ * TBC: `tip.received`, `ppv.unlocked` and `subscription.*` are emitted only once the upstream maps their frames;
+ * until then those frames arrive as `upstream.<name>`.
+ */
+export const webhookEventType = z.enum([
+  'message.received',
+  'message.sent',
+  'tip.received',
+  'ppv.unlocked',
+  'subscription.new',
+  'subscription.renewed',
+  'subscription.expired',
+  'post.expired',
+  'account.session_expired',
+  'webhook.test',
+  'upstream.*',
+]);
 export type WebhookEventType = z.infer<typeof webhookEventType>;
 export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
   'message.received': 'A connected account received a message.',
+  'message.sent': 'A connected account sent a message.',
+  'tip.received': 'A connected account received a tip (TBC: not emitted yet).',
+  'ppv.unlocked': 'A fan unlocked paid content (TBC: not emitted yet).',
+  'subscription.new': 'A fan subscribed to a connected account (TBC: not emitted yet).',
+  'subscription.renewed': 'A fan renewed a subscription (TBC: not emitted yet).',
+  'subscription.expired': 'A fan subscription expired (TBC: not emitted yet).',
+  'post.expired': 'A post of a connected account expired.',
   'account.session_expired': "A connected account's session expired; reconnect it.",
   'webhook.test': "Sent by the Test action, regardless of the endpoint's event filter.",
   'upstream.*': 'Any other upstream event, passed through as upstream.<name>.',
@@ -217,3 +240,30 @@ export const webhookDelivery = z.object({
 export type WebhookDelivery = z.infer<typeof webhookDelivery>;
 export const webhookDeliveryList = z.object({ items: z.array(webhookDelivery), nextCursor: z.string().nullable() });
 export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;
+
+// Stats
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+
+/** `GET /v1/stats`: UTC days, `to` inclusive. Defaults and the range limit are applied by the route. */
+export const statsQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  /** Comma-separated event types, e.g. `message.received,tip.received`. */
+  types: z.string().optional(),
+});
+export type StatsQuery = z.input<typeof statsQuery>;
+
+export const stats = z.object({
+  /** Sparse: one row per (UTC day, account, type) with at least one event. `amountCents` sums OF's gross amounts. */
+  rows: z.array(
+    z.object({
+      day: z.string(),
+      accountId: z.number().int(),
+      type: z.string(),
+      count: z.number().int(),
+      amountCents: z.number().int(),
+    }),
+  ),
+});
+export type Stats = z.infer<typeof stats>;
