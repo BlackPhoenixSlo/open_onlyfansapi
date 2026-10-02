@@ -34,17 +34,17 @@ beforeAll(async () => {
   fullKey = (await createKey(app, cookie, { scope: 'read' })).secret;
   limitedKey = (await createKey(app, cookie, { scope: 'read', allowedAccountIds: [12] })).secret;
   await db.insert(event).values([
-    ev(12, 'message.received', '2026-03-09T23:59:59.999Z'), // before `from`
-    ev(12, 'message.received', '2026-03-10T23:59:59.999Z'), // last ms of the 10th
-    ev(12, 'message.received', '2026-03-11T00:00:00.000Z'), // first ms of the 11th
-    ev(12, 'tip.received', '2026-03-10T10:00:00Z', 2_000_000_000),
-    ev(12, 'tip.received', '2026-03-10T11:00:00Z', 2_000_000_000), // sum beyond int4
-    ev(13, 'message.received', '2026-03-10T12:00:00Z'),
-    ev(13, 'tip.received', '2026-03-11T12:00:00Z', 500),
-    ev(12, 'message.received', '2026-03-12T00:00:00.000Z'), // after `to`
-    ev(14, 'message.received', today), // default range
-    ev(14, 'tip.received', new Date(today.getTime() - 29 * DAY), 100), // first day of the default range
-    ev(14, 'ppv.unlocked', new Date(today.getTime() - 30 * DAY + DAY - 1), 100), // last ms before it
+    ev(12, 'messages.received', '2026-03-09T23:59:59.999Z'), // before `from`
+    ev(12, 'messages.received', '2026-03-10T23:59:59.999Z'), // last ms of the 10th
+    ev(12, 'messages.received', '2026-03-11T00:00:00.000Z'), // first ms of the 11th
+    ev(12, 'tips.received', '2026-03-10T10:00:00Z', 2_000_000_000),
+    ev(12, 'tips.received', '2026-03-10T11:00:00Z', 2_000_000_000), // sum beyond int4
+    ev(13, 'messages.received', '2026-03-10T12:00:00Z'),
+    ev(13, 'tips.received', '2026-03-11T12:00:00Z', 500),
+    ev(12, 'messages.received', '2026-03-12T00:00:00.000Z'), // after `to`
+    ev(14, 'messages.received', today), // default range
+    ev(14, 'tips.received', new Date(today.getTime() - 29 * DAY), 100), // first day of the default range
+    ev(14, 'messages.ppv.unlocked', new Date(today.getTime() - 30 * DAY + DAY - 1), 100), // last ms before it
   ]);
 });
 afterAll(async () => {
@@ -60,20 +60,20 @@ describe('stats', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       rows: [
-        { day: '2026-03-10', accountId: 12, type: 'message.received', count: 1, amountCents: 0 },
-        { day: '2026-03-10', accountId: 12, type: 'tip.received', count: 2, amountCents: 4_000_000_000 },
-        { day: '2026-03-10', accountId: 13, type: 'message.received', count: 1, amountCents: 0 },
-        { day: '2026-03-11', accountId: 12, type: 'message.received', count: 1, amountCents: 0 },
-        { day: '2026-03-11', accountId: 13, type: 'tip.received', count: 1, amountCents: 500 },
+        { day: '2026-03-10', accountId: 12, type: 'messages.received', count: 1, amountCents: 0 },
+        { day: '2026-03-10', accountId: 12, type: 'tips.received', count: 2, amountCents: 4_000_000_000 },
+        { day: '2026-03-10', accountId: 13, type: 'messages.received', count: 1, amountCents: 0 },
+        { day: '2026-03-11', accountId: 12, type: 'messages.received', count: 1, amountCents: 0 },
+        { day: '2026-03-11', accountId: 13, type: 'tips.received', count: 1, amountCents: 500 },
       ],
     });
   });
 
   it('filters by types', async () => {
-    const res = await get(`/v1/stats?${RANGE}&types=tip.received,ppv.unlocked`, bearer(fullKey));
+    const res = await get(`/v1/stats?${RANGE}&types=tips.received,messages.ppv.unlocked`, bearer(fullKey));
     expect(res.json().rows.map((r: { day: string; accountId: number; type: string }) => [r.day, r.accountId, r.type])).toEqual([
-      ['2026-03-10', 12, 'tip.received'],
-      ['2026-03-11', 13, 'tip.received'],
+      ['2026-03-10', 12, 'tips.received'],
+      ['2026-03-11', 13, 'tips.received'],
     ]);
   });
 
@@ -92,8 +92,8 @@ describe('stats', () => {
 
     const one = await get(`/v1/stats?${RANGE}&accountId=13`, bearer(fullKey));
     expect(one.json().rows.map((r: { accountId: number; type: string }) => [r.accountId, r.type])).toEqual([
-      [13, 'message.received'],
-      [13, 'tip.received'],
+      [13, 'messages.received'],
+      [13, 'tips.received'],
     ]);
   });
 
@@ -101,8 +101,8 @@ describe('stats', () => {
     const res = await get('/v1/stats', dashboard(cookie));
     expect(res.statusCode).toBe(200);
     expect(res.json().rows).toEqual([
-      { day: iso(today.getTime() - 29 * DAY), accountId: 14, type: 'tip.received', count: 1, amountCents: 100 },
-      { day: iso(today.getTime()), accountId: 14, type: 'message.received', count: 1, amountCents: 0 },
+      { day: iso(today.getTime() - 29 * DAY), accountId: 14, type: 'tips.received', count: 1, amountCents: 100 },
+      { day: iso(today.getTime()), accountId: 14, type: 'messages.received', count: 1, amountCents: 0 },
     ]);
   });
 

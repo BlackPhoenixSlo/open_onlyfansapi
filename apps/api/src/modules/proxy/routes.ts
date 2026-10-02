@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { appOrigin } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { assertWriteScope } from '../../plugins/actor.js';
@@ -6,6 +7,8 @@ import { assertWriteScope } from '../../plugins/actor.js';
 const ENCODED_SEPARATOR = /%2f|%5c|\\/i;
 const MAX_ACCOUNT_ID = 2_147_483_647;
 const FORWARDED_RESPONSE_HEADERS = new Set(['content-type', 'x-of-cache', 'retry-after']);
+/** `application/json` or any `+json` type, with or without parameters. */
+export const JSON_TYPE = /^application\/([\w.+-]+\+)?json\s*(;|$)/i;
 
 /** The `{account}` path segment as an id, or null. Account ids are int4 (upstream and `request_log.account_id`). */
 export function parseAccountId(segment: string): number | null {
@@ -55,6 +58,24 @@ export function isPassthrough(rest: string): boolean {
   }
 }
 
+/**
+ * The named-route response wrapper (plan-v5 §2.2): `{"data":<body>,"_meta":{}}`, plus `"_pagination":{"next_page":…}`
+ * when the upstream marked a next page. Built by splicing the upstream bytes, so the body is never re-encoded.
+ * Returns null (forward unchanged) for the passthrough, non-2xx, 204, empty, non-JSON and content-encoded responses.
+ */
+export function wrapResponse(
+  res: { status: number; headers: Headers; body: Buffer },
+  rest: string,
+  accountId: number,
+): Buffer | null {
+  if (res.status < 200 || res.status > 299 || res.status === 204 || res.body.length === 0) return null;
+  if (isPassthrough(rest) || res.headers.has('content-encoding')) return null;
+  if (!JSON_TYPE.test(res.headers.get('content-type') ?? '')) return null;
+  const nextPage = res.headers.get('x-next-page');
+  const pagination = nextPage === null ? '' : `,"_pagination":{"next_page":${JSON.stringify(`${appOrigin}/v1/${accountId}${nextPage}`)}}`;
+  return Buffer.concat([Buffer.from('{"data":'), res.body, Buffer.from(`,"_meta":{}${pagination}}`)]);
+}
+
 /** `ALL /v1/:account/*` → upstream `/of/*`, for a linked workspace, scoped by `x-of-proxy-account-id`. */
 export default async function proxyRoutes(app: FastifyInstance) {
   // Forward JSON bodies verbatim (and allow empty ones).
@@ -84,9 +105,10 @@ export default async function proxyRoutes(app: FastifyInstance) {
 
     const res = await app.upstream.forward({ accountId, path, method: request.method, headers, body });
     reply.status(res.status);
+    // `x-next-page` is read by wrapResponse and, like content-length, never forwarded (Fastify sets the length).
     res.headers.forEach((value, key) => {
       if (FORWARDED_RESPONSE_HEADERS.has(key) || key.startsWith('x-ratelimit-')) reply.header(key, value);
     });
-    return reply.send(res.body);
+    return reply.send(wrapResponse(res, path, accountId) ?? res.body);
   });
 }

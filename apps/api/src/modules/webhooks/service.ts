@@ -29,6 +29,7 @@ function toEndpoint(row: EndpointRow): WebhookEndpoint {
 function toDelivery(row: DeliveryRow): WebhookDelivery {
   return {
     id: row.id,
+    eventId: row.eventId,
     endpointId: row.endpointId,
     eventType: row.eventType,
     accountId: row.accountId,
@@ -121,7 +122,7 @@ export async function deleteEndpoint(teamId: string, id: string): Promise<void> 
   if (rows.length === 0) throw notFound();
 }
 
-/** Queues a `webhook.test` delivery to this endpoint, whatever its events filter. */
+/** Queues a `webhook.test` delivery (with a fresh `evt_` id) to this endpoint, whatever its events filter. */
 export async function queueTest(teamId: string, id: string): Promise<WebhookDelivery> {
   const endpoint = await findEndpoint(teamId, id);
   const [row] = await db
@@ -130,6 +131,7 @@ export async function queueTest(teamId: string, id: string): Promise<WebhookDeli
       id: newId('whd'),
       teamId,
       endpointId: endpoint.id,
+      eventId: newId('evt'),
       eventType: 'webhook.test',
       payload: { message: 'Test event from the gateway' },
     })
@@ -137,7 +139,7 @@ export async function queueTest(teamId: string, id: string): Promise<WebhookDeli
   return toDelivery(row!);
 }
 
-/** Re-sends a delivery as a new pending row (new `whd_` id, so a new `webhook-id`) with `replay_of` set. */
+/** Re-sends a delivery as a new pending row (new `whd_` id, same `event_id`) with `replay_of` set. */
 export async function redeliver(teamId: string, endpointId: string, deliveryId: string): Promise<WebhookDelivery> {
   const [original] = await db
     .select()
@@ -153,6 +155,7 @@ export async function redeliver(teamId: string, endpointId: string, deliveryId: 
       id: newId('whd'),
       teamId,
       endpointId,
+      eventId: original.eventId,
       eventType: original.eventType,
       accountId: original.accountId,
       payload: jsonPayload(original.payload),
@@ -209,9 +212,10 @@ const limitEmit = limiter(3);
 
 /**
  * Queues one event for every enabled endpoint of the team that subscribes to `type` (empty events = all;
- * `upstream.*` covers every `upstream.<name>`), in a single multi-row INSERT. Returns the number queued.
+ * `upstream.*` covers every `upstream.<name>`), in a single multi-row INSERT. `eventId` is the event's `evt_` id
+ * (the idempotency key). Returns the number queued.
  */
-export function emit(teamId: string, type: string, accountId: number | null, data: unknown): Promise<number> {
+export function emit(teamId: string, eventId: string, type: string, accountId: number | null, data: unknown): Promise<number> {
   return limitEmit(async () => {
     const subscribed = type.startsWith('upstream.') ? [type, 'upstream.*'] : [type];
     const endpoints = await db
@@ -226,7 +230,15 @@ export function emit(teamId: string, type: string, accountId: number | null, dat
       );
     if (endpoints.length === 0) return 0;
     await db.insert(webhookDelivery).values(
-      endpoints.map((e) => ({ id: newId('whd'), teamId, endpointId: e.id, eventType: type, accountId, payload: jsonPayload(data) })),
+      endpoints.map((e) => ({
+        id: newId('whd'),
+        teamId,
+        endpointId: e.id,
+        eventId,
+        eventType: type,
+        accountId,
+        payload: jsonPayload(data),
+      })),
     );
     return endpoints.length;
   });

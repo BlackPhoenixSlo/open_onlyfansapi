@@ -84,7 +84,10 @@ export const webhookEndpoint = pgTable('webhook_endpoint', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-/** One event for one endpoint. `id` (`whd_…`) is also the `webhook-id` the receiver dedups on. */
+/**
+ * One event for one endpoint. `event_id` (`evt_…`) is the `X-OFAPI-Idempotency-Key` the receiver dedups on: a retry
+ * and a redelivery keep it, while a redelivery gets a new `whd_` id.
+ */
 export const webhookDelivery = pgTable(
   'webhook_delivery',
   {
@@ -93,10 +96,12 @@ export const webhookDelivery = pgTable(
     endpointId: text('endpoint_id')
       .notNull()
       .references(() => webhookEndpoint.id, { onDelete: 'cascade' }),
+    eventId: text('event_id').notNull(),
     eventType: text('event_type').notNull(),
     accountId: integer('account_id'),
     payload: jsonb('payload').$type<unknown>().notNull(),
-    status: text('status', { enum: ['pending', 'succeeded', 'failed'] }).notNull().default('pending'),
+    /** `dropped`: a pending v4 delivery cancelled by the 2.0 migration (plan-v5 §2.4); never sent. */
+    status: text('status', { enum: ['pending', 'succeeded', 'failed', 'dropped'] }).notNull().default('pending'),
     /** Completed attempts (incremented when a POST finishes, not when it is claimed). */
     attempts: integer('attempts').notNull().default(0),
     nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),

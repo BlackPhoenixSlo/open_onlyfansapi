@@ -46,6 +46,7 @@ describe('openapi', () => {
       '/v1/stats',
       ...WEBHOOK_PATHS,
       '/v1/whoami',
+      '/v1/{account}/_of/{path}',
       '/v1/{account}/chats/{chatId}/messages',
       '/v1/{account}/users/me',
       '/v1/{account}/users/{userId}/posts',
@@ -68,11 +69,24 @@ describe('openapi', () => {
     expect(JSON.stringify(spec)).not.toMatch(/of-api|bearerAuth|internal/);
   });
 
-  it('publishes only the component schemas the public operations reference', async () => {
+  it('publishes named-route 2xx JSON schemas wrapped, the passthrough unwrapped, and only the referenced schemas', async () => {
     const spec = (await app.inject({ method: 'GET', url: '/openapi.json' })).json();
     expect(spec.paths['/v1/{account}/users/me'].get.responses[200].content['application/json'].schema).toEqual({
-      $ref: '#/components/schemas/User',
+      type: 'object',
+      required: ['data', '_meta'],
+      properties: {
+        data: { $ref: '#/components/schemas/User' },
+        _meta: { type: 'object' },
+        _pagination: {
+          type: 'object',
+          required: ['next_page'],
+          properties: { next_page: { type: 'string', description: 'Absolute URL of the next page' } },
+        },
+      },
     });
+    expect(spec.paths['/v1/{account}/_of/{path}'].get.responses[200].content['application/json'].schema).toEqual({});
+    // A response without content stays as it is.
+    expect(spec.paths['/v1/{account}/users/{userId}/posts'].get.responses).toEqual({ 200: { description: 'Default Response' } });
     expect(Object.keys(spec.components.schemas).sort()).toEqual(['Media', 'User']);
   });
 

@@ -15,11 +15,10 @@ const DROP_REPORT_MS = 60_000;
 
 /** Catalogue types an upstream frame may carry verbatim (`webhook.test` is gateway-only); all are stored. */
 const STORED = new Set<string>(webhookEventType.options.filter((t) => t !== 'webhook.test' && t !== 'upstream.*'));
-/** Stored types whose `data.amountCents` fills the ledger's `amount_cents` (plan-v4 §2.3). */
-const AMOUNT_TYPES = new Set(['tip.received', 'ppv.unlocked', 'subscription.new', 'subscription.renewed']);
-const amount = z.object({ amountCents: z.int32() });
+/** The frame's `amount_cents` fills the ledger's `amount_cents`; anything but an int32 is stored as null. */
+const amount = z.int32();
 
-/** The upstream `/ws` frame (plan-v4 §2.2). */
+/** The upstream `/ws` frame (plan-v4 §2.2 plus `amount_cents`, plan-v5 §2.4). The payload is never parsed. */
 const eventFrame = z.object({
   /** Stable per (type, account, OF object), or null; becomes `event.dedup_key`. */
   id: z.string().min(1).nullable(),
@@ -27,6 +26,8 @@ const eventFrame = z.object({
   account_id: z.int32().positive(),
   ts: z.iso.datetime({ offset: true }),
   payload: z.unknown().refine((v) => v !== undefined),
+  /** OF's gross amount in cents, or null. */
+  amount_cents: z.unknown().optional(),
 });
 const heartbeat = z.object({ type: z.literal('heartbeat'), ts: z.string() });
 export type EventFrame = z.infer<typeof eventFrame>;
@@ -53,7 +54,8 @@ const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Er
 
 /**
  * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then a webhook
- * `emit()` per linked workspace. A failed ledger insert is logged; the event is still published but not emitted.
+ * `emit()` per linked workspace. Its `evt_` id is the ledger id, the bus id and the deliveries' idempotency key.
+ * A failed ledger insert is logged; the event is still published but not emitted.
  */
 export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Promise<void> {
   const { type, account_id: accountId } = frame;
@@ -61,11 +63,11 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
   const createdAt = new Date(frame.ts);
   const id = newId('evt');
   if (STORED.has(type)) {
-    const parsed = AMOUNT_TYPES.has(type) ? amount.safeParse(data) : null;
+    const amountCents = amount.safeParse(frame.amount_cents).data ?? null;
     try {
       const rows = await db
         .insert(event)
-        .values({ id, accountId, type, amountCents: parsed?.data?.amountCents ?? null, dedupKey: frame.id, createdAt })
+        .values({ id, accountId, type, amountCents, dedupKey: frame.id, createdAt })
         .onConflictDoNothing({ target: event.dedupKey, where: sql`${event.dedupKey} is not null` })
         .returning({ id: event.id });
       if (rows.length === 0) return; // duplicate
@@ -79,7 +81,7 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
   const teams = await db.select({ teamId: teamBackend.teamId }).from(teamBackend);
   await Promise.all(
     teams.map((t) =>
-      emit(t.teamId, type, accountId, data).catch((err) =>
+      emit(t.teamId, id, type, accountId, data).catch((err) =>
         log.error({ err: cause(err), type, teamId: t.teamId }, 'webhook emit failed'),
       ),
     ),

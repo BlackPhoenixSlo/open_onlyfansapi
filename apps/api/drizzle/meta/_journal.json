@@ -43,6 +43,13 @@
       "when": 1790944349953,
       "tag": "0005_event",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790962859255,
+      "tag": "0006_v5_webhooks",
+      "breakpoints": true
     }
   ]
 }

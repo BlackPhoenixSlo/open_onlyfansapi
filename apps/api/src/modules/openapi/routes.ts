@@ -1,5 +1,6 @@
 import scalar from '@scalar/fastify-api-reference';
 import type { FastifyInstance } from 'fastify';
+import { JSON_TYPE } from '../proxy/routes.js';
 
 const CACHE_MS = 10 * 60_000;
 const FAILURE_CACHE_MS = 60_000;
@@ -28,6 +29,39 @@ const UPSTREAM_PUBLIC_TAG = 'of-api';
 const SCHEMA_REF = /"#\/components\/schemas\/([^"]+)"/g;
 
 type Platform = { paths: Record<string, PathItem>; schemas: Record<string, unknown> };
+type Responses = Record<string, { content?: Record<string, { schema?: unknown; [key: string]: unknown }>; [key: string]: unknown }>;
+
+/** The proxy wraps named-route 2xx JSON bodies (plan-v5 §2.2): each such response schema `S` is published as this. */
+function wrapped(schema: unknown) {
+  return {
+    type: 'object',
+    required: ['data', '_meta'],
+    properties: {
+      data: schema,
+      _meta: { type: 'object' },
+      _pagination: {
+        type: 'object',
+        required: ['next_page'],
+        properties: { next_page: { type: 'string', description: 'Absolute URL of the next page' } },
+      },
+    },
+  };
+}
+
+function wrapResponses(responses: Responses): Responses {
+  return Object.fromEntries(
+    Object.entries(responses).map(([status, response]) => {
+      if (!/^2(\d\d|XX)$/.test(status) || status === '204' || !response.content) return [status, response];
+      const content = Object.fromEntries(
+        Object.entries(response.content).map(([type, media]) => [
+          type,
+          JSON_TYPE.test(type) && 'schema' in media ? { ...media, schema: wrapped(media.schema) } : media,
+        ]),
+      );
+      return [status, { ...response, content }];
+    }),
+  );
+}
 
 /** The named schemas `root` references, transitively; nothing else from the upstream's components is published. */
 function referencedSchemas(root: unknown, all: Record<string, unknown>): Record<string, unknown> {
@@ -46,16 +80,19 @@ function referencedSchemas(root: unknown, all: Record<string, unknown>): Record<
 /**
  * The upstream's public `/of/<rest>` operations as `/v1/{account}/<rest>`: an `account` path parameter, tag `platform`
  * and API key security, plus the component schemas they reference. Other upstream paths, servers and security are dropped.
+ * 2xx JSON responses are published wrapped, as the proxy sends them, except for the raw passthrough `/_of/…`.
  */
 export function platformSpec(upstream: Document): Platform {
   const paths: Record<string, PathItem> = {};
   for (const [path, item] of Object.entries(upstream.paths ?? {})) {
     if (!path.startsWith('/of/')) continue;
+    const passthrough = path.split('/')[2] === '_of';
     const ops: PathItem = {};
     for (const [method, op] of Object.entries(item)) {
       if (!HTTP_METHODS.has(method) || !(op.tags as unknown[] | undefined)?.includes(UPSTREAM_PUBLIC_TAG)) continue;
       const { servers: _servers, ...rest } = op;
       ops[method] = { ...rest, tags: ['platform'], parameters: [accountParam, ...(op.parameters ?? [])], security: [{ ApiKey: [] }] };
+      if (!passthrough && op.responses) ops[method].responses = wrapResponses(op.responses as Responses);
     }
     if (Object.keys(ops).length > 0) paths[`/v1/{account}${path.slice('/of'.length)}`] = ops;
   }

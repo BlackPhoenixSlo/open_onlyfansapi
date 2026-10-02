@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { publish, subscribe, type GatewayEvent } from '../src/lib/event-bus.js';
 
-const event: GatewayEvent = { id: 'evt_1', type: 'message.received', createdAt: new Date(0), accountId: 1, data: {} };
+const event: GatewayEvent = { id: 'evt_1', type: 'messages.received', createdAt: new Date(0), accountId: 1, data: {} };
 
 describe('event bus', () => {
   it('delivers synchronously, survives a throwing listener, and stops after unsubscribe', () => {
