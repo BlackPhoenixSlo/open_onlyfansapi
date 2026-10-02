@@ -30,14 +30,38 @@ export function hashKey(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
 }
 
+/** Subprotocol entry that carries the key on a WebSocket upgrade: `bearer.<key>` (plan-v4 §1.7). */
+export const BEARER_PROTOCOL_PREFIX = 'bearer.';
+
+/** The `Sec-WebSocket-Protocol` entries a client offered, in order. */
+export function offeredProtocols(request: FastifyRequest): string[] {
+  const header = request.headers['sec-websocket-protocol'];
+  return (header ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
 /**
- * `/v1` onRequest hook. A bearer key wins; an invalid bearer is a 401 even if a valid cookie is present.
- * Without a bearer, the dashboard session cookie is accepted together with `x-dashboard: 1`.
+ * The key a request presents: the `Authorization` header's or, only on a WebSocket upgrade, the `bearer.<key>`
+ * subprotocol entry. undefined = no key presented; '' = presented but malformed.
+ */
+function presentedSecret(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  if (header !== undefined) return /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? '';
+  if (request.headers.upgrade?.toLowerCase() !== 'websocket') return undefined;
+  return offeredProtocols(request)
+    .find((p) => p.startsWith(BEARER_PROTOCOL_PREFIX))
+    ?.slice(BEARER_PROTOCOL_PREFIX.length);
+}
+
+/**
+ * `/v1` onRequest hook. A key wins; an invalid key is a 401 even if a valid cookie is present.
+ * Without a key, the dashboard session cookie is accepted together with `x-dashboard: 1`.
  */
 export async function authenticate(request: FastifyRequest): Promise<void> {
-  const header = request.headers.authorization;
-  if (header !== undefined) {
-    const secret = /^Bearer\s+(\S+)$/i.exec(header)?.[1];
+  const secret = presentedSecret(request);
+  if (secret !== undefined) {
     const [key] = secret
       ? await db
           .select()

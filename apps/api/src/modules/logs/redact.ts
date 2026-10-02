@@ -4,8 +4,8 @@ import type { IncomingHttpHeaders } from 'node:http';
 export const SENSITIVE_KEY = /pass(word)?|secret|token|cookie|auth|otp|session|code$|(api|access|private)[-_]?key|credential/i;
 export const MASK = '[redacted]';
 
-/** Never stored, even if added to the allow-list below. */
-const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'x-internal-key']);
+/** Never stored, even if added to the allow-list below. `sec-websocket-protocol` carries `bearer.<key>` on /v1/ws. */
+const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'x-internal-key', 'sec-websocket-protocol']);
 /** Request headers kept in a log row; everything else is left out. */
 const LOGGED_HEADERS = new Set([
   'accept',
