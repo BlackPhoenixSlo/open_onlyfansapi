@@ -1,5 +1,8 @@
 GET chats
 GET chats/{}/messages
+GET me
+GET media/vault
+GET media/vault/{}
 GET posts
 GET posts/{}
 POST chats/{}/messages
