@@ -116,3 +116,24 @@ export const webhookDelivery = pgTable(
     uniqueIndex('webhook_delivery_endpoint_dedup_idx').on(t.endpointId, t.dedupKey).where(sql`${t.dedupKey} is not null`),
   ],
 );
+
+/**
+ * The event ledger (`evt_…`): one row per upstream event of a stored type (the catalogue minus `webhook.test` and
+ * `upstream.*`). No payload, no team id: it feeds `/v1/stats`. `created_at` is the event's time (the frame's `ts`).
+ */
+export const event = pgTable(
+  'event',
+  {
+    id: text('id').primaryKey(),
+    accountId: integer('account_id').notNull(),
+    type: text('type').notNull(),
+    amountCents: integer('amount_cents'),
+    /** The frame's `id`; null = not deduplicated. */
+    dedupKey: text('dedup_key'),
+    createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('event_created_idx').on(t.createdAt),
+    uniqueIndex('event_dedup_idx').on(t.dedupKey).where(sql`${t.dedupKey} is not null`),
+  ],
+);
