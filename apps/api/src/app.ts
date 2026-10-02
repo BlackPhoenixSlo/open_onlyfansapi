@@ -1,5 +1,6 @@
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
+import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { env } from './env.js';
@@ -13,6 +14,8 @@ import { captureRequestLogs } from './modules/logs/capture.js';
 import logsRoutes from './modules/logs/routes.js';
 import openapiRoutes from './modules/openapi/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
+import realtimeRoutes from './modules/realtime/routes.js';
+import statsRoutes from './modules/stats/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import webhooksRoutes from './modules/webhooks/routes.js';
 import whoamiRoutes from './modules/whoami/routes.js';
@@ -57,6 +60,10 @@ export async function buildApp(opts: AppOptions = {}) {
     transform: jsonSchemaTransform,
   });
   await app.register(sessionPlugin);
+  // Client messages are ignored, so a small cap. Select `bearer` only when offered: the key travels as `bearer.<key>`.
+  await app.register(websocket, {
+    options: { maxPayload: 4096, handleProtocols: (p) => (p.has('bearer') ? 'bearer' : false) },
+  });
 
   app.get('/healthz', async () => ({ ok: true }));
   await app.register(openapiRoutes);
@@ -82,6 +89,8 @@ export async function buildApp(opts: AppOptions = {}) {
       await v1.register(whoamiRoutes);
       await v1.register(accountsRoutes);
       await v1.register(webhooksRoutes);
+      await v1.register(realtimeRoutes);
+      await v1.register(statsRoutes);
       await v1.register(proxyRoutes);
     },
     { prefix: '/v1' },

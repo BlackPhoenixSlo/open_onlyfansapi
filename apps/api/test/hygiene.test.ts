@@ -43,6 +43,23 @@ describe('hygiene', () => {
     expect(parse('http://gw.example.com', 'development').success).toBe(true);
   });
 
+  it('UPSTREAM_WS_URL: empty means unset, and only ws:// or wss:// is accepted', () => {
+    const base = {
+      DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',
+      APP_URL: 'http://localhost:5173',
+      BETTER_AUTH_URL: 'http://localhost:4000',
+      BETTER_AUTH_SECRET: 'x'.repeat(16),
+      UPSTREAM_URL: 'http://upstream:8000',
+      UPSTREAM_TOKEN: 'x'.repeat(16),
+    };
+    const ws = (UPSTREAM_WS_URL?: string) => envSchema.safeParse({ ...base, UPSTREAM_WS_URL });
+    expect([ws(), ws('')].map((r) => r.data?.UPSTREAM_WS_URL)).toEqual([undefined, undefined]);
+    expect(ws('ws://upstream:8000/ws').data?.UPSTREAM_WS_URL).toBe('ws://upstream:8000/ws');
+    expect(ws('wss://up.example.com/ws').success).toBe(true);
+    expect(ws('http://upstream:8000/ws').success).toBe(false);
+    expect(ws().data?.EVENT_RETENTION_DAYS).toBe(365);
+  });
+
   it('check-secrets finds a staged token in a path with spaces', () => {
     const repo = mkdtempSync(join(tmpdir(), 'secrets-'));
     const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
