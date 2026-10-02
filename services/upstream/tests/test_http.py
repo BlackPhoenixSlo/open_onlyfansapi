@@ -269,7 +269,8 @@ def test_docs_json_lists_the_of_api_operations(routed):
     ops = {op["operationId"]: (method, path, op)
            for path, item in spec["paths"].items() for method, op in item.items()
            if "of-api" in op.get("tags", [])}
-    assert {k: v[:2] for k, v in ops.items()} == {
+    # Phase 1 operations; the wave modules add theirs (asserted in their own test files).
+    assert {k: v[:2] for k, v in ops.items()}.items() >= {
         "me.get": ("get", "/of/me"),
         "chats.list": ("get", "/of/chats"),
         "chats.messages.list": ("get", "/of/chats/{chat_id}/messages"),
