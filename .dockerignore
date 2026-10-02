@@ -23,6 +23,7 @@ coverage
 **/*.key
 
 # not part of the runtime image
+services
 deploy
 docs
 docker

@@ -24,6 +24,12 @@ __pycache__/
 *.pyc
 .venv/
 
+# upstream runtime state (sessions, proxy credentials)
+services/upstream/data/
+
+# agent worktrees
+.claude/worktrees/
+
 # os / editor
 .DS_Store
 .idea/
