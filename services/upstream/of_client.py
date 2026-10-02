@@ -620,7 +620,7 @@ class OFClient:
           • total/delta — earnings total + delta
         Use `subscribers` for a free-inclusive "new fans in window" count."""
         return self.get_json(f"{API_BASE}/subscriptions/subscribers/chart",
-                             params=self._date_range_params(start, end))
+                             params=self.date_range_params(start, end))
 
     def my_promotions(self) -> dict:
         """GET /api2/v2/users/promotions — my outbound promo list (alt to /promotions)."""
@@ -1526,7 +1526,7 @@ class OFClient:
     # with `startDate=YYYY-MM-DD HH:MM:SS` (space-separated, URL-encoded).
     # Default range is 30 days.
 
-    def _date_range_params(self, start: str | None, end: str | None) -> dict:
+    def date_range_params(self, start: str | None, end: str | None) -> dict:
         from datetime import datetime, timedelta
         if not end: end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not start:
@@ -1536,14 +1536,14 @@ class OFClient:
     def earnings_chart(self, *, start: str | None = None, end: str | None = None,
                        with_total: bool = True) -> dict:
         """GET /api2/v2/earnings/chart — earnings time-series for Statistics > Earnings."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         if with_total: params["withTotal"] = "true"
         return self.get_json(f"{API_BASE}/earnings/chart", params=params)
 
     def posts_chart(self, *, start: str | None = None, end: str | None = None,
                     with_total: bool = True) -> dict:
         """GET /api2/v2/posts/chart — post performance time-series."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         if with_total: params["withTotal"] = "true"
         return self.get_json(f"{API_BASE}/posts/chart", params=params)
 
@@ -1551,21 +1551,21 @@ class OFClient:
                   by: str = "purchases", limit: int = 10) -> dict:
         """GET /api2/v2/posts/top?by=purchases — top performing posts.
         `by` in {purchases,likes,comments,views,...}."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         params.update({"by": by, "limit": limit})
         return self.get_json(f"{API_BASE}/posts/top", params=params)
 
     def my_stats_overview(self, *, start: str | None = None, end: str | None = None,
                           by: str = "visitors") -> dict:
         """GET /api2/v2/users/me/stats/overview — visitors/engagement overview."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         params["by"] = by
         return self.get_json(f"{API_BASE}/users/me/stats/overview", params=params)
 
     def my_stats_top_posts(self, *, start: str | None = None, end: str | None = None,
                            limit: int = 10) -> dict:
         """GET /api2/v2/users/me/stats/top/post — my best-performing posts."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         params["limit"] = limit
         params["skip_users"] = "all"
         return self.get_json(f"{API_BASE}/users/me/stats/top/post", params=params)
@@ -1574,7 +1574,7 @@ class OFClient:
                          limit: int = 10) -> dict:
         """GET /api2/v2/users/me/profile/stats — visitor source breakdown
         (Statistics > Reach in OF UI)."""
-        params = self._date_range_params(start, end)
+        params = self.date_range_params(start, end)
         params["limit"] = limit
         return self.get_json(f"{API_BASE}/users/me/profile/stats", params=params)
 
@@ -1586,7 +1586,7 @@ class OFClient:
     def chargebacks_ratio(self, *, start: str | None = None, end: str | None = None) -> dict:
         """GET /api2/v2/payouts/chargebacks/ratio — chargeback-rate risk metric."""
         return self.get_json(f"{API_BASE}/payouts/chargebacks/ratio",
-                             params=self._date_range_params(start, end))
+                             params=self.date_range_params(start, end))
 
     # ── Bookmarks (the OF "Collections > Bookmarks" tab) ───────
 

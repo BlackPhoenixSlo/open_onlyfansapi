@@ -70,7 +70,7 @@ def fans_latest(
     limit: Annotated[int, Query(ge=1, le=20)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    params = {**client._date_range_params(start_date or None, end_date or None),
+    params = {**client.date_range_params(start_date or None, end_date or None),
               "type": type, "limit": limit, "offset": offset}
     page = client.request_json("GET", f"{API_BASE}/subscriptions/subscribers/latest", params=params)
     if isinstance(page, dict):  # OF's page is `{users, hasMore}`, not `{list, hasMore}`
@@ -84,7 +84,7 @@ def fans_top(
     client: Client, start_date: DateQuery = "", end_date: DateQuery = "",
     by: Literal["total", "subscribes", "tips", "messages", "post", "streams"] = "total",
 ) -> Any:
-    params = {**client._date_range_params(start_date or None, end_date or None), "by": by}
+    params = {**client.date_range_params(start_date or None, end_date or None), "by": by}
     return client.request_json("GET", f"{API_BASE}/subscriptions/subscribers/top", params=params)
 
 
