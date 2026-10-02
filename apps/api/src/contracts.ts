@@ -133,6 +133,12 @@ export const overview = z.object({
   errorRate24h: z.number(),
   /** Non-revoked API keys */
   activeKeys: z.number().int(),
+  /** Disabled webhook endpoints (manually or by the failure breaker) */
+  pausedWebhooks: z.number().int(),
+  /** Webhook endpoints that are paused, or enabled with failed deliveries since their last success */
+  needsAttention: z.array(
+    z.object({ kind: z.literal('webhook'), id: z.string(), url: z.string(), reason: z.enum(['paused', 'failing']) }),
+  ),
 });
 export type Overview = z.infer<typeof overview>;
 

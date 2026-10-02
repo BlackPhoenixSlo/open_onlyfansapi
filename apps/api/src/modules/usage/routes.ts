@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
-import { apiKey, requestLog } from '../../db/schema.js';
+import { apiKey, requestLog, webhookEndpoint } from '../../db/schema.js';
 import { overview, usage, usageGroupBy, type Usage } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 
@@ -85,7 +85,7 @@ export default async function usageRoutes(app: FastifyInstance) {
   r.get('/overview', { schema: { tags, response: { 200: overview } } }, async (request) => {
     const { teamId } = request.session;
     const last24h = sql`${requestLog.createdAt} >= now() - interval '24 hours'`;
-    const [[stats], [keys]] = await Promise.all([
+    const [[stats], [keys], webhooks] = await Promise.all([
       db
         .select({
           requests24h: sql<number>`(count(*) filter (where ${last24h}))::int`,
@@ -98,12 +98,29 @@ export default async function usageRoutes(app: FastifyInstance) {
         .select({ count: sql<number>`count(*)::int` })
         .from(apiKey)
         .where(and(eq(apiKey.teamId, teamId), isNull(apiKey.revokedAt))),
+      db
+        .select({ id: webhookEndpoint.id, url: webhookEndpoint.url, enabled: webhookEndpoint.enabled })
+        .from(webhookEndpoint)
+        .where(
+          and(
+            eq(webhookEndpoint.teamId, teamId),
+            or(eq(webhookEndpoint.enabled, false), gt(webhookEndpoint.consecutiveFailures, 0)),
+          ),
+        )
+        .orderBy(desc(webhookEndpoint.createdAt)),
     ]);
     return {
       requests24h: stats!.requests24h,
       requests7d: stats!.requests7d,
       errorRate24h: stats!.requests24h ? stats!.errors24h / stats!.requests24h : 0,
       activeKeys: keys!.count,
+      pausedWebhooks: webhooks.filter((w) => !w.enabled).length,
+      needsAttention: webhooks.map((w) => ({
+        kind: 'webhook' as const,
+        id: w.id,
+        url: w.url,
+        reason: w.enabled ? ('failing' as const) : ('paused' as const),
+      })),
     };
   });
 }

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { requestLog } from '../src/db/schema.js';
+import { requestLog, webhookEndpoint } from '../src/db/schema.js';
 import { deleteExpired } from '../src/jobs/retention.js';
 import { newId } from '../src/lib/ids.js';
 import { createKey, resetDb, signUp } from './helpers.js';
@@ -102,7 +102,42 @@ describe('usage', () => {
   it('overview returns the Home KPIs', async () => {
     const res = await get('/api/overview');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ requests24h: 3, requests7d: 6, errorRate24h: 2 / 3, activeKeys: 1 });
+    expect(res.json()).toEqual({
+      requests24h: 3,
+      requests7d: 6,
+      errorRate24h: 2 / 3,
+      activeKeys: 1,
+      pausedWebhooks: 0,
+      needsAttention: [],
+    });
+  });
+
+  it('overview lists paused and failing webhook endpoints of the workspace only', async () => {
+    const other = await signUp(app, 'usage-webhooks@example.test');
+    const endpoint = (teamId: string, id: string, extra: Partial<typeof webhookEndpoint.$inferInsert> = {}) => ({
+      id,
+      teamId,
+      url: `https://example.test/${id}`,
+      secret: 'whsec_test',
+      ...extra,
+    });
+    await db.insert(webhookEndpoint).values([
+      endpoint(owner.teamId, 'whe_ok'),
+      endpoint(owner.teamId, 'whe_manual', { enabled: false, pausedReason: 'manual' }),
+      endpoint(owner.teamId, 'whe_breaker', { enabled: false, pausedReason: 'failures', consecutiveFailures: 20 }),
+      endpoint(owner.teamId, 'whe_failing', { consecutiveFailures: 2 }),
+      endpoint(other.teamId, 'whe_other', { enabled: false, pausedReason: 'manual' }),
+    ]);
+    const body = (await get('/api/overview')).json();
+    expect(body.pausedWebhooks).toBe(2);
+    expect(
+      body.needsAttention.map((a: { kind: string; id: string; reason: string }) => [a.kind, a.id, a.reason]).sort(),
+    ).toEqual([
+      ['webhook', 'whe_breaker', 'paused'],
+      ['webhook', 'whe_failing', 'failing'],
+      ['webhook', 'whe_manual', 'paused'],
+    ]);
+    expect(body.needsAttention[0].url).toMatch(/^https:\/\/example\.test\/whe_/);
   });
 
   it('retention deletes only logs older than the cutoff', async () => {
