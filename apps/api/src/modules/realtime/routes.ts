@@ -5,9 +5,8 @@ import { env } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { BEARER_PROTOCOL_PREFIX, offeredProtocols } from '../../plugins/actor.js';
-import { normaliseEndpoint } from '../logs/capture.js';
-import { redactHeaders, redactQuery } from '../logs/redact.js';
-import { addClient, MAX_SOCKETS_PER_KEY, socketCount, startHub } from './hub.js';
+import { toRow } from '../logs/capture.js';
+import { MAX_SOCKETS_PER_KEY, startHub } from './hub.js';
 
 const querystring = z.object({ accountId: z.coerce.number().int().positive().max(2_147_483_647).optional() });
 type Query = z.infer<typeof querystring>;
@@ -17,8 +16,8 @@ type Query = z.infer<typeof querystring>;
  * request log (for refusals) and the per-key rate limit run first; every refusal is a normal HTTP error before upgrade.
  */
 export default async function realtimeRoutes(app: FastifyInstance) {
-  const stop = startHub(app.log);
-  app.addHook('preClose', stop);
+  const hub = startHub(app.log);
+  app.addHook('preClose', hub.stop);
   /** The handshake's reply, for its elapsed time once the socket is open. */
   const replies = new WeakMap<FastifyRequest, FastifyReply>();
 
@@ -36,7 +35,7 @@ export default async function realtimeRoutes(app: FastifyInstance) {
       throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
     }
     await assertTeamLinked(actor.teamId);
-    if (socketCount(actor.keyId) >= MAX_SOCKETS_PER_KEY) {
+    if (hub.count(actor.keyId) >= MAX_SOCKETS_PER_KEY) {
       throw new AppError(429, 'too_many_sockets', `An API key can hold at most ${MAX_SOCKETS_PER_KEY} open sockets`);
     }
     if (!(env.RUN_JOBS && env.UPSTREAM_WS_URL)) {
@@ -49,39 +48,17 @@ export default async function realtimeRoutes(app: FastifyInstance) {
     '/ws',
     { websocket: true, schema: { querystring }, preHandler: refuse },
     (socket, request) => {
-      // The hub closes its sockets with 1001 in its own preClose; @fastify/websocket's default preClose runs first and
-      // would close every tracked client without a code.
-      app.websocketServer.clients.delete(socket);
-      const { actor, url } = request;
+      const { actor } = request;
       const accountId = request.query.accountId ?? null;
-      const q = url.indexOf('?');
-      const path = q === -1 ? url : url.slice(0, q);
-      const durationMs = Math.round(replies.get(request)?.elapsedTime ?? 0);
-      addClient(
-        socket,
-        { keyId: actor.keyId!, allowed: actor.accountIds, accountId },
-        {
-          id: request.id,
-          teamId: actor.teamId,
-          apiKeyId: actor.keyId,
-          userId: null,
-          accountId,
-          method: request.method,
-          path,
-          endpoint: normaliseEndpoint(request.method, request.routeOptions.url, path),
-          query: redactQuery(q === -1 ? '' : url.slice(q + 1)),
-          ip: request.ip,
-          statusCode: 101,
-          durationMs,
-          reqBytes: 0,
-          respBytes: 0,
-          errorCode: null,
-          reqHeaders: redactHeaders(request.headers),
-          reqBody: null,
-          respBody: null,
-          createdAt: new Date(Date.now() - durationMs),
-        },
-      );
+      const reply = replies.get(request)!;
+      const durationMs = Math.round(reply.elapsedTime);
+      const row = toRow(request, reply, {
+        payload: undefined,
+        ip: request.ip,
+        durationMs,
+        createdAt: new Date(Date.now() - durationMs),
+      });
+      hub.add(socket, { keyId: actor.keyId!, allowed: actor.accountIds, accountId }, { ...row, statusCode: 101, accountId });
     },
   );
 }

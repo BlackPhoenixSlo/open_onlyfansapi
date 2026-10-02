@@ -29,9 +29,10 @@ function gatewayErrorCode(body: string | Buffer | null, requestId: string): stri
   }
 }
 
-type Captured = { payload: unknown; ip: string; durationMs: number; createdAt: Date };
+export type Captured = { payload: unknown; ip: string; durationMs: number; createdAt: Date };
 
-function toRow(request: FastifyRequest, reply: FastifyReply, { payload, ip, durationMs, createdAt }: Captured): typeof requestLog.$inferInsert {
+/** The request_log row for one request (also the `/v1/ws` session row, built at open). */
+export function toRow(request: FastifyRequest, reply: FastifyReply, { payload, ip, durationMs, createdAt }: Captured): typeof requestLog.$inferInsert {
   const { actor, url } = request;
   const q = url.indexOf('?');
   const path = q === -1 ? url : url.slice(0, q);

@@ -49,7 +49,8 @@ export function offeredProtocols(request: FastifyRequest): string[] {
 function presentedSecret(request: FastifyRequest): string | undefined {
   const header = request.headers.authorization;
   if (header !== undefined) return /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? '';
-  if (request.headers.upgrade?.toLowerCase() !== 'websocket') return undefined;
+  // Set by @fastify/websocket for a real upgrade, not from a client-sent `Upgrade` header on a plain request.
+  if (!request.ws) return undefined;
   return offeredProtocols(request)
     .find((p) => p.startsWith(BEARER_PROTOCOL_PREFIX))
     ?.slice(BEARER_PROTOCOL_PREFIX.length);

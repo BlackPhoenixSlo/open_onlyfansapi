@@ -10,6 +10,13 @@ The key goes in the handshake. Browsers cannot set headers on a WebSocket, so th
 Offer **both** `bearer` and `bearer.<key>`. The gateway selects `bearer`, so the response header
 `Sec-WebSocket-Protocol: bearer` never contains the key.
 
+A key in a browser can be read by whoever uses that browser. For browser clients, use a `read` key limited to the
+accounts the page needs, and never put a key in a public page. Server-side clients should send the key in the
+`Authorization` header (below) instead of the subprotocol.
+
+If a reverse proxy sits in front of the gateway, check its access logs. Some proxies record request headers, and
+the `Sec-WebSocket-Protocol` header carries the key (Caddy's default log redaction does not cover it).
+
 Browser:
 
 ```js
@@ -62,11 +69,12 @@ closes the socket (1009).
 ## Refusals
 
 Every refusal happens before the upgrade, as a normal HTTP error with the usual
-`{"error":{"code","message","requestId"}}` body. Each refusal is also written to the request log.
+`{"error":{"code","message","requestId"}}` body. Refusals after the key was accepted (every row below except the
+401s) are also written to the request log; a 401 has no key, so it has no workspace to log under.
 
 | Status | Code | Why |
 |---|---|---|
-| 401 | `invalid_api_key` | Missing, malformed, unknown or revoked key |
+| 401 | `invalid_api_key` | Malformed, unknown or revoked key |
 | 401 | `unauthorized` | No key at all, or the dashboard session (sockets take API keys only) |
 | 400 | `invalid_subprotocol` | `bearer.<key>` was offered without `bearer` |
 | 400 | `validation_error` | `accountId` is not a positive integer |
@@ -77,7 +85,15 @@ Every refusal happens before the upgrade, as a normal HTTP error with the usual
 | 503 | `realtime_unavailable` | This gateway has no event source (`UPSTREAM_WS_URL` unset, or `RUN_JOBS=false`) |
 
 A browser does not expose the HTTP status of a refused handshake. It only reports an `error` and a close with code
-1006. To see why a handshake was refused, check the request log or try the same request with curl.
+1006. To see why a handshake was refused, repeat it with curl, which prints the status and the error body:
+
+```sh
+curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Authorization: Bearer $API_KEY" \
+  "https://gateway.example.com/v1/ws?accountId=117183"
+```
+
+Refusals after the key was accepted also appear in the request log.
 
 ## Close codes
 
@@ -106,9 +122,21 @@ retries, use [webhooks](webhooks.md). They are retried with backoff.
 
 Each socket session is one request log row: `GET /v1/ws` with status `101`, the handshake time as its duration,
 the redacted request headers and query, and the `accountId` filter. When the socket closes, the row gets the bytes
-sent (`resp_bytes`) and the close reason as `error_code`. A normal close or a shutdown leaves `error_code` empty.
-Otherwise it holds one of the reasons in the table above, or `pong_timeout` or `connection_lost`. Session length is not stored.
-Neither the `Authorization` header nor `Sec-WebSocket-Protocol` is ever stored.
+sent (`resp_bytes`) and the close reason as `error_code`. Session length is not stored. Neither the `Authorization`
+header nor `Sec-WebSocket-Protocol` is ever stored.
+
+- `error_code` holds the gateway's close reason from the table above, or `pong_timeout`.
+- A shutdown, and any close the client starts, leave it empty, whatever close code the client sent. The exception is
+  a connection that drops without a close (1006), which is `connection_lost`.
+- A client message over 4 KiB also shows up as `connection_lost`.
+- If the gateway crashes, open sessions keep `resp_bytes` 0 and an empty `error_code`.
+
+## Limits
+
+- The 15-second check needs the database. While the database is unreachable, the check does nothing: revocations,
+  allowed-account edits and unlinks wait until it is back. Pings stop with it.
+- A socket stops counting toward the key's 5-socket limit as soon as the gateway closes it, even if a slow consumer
+  (1013) is still draining its last frames.
 
 ## Tenancy
 

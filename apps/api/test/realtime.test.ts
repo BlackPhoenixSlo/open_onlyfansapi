@@ -125,6 +125,14 @@ describe('GET /v1/ws', () => {
     expect(b.ids()).toEqual([two.id, one.id]);
     expect(a.ids()).toEqual([one.id]);
     expect(b.frames[1]).toEqual({ id: two.id, type: 'message.received', createdAt: two.createdAt.toISOString(), accountId: 2, data: { text: 'hi' } });
+
+    const none = event(null);
+    const again = event(1);
+    publish(none);
+    publish(again);
+    await until(() => a.ids().includes(again.id) && b.ids().includes(again.id));
+    expect(b.ids().slice(2)).toEqual([none.id, again.id]);
+    expect(a.ids()).toEqual([one.id, again.id]);
     a.ws.close();
     b.ws.close();
   });
@@ -169,7 +177,8 @@ describe('GET /v1/ws', () => {
 
   it('writes exactly one request_log row per session, without key material', async () => {
     const c = await createKey(app, u.cookie, { name: 'C' });
-    const s = await connect(c.secret, '?accountId=7');
+    env.LOG_BODIES = 'all';
+    const s = await connect(c.secret, '?accountId=7').finally(() => (env.LOG_BODIES = 'errors'));
     const seven = event(7);
     publish(seven);
     await until(() => s.ids().includes(seven.id));
@@ -178,7 +187,7 @@ describe('GET /v1/ws', () => {
     await until(async () => (await wsLogs(c.key.id)).rows[0]?.resp_bytes > 0);
     const { rows } = await wsLogs(c.key.id);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ method: 'GET', path: '/v1/ws', status_code: 101, account_id: 7, query: 'accountId=7', error_code: null });
+    expect(rows[0]).toMatchObject({ method: 'GET', path: '/v1/ws', status_code: 101, account_id: 7, query: 'accountId=7', error_code: null, req_body: null, resp_body: null });
     expect(rows[0].resp_bytes).toBeGreaterThan(0);
     const text = JSON.stringify(rows[0]);
     expect(text).not.toContain(c.secret);
@@ -195,10 +204,17 @@ describe('GET /v1/ws', () => {
     for (const s of open) s.ws.close();
   });
 
-  it('refuses `bearer.<key>` offered without `bearer` with 400', async () => {
+  it('refuses `bearer.<key>` offered without `bearer` with 400, and logs no key material', async () => {
     const res = await handshake({ 'sec-websocket-protocol': `bearer.${keyB.secret}` });
     expect(res.status).toBe(400);
     expect(res.body?.error?.code).toBe('invalid_subprotocol');
+    expect(JSON.stringify(res.headers)).not.toContain(keyB.secret);
+    expect(JSON.stringify(res.body)).not.toContain(keyB.secret);
+    const id = res.headers['x-request-id'] as string;
+    await waitForLogs([id]);
+    const { rows } = await pool.query('SELECT * FROM request_log WHERE id = $1', [id]);
+    expect(rows[0]).toMatchObject({ status_code: 400, error_code: 'invalid_subprotocol' });
+    expect(JSON.stringify(rows[0])).not.toContain(keyB.secret);
   });
 
   it('refuses an unknown key and the dashboard session with 401', async () => {
@@ -213,9 +229,34 @@ describe('GET /v1/ws', () => {
   });
 
   it('reads a subprotocol key only on a WebSocket upgrade', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/whoami', headers: protocols(keyB.secret) });
-    expect(res.statusCode).toBe(401);
-    expect(res.json().error.code).toBe('unauthorized');
+    for (const headers of [protocols(keyB.secret), { ...protocols(keyB.secret), upgrade: 'websocket' }]) {
+      const res = await app.inject({ method: 'GET', url: '/v1/whoami', headers });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('unauthorized');
+    }
+  });
+
+  it('closes with 4401 on the sweep after the workspace is unlinked', async () => {
+    const s = await connect(keyB.secret);
+    await pool.query('DELETE FROM team_backend WHERE team_id = $1', [u.teamId]);
+    try {
+      await sweep();
+      const closed = await s.closed;
+      expect(closed.code).toBe(4401);
+      expect(closed.reason).toBe('team_not_linked');
+    } finally {
+      await linkTeam(u.teamId);
+    }
+  });
+
+  it('closes a slow consumer with 1013', async () => {
+    const opened = new Promise<{ bufferedAmount: number }>((resolve) => app.websocketServer.once('connection', resolve));
+    const s = await connect(keyB.secret);
+    Object.defineProperty(await opened, 'bufferedAmount', { get: () => 2 * 1024 * 1024 });
+    publish(event(1));
+    const closed = await s.closed;
+    expect(closed.code).toBe(1013);
+    expect(closed.reason).toBe('slow_consumer');
   });
 
   it('answers 503 without an event source', async () => {
