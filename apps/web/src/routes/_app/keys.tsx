@@ -1,6 +1,6 @@
 import type { ApiKey, CreateKeyBody, CreatedKey, KeyScope } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
@@ -87,7 +87,11 @@ function Keys() {
           <TableBody>
             {keys.data.items.map((k) => (
               <TableRow key={k.id} className={k.revokedAt ? 'opacity-50' : undefined}>
-                <TableCell className="font-medium">{k.name}</TableCell>
+                <TableCell className="font-medium">
+                  <Link to="/usage" search={{ groupBy: 'key' }} className="hover:underline" title="View usage by key">
+                    {k.name}
+                  </Link>
+                </TableCell>
                 <TableCell className="font-mono">{k.start}…</TableCell>
                 <TableCell>
                   <Badge variant="outline">{k.scope}</Badge>

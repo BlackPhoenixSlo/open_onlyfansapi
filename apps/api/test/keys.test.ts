@@ -48,6 +48,20 @@ describe('api keys', () => {
     expect(listed.json().items[0].revokedAt).not.toBeNull();
   });
 
+  it('edits scope and the account allowlist, and the change persists', async () => {
+    const { cookie } = await signUp(app, 'keys-edit@example.test');
+    const { key } = await createKey(app, cookie, { name: 'edit', scope: 'read' });
+    const patch = (payload: object) =>
+      app.inject({ method: 'PATCH', url: `/api/keys/${key.id}`, headers: dashboard(cookie), payload });
+    const listed = async () => (await app.inject({ method: 'GET', url: '/api/keys', headers: { cookie } })).json().items[0];
+
+    expect((await patch({ scope: 'write', allowedAccountIds: [12, 34] })).statusCode).toBe(200);
+    expect(await listed()).toMatchObject({ id: key.id, scope: 'write', allowedAccountIds: [12, 34] });
+
+    expect((await patch({ allowedAccountIds: null })).statusCode).toBe(200);
+    expect(await listed()).toMatchObject({ scope: 'write', allowedAccountIds: null });
+  });
+
   it('rejects a missing or malformed key', async () => {
     const none = await app.inject({ method: 'GET', url: '/v1/whoami' });
     expect(none.statusCode).toBe(401);
