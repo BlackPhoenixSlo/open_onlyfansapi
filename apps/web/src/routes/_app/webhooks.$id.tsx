@@ -123,9 +123,11 @@ function WebhookPage() {
                         <Button variant="outline" size="sm" onClick={() => setOpen(d)}>
                           Payload
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => redeliver.mutate(d)} disabled={redeliver.isPending}>
-                          Redeliver
-                        </Button>
+                        {d.redeliverable && (
+                          <Button variant="outline" size="sm" onClick={() => redeliver.mutate(d)} disabled={redeliver.isPending}>
+                            Redeliver
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -174,9 +176,11 @@ function WebhookPage() {
             <Button variant="outline" onClick={() => setOpen(null)}>
               Close
             </Button>
-            <Button onClick={() => open && redeliver.mutate(open)} disabled={redeliver.isPending}>
-              Redeliver
-            </Button>
+            {open?.redeliverable && (
+              <Button onClick={() => redeliver.mutate(open)} disabled={redeliver.isPending}>
+                Redeliver
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

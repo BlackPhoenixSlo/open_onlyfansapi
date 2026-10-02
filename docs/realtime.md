@@ -116,7 +116,7 @@ answer the previous ping. Browsers and Node answer pings on their own.
 
 The socket delivers each event at most once. There is no replay, no resume cursor and no gap marker. Events that
 happen while a client is disconnected, or that are dropped for a slow client, are not sent later. After a reconnect,
-resync what you need from the REST API, for example `GET /v1/{account}/chats/{chatId}/messages`. If you need
+resync what you need from the REST API, for example `GET /v1/{account}/chats/{chat_id}/messages`. If you need
 retries, use [webhooks](webhooks.md). They are retried with backoff.
 
 ## Request log

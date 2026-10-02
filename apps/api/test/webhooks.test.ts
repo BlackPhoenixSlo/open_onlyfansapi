@@ -501,6 +501,28 @@ describe('worker', () => {
     expect(listed.json().items).toMatchObject([{ id, status: 'dropped' }]);
   });
 
+  it('refuses to redeliver a dropped delivery or a 1.x event name with 409', async () => {
+    const endpoint = await createEndpoint();
+    const dropped = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'dropped' WHERE id = $1`, [dropped]);
+    const legacy = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'succeeded', event_type = 'message.received' WHERE id = $1`, [legacy]);
+    expect(await emit(teamId, 'evt_1001', 'upstream.chat_typing', 1001, {})).toBe(1);
+    const { rows } = await pool.query(`SELECT id FROM webhook_delivery WHERE event_type = 'upstream.chat_typing'`);
+
+    const list = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}/deliveries`, headers: bearer(readKey) });
+    const flags = Object.fromEntries(list.json().items.map((d: { id: string; redeliverable: boolean }) => [d.id, d.redeliverable]));
+    expect(flags).toEqual({ [dropped]: false, [legacy]: false, [rows[0].id]: true });
+
+    for (const id of [dropped, legacy]) {
+      const res = await app.inject({ method: 'POST', url: `/v1/webhooks/${endpoint.id}/deliveries/${id}/redeliver`, headers: bearer(writeKey) });
+      expect(res.statusCode, id).toBe(409);
+      expect(res.json().error.code).toBe('not_redeliverable');
+    }
+    const ok = await app.inject({ method: 'POST', url: `/v1/webhooks/${endpoint.id}/deliveries/${rows[0].id}/redeliver`, headers: bearer(writeKey) });
+    expect(ok.statusCode).toBe(202);
+  });
+
   it('retention keeps pending deliveries', async () => {
     const endpoint = await createEndpoint();
     const pending = await sendTest(endpoint.id);

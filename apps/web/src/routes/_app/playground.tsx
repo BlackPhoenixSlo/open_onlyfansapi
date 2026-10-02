@@ -2,7 +2,6 @@ import type { LogDetail } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { type ReactNode, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { OperationPicker } from '@/features/playground/OperationPicker';
 import { type Draft, RequestForm } from '@/features/playground/RequestForm';
 import { type Result, ResponsePanel } from '@/features/playground/ResponsePanel';
@@ -104,22 +103,6 @@ function jsonProblem(body: string): string | null {
   }
 }
 
-/**
- * `_pagination.next_page` of a wrapped account-route response (`{data, _meta, _pagination?}`, plan-v5 §2.2), when it
- * points at this origin; null otherwise.
- */
-function nextPage(result: Result | undefined): URL | null {
-  if (!result || result.status < 200 || result.status > 299) return null;
-  try {
-    const next = (JSON.parse(result.body) as { _pagination?: { next_page?: unknown } } | null)?._pagination?.next_page;
-    if (typeof next !== 'string') return null;
-    const url = new URL(next);
-    return url.origin === window.location.origin ? url : null;
-  } catch {
-    return null;
-  }
-}
-
 function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
   const [draft, setDraft] = useState(initial.draft);
   const [account, setAccount] = useState(initial.account);
@@ -138,14 +121,9 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
       : (urlProblem(url, window.location.origin) ?? (body !== undefined ? jsonProblem(body) : null));
 
   const send = useMutation({
-    mutationFn: (target: string | undefined) => sendRequest(draft.method, target ?? url, body),
+    mutationFn: () => sendRequest(draft.method, url, body),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['logs'] }),
   });
-  const next = send.isPending ? null : nextPage(send.data);
-  const sendNext = (target: URL) => {
-    setDraft({ ...draft, query: [...target.searchParams].map(([key, value]) => ({ key, value })) });
-    send.mutate(target.pathname + target.search);
-  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
@@ -164,14 +142,9 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
           snippet={curlSnippet({ method: draft.method, url: `${window.location.origin}${url}`, body })}
           problem={problem}
           sending={send.isPending}
-          onSend={() => send.mutate(undefined)}
+          onSend={() => send.mutate()}
         />
         <ResponsePanel result={send.data} error={send.error} pending={send.isPending} />
-        {next && (
-          <Button variant="outline" onClick={() => sendNext(next)}>
-            Next page
-          </Button>
-        )}
       </div>
     </div>
   );

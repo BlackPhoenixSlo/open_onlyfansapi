@@ -58,21 +58,37 @@ export function isPassthrough(rest: string): boolean {
   }
 }
 
+/** An `x-next-page` value the wrapper accepts: a path on this account (`/…`), never `//host…` or a full URL. */
+const NEXT_PAGE = /^\/(?!\/)/;
+
+/** Whether `body` is exactly one JSON value (whitespace around it allowed; a BOM is not). Validation only. */
+function isJson(body: Buffer): boolean {
+  try {
+    JSON.parse(body.toString('utf8'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The named-route response wrapper (plan-v5 §2.2): `{"data":<body>,"_meta":{}}`, plus `"_pagination":{"next_page":…}`
- * when the upstream marked a next page. Built by splicing the upstream bytes, so the body is never re-encoded.
- * Returns null (forward unchanged) for the passthrough, non-2xx, 204, empty, non-JSON and content-encoded responses.
+ * when the upstream marked a next page. Built by splicing the upstream bytes, so the body is never re-encoded (the
+ * upstream client has already decoded any content-encoding). Returns null (forward unchanged) for the passthrough,
+ * non-2xx, 204, non-JSON content types, and bodies that are not one complete JSON value (including empty ones).
  */
 export function wrapResponse(
   res: { status: number; headers: Headers; body: Buffer },
   rest: string,
   accountId: number,
 ): Buffer | null {
-  if (res.status < 200 || res.status > 299 || res.status === 204 || res.body.length === 0) return null;
-  if (isPassthrough(rest) || res.headers.has('content-encoding')) return null;
-  if (!JSON_TYPE.test(res.headers.get('content-type') ?? '')) return null;
+  if (res.status < 200 || res.status > 299 || res.status === 204 || isPassthrough(rest)) return null;
+  if (!JSON_TYPE.test(res.headers.get('content-type') ?? '') || !isJson(res.body)) return null;
   const nextPage = res.headers.get('x-next-page');
-  const pagination = nextPage === null ? '' : `,"_pagination":{"next_page":${JSON.stringify(`${appOrigin}/v1/${accountId}${nextPage}`)}}`;
+  const pagination =
+    nextPage !== null && NEXT_PAGE.test(nextPage)
+      ? `,"_pagination":{"next_page":${JSON.stringify(`${appOrigin}/v1/${accountId}${nextPage}`)}}`
+      : '';
   return Buffer.concat([Buffer.from('{"data":'), res.body, Buffer.from(`,"_meta":{}${pagination}}`)]);
 }
 

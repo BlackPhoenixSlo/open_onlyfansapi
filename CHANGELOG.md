@@ -24,8 +24,14 @@ its response shape on per-account routes. Every change below breaks 1.x clients;
 ### Upgrading to 2.0
 
 **Upgrade the gateway and upstream images together.** The gateway drops event frames whose type it does not know,
-so a 2.0 gateway with a 1.x upstream (or the reverse) loses every renamed event until both run 2.0. The database
-migration runs on start.
+so a mixed pair loses events until both run 2.0. The database migration runs on start.
+
+- *Gateway 2.0 with upstream 1.x:* every renamed event is dropped as an unknown type (`posts.expired` and
+  `accounts.session_expired` included); only `upstream.*` frames still arrive. 1.x frames have no `amount_cents`, so
+  any amount would be stored as null. The 1.x paths (`users/me`, `vault/media`, ...) still work, but their
+  responses come back wrapped.
+- *Upstream 2.0 with gateway 1.x:* every stored event, `accounts.session_expired` included, is dropped as an
+  unknown type, and the three renamed paths return 404 from the upstream.
 
 1. **Webhook body.** `{"id","type","createdAt","accountId","data"}` is now `{"event","account_id","payload"}`, in
    that order. `account_id` is a JSON string, and is omitted for events without an account (`webhook.test`).
@@ -51,6 +57,7 @@ migration runs on start.
    The migration renames the names in stored endpoint `events` filters and in the event ledger (so `/v1/stats`
    returns the 2.0 names; use them in `?types=`). Pending deliveries of a renamed 1.x event are set to `dropped`
    and never sent, so no 1.x body goes out under a 2.0 name; finished deliveries keep their 1.x name as history.
+   Neither can be redelivered (`409 not_redeliverable`; deliveries carry a `redeliverable` flag).
    Payloads changed too: they follow the reference API's examples (for instance `messages.received` carries the
    full OnlyFans message object), and amounts are no longer read from the payload. See the event table.
 4. **Three per-account paths were renamed**, with no aliases: `users/me` is now `me`, `vault/media` is now

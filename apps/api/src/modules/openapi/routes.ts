@@ -1,6 +1,6 @@
 import scalar from '@scalar/fastify-api-reference';
 import type { FastifyInstance } from 'fastify';
-import { JSON_TYPE } from '../proxy/routes.js';
+import { isPassthrough, JSON_TYPE } from '../proxy/routes.js';
 
 const CACHE_MS = 10 * 60_000;
 const FAILURE_CACHE_MS = 60_000;
@@ -8,7 +8,8 @@ const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head',
 /** The proxy wildcard route; the upstream's operations document it path by path. */
 const PROXY_PATH = '/v1/{account}/{*}';
 
-type Operation = { parameters?: unknown[]; [key: string]: unknown };
+type Responses = Record<string, { content?: Record<string, { schema?: unknown; [key: string]: unknown }>; [key: string]: unknown }>;
+type Operation = { parameters?: unknown[]; responses?: Responses; [key: string]: unknown };
 type PathItem = Record<string, Operation>;
 type Document = {
   paths?: Record<string, PathItem>;
@@ -29,7 +30,6 @@ const UPSTREAM_PUBLIC_TAG = 'of-api';
 const SCHEMA_REF = /"#\/components\/schemas\/([^"]+)"/g;
 
 type Platform = { paths: Record<string, PathItem>; schemas: Record<string, unknown> };
-type Responses = Record<string, { content?: Record<string, { schema?: unknown; [key: string]: unknown }>; [key: string]: unknown }>;
 
 /** The proxy wraps named-route 2xx JSON bodies (plan-v5 §2.2): each such response schema `S` is published as this. */
 function wrapped(schema: unknown) {
@@ -86,13 +86,13 @@ export function platformSpec(upstream: Document): Platform {
   const paths: Record<string, PathItem> = {};
   for (const [path, item] of Object.entries(upstream.paths ?? {})) {
     if (!path.startsWith('/of/')) continue;
-    const passthrough = path.split('/')[2] === '_of';
+    const passthrough = isPassthrough(path.slice('/of'.length));
     const ops: PathItem = {};
     for (const [method, op] of Object.entries(item)) {
       if (!HTTP_METHODS.has(method) || !(op.tags as unknown[] | undefined)?.includes(UPSTREAM_PUBLIC_TAG)) continue;
       const { servers: _servers, ...rest } = op;
       ops[method] = { ...rest, tags: ['platform'], parameters: [accountParam, ...(op.parameters ?? [])], security: [{ ApiKey: [] }] };
-      if (!passthrough && op.responses) ops[method].responses = wrapResponses(op.responses as Responses);
+      if (!passthrough && op.responses) ops[method].responses = wrapResponses(op.responses);
     }
     if (Object.keys(ops).length > 0) paths[`/v1/{account}${path.slice('/of'.length)}`] = ops;
   }

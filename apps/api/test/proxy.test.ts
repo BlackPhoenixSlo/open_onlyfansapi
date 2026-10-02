@@ -192,13 +192,31 @@ describe('proxy', () => {
       ['empty', { type: 'application/json', body: '' }],
       ['non-JSON', { type: 'text/plain', body: '{"a":1}' }],
       ['no content-type', { body: '{"a":1}' }],
-      ['content-encoding', { type: 'application/json', body: '{"a":1}', gzip: '1' }],
+      ['whitespace-only', { type: 'application/json', body: ' \n ' }],
+      ['BOM-prefixed', { type: 'application/json', body: '\uFEFF{"a":1}' }],
+      ['truncated JSON', { type: 'application/json', body: '{"a":' }],
+      ['two JSON values', { type: 'application/json', body: '{"a":1}{"b":2}' }],
     ])('passes a %s response through unwrapped', async (_name, q) => {
       const res = await get(shaped({ ...q, next: '/chats?offset=10' }));
       expect(res.statusCode).toBe(Number(q.status ?? 200));
       expect(res.body).toBe(q.body);
       expect(res.headers['x-next-page']).toBeUndefined();
     });
+
+    it('wraps a gzipped upstream body: the upstream client already decoded it', async () => {
+      const res = await get(shaped({ type: 'application/json', body: '{"a":1}', gzip: '1' }));
+      expect(res.body).toBe('{"data":{"a":1},"_meta":{}}');
+      expect(res.headers['content-encoding']).toBeUndefined();
+    });
+
+    it.each(['chats?offset=10', '//evil.example/chats', 'https://evil.example/chats', ''])(
+      'omits _pagination for the x-next-page value %j',
+      async (next) => {
+        const res = await get(shaped({ type: 'application/json', body: '[1]', next }));
+        expect(res.body).toBe('{"data":[1],"_meta":{}}');
+        expect(res.headers['x-next-page']).toBeUndefined();
+      },
+    );
 
     it.each(['_of', '%5Fof'])('never wraps the passthrough /%s/…', async (segment) => {
       const res = await get(`/v1/1001/${segment}/users/me`);

@@ -1,7 +1,7 @@
 // In-process event fan-out: the event source publishes, client sockets subscribe. One gateway process (plan-v4 §1.3).
 
 /** One event as clients see it; `envelope()` from lib/signature.ts turns it into the wire frame. */
-export type GatewayEvent = { id: string; type: string; createdAt: Date; accountId: number | null; data: unknown };
+export type GatewayEvent = { id: string; type: string; accountId: number | null; data: unknown };
 
 const listeners = new Set<(e: GatewayEvent) => void>();
 

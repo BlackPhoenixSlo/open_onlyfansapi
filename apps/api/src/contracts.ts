@@ -274,6 +274,8 @@ export const webhookDelivery = z.object({
   lastAttemptAt: z.string().nullable(),
   /** The delivery this one re-sent. */
   replayOf: z.string().nullable(),
+  /** False for `dropped` deliveries and 1.x event names: redeliver answers 409. */
+  redeliverable: z.boolean(),
   createdAt: z.string(),
 });
 export type WebhookDelivery = z.infer<typeof webhookDelivery>;

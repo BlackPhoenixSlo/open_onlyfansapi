@@ -4,6 +4,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { subscribe, type GatewayEvent } from '../src/lib/event-bus.js';
+import { parseFrame } from '../src/modules/events/ingest.js';
 import { startEventSource, type SourceTimings } from '../src/modules/events/source.js';
 import { eventFrame as frame, startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
@@ -124,7 +125,7 @@ describe('upstream event source', () => {
     expect(rows[0].id).toMatch(/^evt_/);
 
     expect(seen).toEqual([
-      { id: rows[0].id, type: 'messages.received', createdAt: new Date('2026-10-02T12:00:00.000Z'), accountId: 1001, data: frame().payload },
+      { id: rows[0].id, type: 'messages.received', accountId: 1001, data: frame().payload },
     ]);
     const queued = await deliveries();
     expect(queued.map((d) => d.team_id).sort()).toEqual([teams.a, teams.b].sort());
@@ -159,6 +160,16 @@ describe('upstream event source', () => {
       [teams.a, 'posts.expired'],
       [teams.a, 'tips.received'],
     ]);
+  });
+
+  it('parseFrame: a bad amount_cents keeps the frame with null and is counted; null or missing is not', () => {
+    for (const [amount, counted] of [[2 ** 40, true], ['500', true], [1.5, true], [null, false], [undefined, false], [500, false]] as const) {
+      const onBadAmount = vi.fn();
+      const parsed = parseFrame(JSON.stringify(frame({ type: 'tips.received', amount_cents: amount })), onBadAmount);
+      expect(parsed, String(amount)).toMatchObject({ type: 'tips.received' });
+      expect((parsed as { amount_cents?: number | null }).amount_cents ?? null, String(amount)).toBe(amount === 500 ? 500 : null);
+      expect(onBadAmount).toHaveBeenCalledTimes(counted ? 1 : 0);
+    }
   });
 
   it('an amount outside int32 is stored as null; a failed ledger insert is published, not emitted', async () => {

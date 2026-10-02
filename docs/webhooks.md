@@ -83,6 +83,20 @@ it validates. **Status** says whether this gateway sends the event:
 `GET /v1/webhooks/events` returns the same list, with the status in each description. Payloads are built by the
 upstream; amounts are OnlyFans' gross figures in cents, and the ledger behind `/v1/stats` stores them per event.
 
+When the upstream starts mapping a TBC type, its frames move from `upstream.<name>` to the catalogue name. An
+endpoint that relied on `upstream.*` for them then needs the catalogue name in its `events` filter (or an empty
+filter).
+
+`accounts.reconnected` fires on every successful bootstrap of an account that already had a session, not only after
+a disconnect or an expired session.
+
+**Payload notes.** The payloads have the keys of the reference API's examples, but live OnlyFans frames carry fewer
+of them:
+
+- `fromUser` on a live `messages.received` frame has only `id`, and `messages.sent` has no `toUser`.
+- `fanData.available` is `false` and the `spending` figures are zero, because the gateway does not compute fan
+  spending. `fanData.last_updated_at` is the message's time. Branch on `available` before using `spending`.
+
 Every event goes to every workspace linked to the upstream (`link-team`). `messages.received` and `messages.sent`
 carry the fan's message text and profile, and `upstream.*` events carry the upstream's raw payload, which reaches every endpoint
 whose `events` filter is empty. So anyone with an endpoint in a linked workspace receives that text. The gateway's
@@ -128,6 +142,13 @@ A delivery can arrive more than once: a retry after a timeout whose request did 
 duplicates on `X-OFAPI-Idempotency-Key`. The delivery id (`whd_...`, shown in the dashboard and the deliveries API)
 changes on a redelivery; the key does not. Two Test actions are two events with two keys.
 
+- The key is **not** covered by the signature. It only de-duplicates the gateway's own retries and redeliveries;
+  it does not stop a replayed request.
+- A receiver that drops by key also discards a manual redelivery of an event it already acknowledged. Redeliver
+  only what the receiver did not process.
+- Deliveries created before 2.0, and their redeliveries, carry their `whd_...` delivery id as the key (the
+  migration's backfill).
+
 ## Verifying the signature
 
 `Signature` is the lowercase hex HMAC-SHA256 of the raw request body. The key is the UTF-8 bytes of the endpoint's
@@ -140,9 +161,9 @@ Node:
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 function verify(secret, signature, rawBody) {
+  if (!/^[0-9a-f]{64}$/.test(String(signature))) return false;
   const expected = createHmac('sha256', secret).update(rawBody).digest();
-  const got = Buffer.from(String(signature), 'hex');
-  return got.length === expected.length && timingSafeEqual(got, expected);
+  return timingSafeEqual(Buffer.from(signature, 'hex'), expected);
 }
 // verify(process.env.WEBHOOK_SECRET, req.headers['signature'], rawBodyBuffer)
 ```
@@ -155,7 +176,7 @@ import hmac
 
 def verify(secret: str, signature: str, raw_body: bytes) -> bool:
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature or "")
+    return hmac.compare_digest(expected.encode(), (signature or "").encode())
 ```
 
 The signature covers the body only. There is no timestamp, so there is **no replay window**: a captured request
