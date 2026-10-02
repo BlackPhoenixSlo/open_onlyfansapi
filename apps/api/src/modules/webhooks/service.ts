@@ -44,6 +44,9 @@ function toDelivery(row: DeliveryRow): WebhookDelivery {
   };
 }
 
+/** drizzle sends a JS `null` as SQL NULL; a JSON null payload is the jsonb value `null` (the column is NOT NULL). */
+const jsonPayload = (data: unknown) => (data === null ? sql`'null'::jsonb` : data);
+
 const notFound = () => new AppError(404, 'not_found', 'Webhook endpoint not found');
 
 /** https only, unless ALLOW_HTTP_WEBHOOKS (local development). */
@@ -152,7 +155,7 @@ export async function redeliver(teamId: string, endpointId: string, deliveryId: 
       endpointId,
       eventType: original.eventType,
       accountId: original.accountId,
-      payload: original.payload,
+      payload: jsonPayload(original.payload),
       replayOf: original.id,
     })
     .returning();
@@ -223,7 +226,7 @@ export function emit(teamId: string, type: string, accountId: number | null, dat
       );
     if (endpoints.length === 0) return 0;
     await db.insert(webhookDelivery).values(
-      endpoints.map((e) => ({ id: newId('whd'), teamId, endpointId: e.id, eventType: type, accountId, payload: data })),
+      endpoints.map((e) => ({ id: newId('whd'), teamId, endpointId: e.id, eventType: type, accountId, payload: jsonPayload(data) })),
     );
     return endpoints.length;
   });
