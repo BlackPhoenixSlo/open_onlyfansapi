@@ -45,12 +45,13 @@ the browser. You never edit code, never run commands and never type credentials.
 3. **Create a key.** On the Keys page, create a key named `smoke-read` with read scope and no account restriction.
    The secret is shown once and starts with `gk_`. In your report, give only the visible prefix, never the full
    secret. After you close the dialog, the list shows `smoke-read` with read scope.
-4. **Playground.** Pick the operation for `/v1/{account}/users/me` (search `users/me`), choose account `1` and
-   send. Expect status `200`, a response body containing `"echo"` and `/of/users/me`, and a curl snippet.
-5. **Logs.** The newest row is that call: `GET`, path ending `/users/me`, status `200`. Open its detail. It shows a
+4. **Playground.** Pick the operation `GET /v1/{account}/me` (search `/me`, then pick the row whose path is exactly that,
+   not `/media/vault` or `/chats/{chat_id}/messages`), choose account `1` and
+   send. Expect status `200`, a response body containing `"echo"` and `/of/me`, and a curl snippet.
+5. **Logs.** The newest row is that call: `GET`, path ending `/me`, status `200`. Open its detail. It shows a
    request id. The page text contains no `authorization` or `cookie` value and no `smoke-only-upstream-token`.
 6. **Usage and Home.** Usage shows at least 1 request for today, and the Home 24 h request count is at least 1.
-7. **API reference.** http://localhost/docs renders and lists `/v1/{account}/users/me`. http://localhost/openapi.json
+7. **API reference.** http://localhost/docs renders and lists `/v1/{account}/me`. http://localhost/openapi.json
    loads.
 8. **Revoke.** Revoke `smoke-read`. The list shows it as revoked.
 9. **Sign out.** Sign out, and you land on the login page. Opening http://localhost/accounts while signed out also

@@ -166,7 +166,7 @@ the key may use, and `GET /v1/whoami` shows the key's scope and allowlist. Then 
 Gateway:
 
 ```sh
-curl -H "Authorization: Bearer gk_..." https://gw.example.com/v1/123/users/me
+curl -H "Authorization: Bearer gk_..." https://gw.example.com/v1/123/me
 ```
 
 Gateway's own errors look like `{ "error": { "code": "...", "message": "...", "requestId": "req_..." } }`.

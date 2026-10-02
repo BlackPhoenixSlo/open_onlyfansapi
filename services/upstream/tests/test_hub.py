@@ -37,9 +37,9 @@ def test_fan_out_and_disconnect():
         a, b = FakeSocket(), FakeSocket()
         tasks = [asyncio.create_task(hub.serve(a)), asyncio.create_task(hub.serve(b))]
         await _joined(hub, 2)
-        hub.publish({"type": "message.received", "n": 1})
+        hub.publish({"type": "messages.received", "n": 1})
         await asyncio.sleep(0.01)
-        assert a.sent == b.sent == [{"type": "message.received", "n": 1}]
+        assert a.sent == b.sent == [{"type": "messages.received", "n": 1}]
         a.disconnect.set()
         await asyncio.wait_for(tasks[0], 1)
         assert hub.sockets == 1
@@ -90,8 +90,8 @@ def test_stalled_send_is_closed_with_1013_without_overflow():
 def test_loss_is_logged(caplog):
     async def main():
         hub = Hub(queue_size=1, send_timeout=0.05)
-        hub.publish({"type": "message.received"})  # nobody connected
-        hub.publish({"type": "message.received"})  # rate-limited: no second warning
+        hub.publish({"type": "messages.received"})  # nobody connected
+        hub.publish({"type": "messages.received"})  # rate-limited: no second warning
         slow = FakeSocket(stall=True)
         task = asyncio.create_task(hub.serve(slow))
         await _joined(hub, 1)

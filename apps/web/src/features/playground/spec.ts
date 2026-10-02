@@ -12,7 +12,7 @@ type Operation = {
 type Document = { paths?: Record<string, Record<string, Operation>> };
 
 export type Op = {
-  /** `GET /v1/{account}/users/me` */
+  /** `GET /v1/{account}/me` */
   id: string;
   method: string;
   /** Path template, e.g. `/v1/{account}/users/{userId}/posts`. */
@@ -126,7 +126,7 @@ function matchTemplate(template: string, raw: string): { params: Record<string, 
 
 /**
  * Matches a raw path (`/v1/12/users/7/posts`) to an operation's template and extracts the path parameters.
- * When several templates match, the one with the most literal segments wins (`/users/me` over `/users/{id}`).
+ * When several templates match, the one with the most literal segments wins (`/users/list` over `/users/{username}`).
  */
 export function matchPath(ops: Op[], method: string, raw: string): { op: Op; params: Record<string, string> } | undefined {
   let best: { op: Op; params: Record<string, string>; literals: number } | undefined;

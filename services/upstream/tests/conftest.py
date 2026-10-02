@@ -25,6 +25,7 @@ import proxies
 from of_client import OFClient
 
 FIXTURES = HERE / "fixtures" / "of_frames"
+PAYLOADS = HERE / "fixtures" / "payloads"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
@@ -71,6 +72,24 @@ def new_session(aid: str, *, bump: float = 0) -> None:
 
 def frame(name: str) -> dict:
     return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def payload_fixture(event: str) -> dict:
+    """`fixtures/payloads/<event>.json`: a delivery `{event, account_id, payload}` with generic values whose
+    key structure and JSON types mirror the reference product's example for that event (plan-v5 §7)."""
+    return json.loads((PAYLOADS / f"{event}.json").read_text())
+
+
+def key_paths(value, path: str = "$") -> set[str]:
+    """Every key path in `value`; list items share `<path>[]`."""
+    out = {path}
+    if isinstance(value, dict):
+        for k, v in value.items():
+            out |= key_paths(v, f"{path}.{k}")
+    elif isinstance(value, list):
+        for v in value:
+            out |= key_paths(v, f"{path}[]")
+    return out
 
 
 # ─── of_fake: OF at the wire ───────────────────────────────────────

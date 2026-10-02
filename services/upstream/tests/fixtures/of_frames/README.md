@@ -3,5 +3,7 @@ they follow the keys `of_ws.py` documents (`api2_chat_message`, `post_expire`, t
 `connected` frames) with every value invented (account 100001, fan 200002, `.invalid` urls).
 Replace them with redacted real captures once owner question Q1 is answered.
 
-Unverified: `message.sent`'s `fanId` is read from `toUser.id`; whether OF's frame for your own
-message carries `toUser` is unknown, so `api2_chat_message.sent.json` omits it and `fanId` is null.
+Unverified: the `messages.*` payload is OF's message object as it arrives. The reference product's
+examples carry a full `fromUser` (received) and `toUser` (sent); whether OF's frame carries more than
+`fromUser.id`, or `toUser` at all, is unknown, so these frames omit them. `../payloads/` holds the
+reference key structure.

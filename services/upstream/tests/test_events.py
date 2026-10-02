@@ -1,45 +1,96 @@
 from datetime import UTC, datetime
 
-from conftest import frame
+import pytest
+from conftest import frame, key_paths, payload_fixture
 
 from events import classify
 
 ACCOUNT = 100001
 NOW = datetime(2026, 10, 2, 12, 30, 0, 123000, tzinfo=UTC)
-KEYS = {"id", "type", "account_id", "ts", "payload"}
+KEYS = {"id", "type", "account_id", "ts", "amount_cents", "payload"}
+NO_FAN_DATA = {"available": False, "last_updated_at": "2026-10-02T12:00:00.000Z",
+               "spending": {"total": 0, "messages": 0, "subscribes": 0, "posts": 0, "tips": 0, "streams": 0}}
 
 
-def test_fan_message_is_message_received():
-    [ev] = classify(ACCOUNT, frame("api2_chat_message.received"), now=NOW)
+def test_fan_message_is_messages_received():
+    raw = frame("api2_chat_message.received")
+    [ev] = classify(ACCOUNT, raw, now=NOW)
     assert set(ev) == KEYS
     assert ev == {
-        "id": "message.received:100001:5551234",
-        "type": "message.received",
+        "id": "message.received:100001:5551234",  # the v4 name: the ledger's dedup key is unchanged
+        "type": "messages.received",
         "account_id": ACCOUNT,
         "ts": "2026-10-02T12:00:00.000Z",
-        "payload": {"messageId": 5551234, "fanId": 200002, "text": "<p>hey, are you there?</p>",
-                    "price": 0, "mediaCount": 1},
+        "amount_cents": None,
+        "payload": {**raw["api2_chat_message"], "fanData": NO_FAN_DATA},  # OF's message, as the reference
     }
 
 
-def test_own_message_is_message_sent():
-    [ev] = classify(ACCOUNT, frame("api2_chat_message.sent"), now=NOW)
-    assert ev["type"] == "message.sent"
+def test_own_message_is_messages_sent():
+    raw = frame("api2_chat_message.sent")
+    [ev] = classify(ACCOUNT, raw, now=NOW)
+    assert ev["type"] == "messages.sent"
     assert ev["id"] == "message.sent:100001:5551235"
     assert ev["ts"] == "2026-10-02T12:00:05.250Z"
-    assert ev["payload"] == {"messageId": 5551235, "fanId": None, "text": "<p>hi! here now</p>",
-                             "price": 5, "mediaCount": 0}
+    assert ev["amount_cents"] is None
+    assert ev["payload"] == raw["api2_chat_message"]  # no fanData on sent messages, as the reference
 
 
 def test_post_expire():
     [ev] = classify(ACCOUNT, frame("post_expire"), now=NOW)
-    assert ev == {"id": "post.expired:100001:4440001", "type": "post.expired", "account_id": ACCOUNT,
-                  "ts": "2026-10-02T12:30:00.123Z", "payload": {"postId": 4440001}}
+    assert ev == {"id": "post.expired:100001:4440001", "type": "posts.expired", "account_id": ACCOUNT,
+                  "ts": "2026-10-02T12:30:00.123Z", "amount_cents": None, "payload": {"postId": 4440001}}
 
 
 def test_post_expire_with_a_numeric_id_is_not_a_counter():
     [ev] = classify(ACCOUNT, {"post_expire": 4440001}, now=NOW)
-    assert ev["type"] == "post.expired" and ev["payload"] == {"postId": 4440001}
+    assert ev["type"] == "posts.expired" and ev["payload"] == {"postId": 4440001}
+
+
+# ─── payload contracts (fixtures/payloads) ─────────────────────────
+
+def _parent(path):
+    return path[:-2] if path.endswith("[]") else path.rsplit(".", 1)[0]
+
+
+def _gaps(fixture_payload, payload):
+    """Key paths of the fixture that `payload` lacks, each reported at its topmost missing node."""
+    missing = key_paths(fixture_payload) - key_paths(payload)
+    return {p for p in missing if _parent(p) not in missing}
+
+
+# What our OF frames (`fixtures/of_frames/`, reconstructions, not captures) lack against the reference
+# product's example: the payload is OF's message as it arrives, so these keys reach a client only when
+# OF's frame carries them. A real capture (plan-v4 §9 Q1) replaces the frames and shrinks these sets.
+# Our frame's fromUser is {id, _view}: every other key of the reference's 42-key fromUser is a gap.
+_FROM_USER = [k for k in payload_fixture("messages.received")["payload"]["fromUser"] if k != "id"]
+KNOWN_GAPS = {
+    "messages.received": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.replyToMessage",
+                          *(f"$.fromUser.{k}" for k in _FROM_USER)},
+    "messages.sent": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.releaseForms", "$.toUser", "$.media[]"},
+}
+
+
+@pytest.mark.parametrize(("event", "of_frame", "frame_id"), [
+    ("messages.received", "api2_chat_message.received", "message.received:100001:5551234"),
+    ("messages.sent", "api2_chat_message.sent", "message.sent:100001:5551235"),
+])
+def test_message_payloads_against_the_fixture(event, of_frame, frame_id):
+    [ev] = classify(ACCOUNT, frame(of_frame), now=NOW)
+    assert (ev["type"], ev["id"]) == (event, frame_id)
+    assert _gaps(payload_fixture(event)["payload"], ev["payload"]) == KNOWN_GAPS[event]
+
+
+def test_frame_id_keeps_the_v4_name():
+    msg = {**frame("api2_chat_message.received")["api2_chat_message"], "id": 1002}
+    [ev] = classify(1001, {"api2_chat_message": msg}, now=NOW)
+    assert (ev["type"], ev["id"]) == ("messages.received", "message.received:1001:1002")
+
+
+def test_posts_expired_matches_the_fixture():
+    fx = payload_fixture("posts.expired")
+    [ev] = classify(1001, {"post_expire": "1008"}, now=NOW)
+    assert (ev["type"], ev["id"], ev["payload"]) == (fx["event"], "post.expired:1001:1008", fx["payload"])
 
 
 def test_noise_is_dropped():
@@ -54,7 +105,7 @@ def test_unknown_key_passes_through_raw():
     raw = {"anything": [1, 2]}
     [ev] = classify(ACCOUNT, {"new_message": raw}, now=NOW)
     assert ev == {"id": None, "type": "upstream.new_message", "account_id": ACCOUNT,
-                  "ts": "2026-10-02T12:30:00.123Z", "payload": raw}
+                  "ts": "2026-10-02T12:30:00.123Z", "amount_cents": None, "payload": raw}
 
 
 def test_unmapped_types_are_never_invented():

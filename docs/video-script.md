@@ -31,7 +31,7 @@ longer than the clip.
 | B1 | [0:00–0:04] Home: requests (24h), error rate, active keys | Each workspace gets a dashboard. Home shows requests and error rate for the last 24 hours, and how many keys are active. | 0:08 |
 | B2 | [0:05–0:08] Accounts: the Demo account, id 1 | Accounts come from your upstream. The operator links a workspace once; after that its accounts appear here. | 0:07 |
 | B3 | [0:08–0:12] API keys: `demo-read`, scope `read`, active | Keys are scoped read or write, optionally limited to some accounts. The secret is shown once and stored only as a hash. | 0:09 |
-| B4 | [0:12–0:20] Playground: search "users me", pick `GET /users/me`, Send, 200, open Headers | The playground lists every operation from the merged spec. Pick one, pick an account, send. You get status, latency, headers and a curl snippet. | 0:10 |
+| B4 | [0:12–0:20] Playground: search "me", pick `GET /me`, Send, 200, open Headers | The playground lists every operation from the merged spec. Pick one, pick an account, send. You get status, latency, headers and a curl snippet. | 0:10 |
 | B5 | [0:21–0:27] Logs list, then one request's detail page | Every authenticated call lands in Logs with key, account and timing. Credential headers are never stored; bodies are kept only for failed requests by default. | 0:10 |
 | B6 | [0:28–0:34] Usage: daily chart, then grouped by key and by endpoint | Usage charts requests and errors per day, broken down by key, account or endpoint, with a CSV export. | 0:08 |
 | B7 | [0:35–0:47] `/docs`: the API reference, scrolling to the platform operations | And slash docs is an interactive API reference: Gateway's own routes plus your upstream's operations, rewritten under slash v1 slash account. | 0:08 |
@@ -48,7 +48,7 @@ Terminal in the repo root, browser on the right.
 | C4 | Second terminal: `UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts` prints `fake upstream listening on …:3001` | No upstream yet? In a second terminal, start the fake one the tests use. It serves one account with id 1. | 0:08 |
 | C5 | Browser: http://localhost:5173, Create one, register; then Settings, copy the slug | Register at localhost 5173. That creates your workspace. Copy its slug from Settings. | 0:07 |
 | C6 | `pnpm --filter @gateway/api link-team <workspace-slug>` prints `linked workspace …`; reload Accounts, the Demo row appears | Linking is the operator's approval step. Run link-team with the slug, reload Accounts, and the demo account appears. | 0:08 |
-| C7 | API keys → Create key (cut the secret dialog); terminal: `export API_KEY=gk_...`, `export ACCOUNT_ID=123` (type `1`, the fake upstream's account), `curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/users/me` returns `{"echo":true,…}` | Create a key; the secret is shown once. Export it, then call slash v1, account one, users me. The fake upstream echoes it back. | 0:10 |
+| C7 | API keys → Create key (cut the secret dialog); terminal: `export API_KEY=gk_...`, `export ACCOUNT_ID=123` (type `1`, the fake upstream's account), `curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/me` returns `{"echo":true,…}` | Create a key; the secret is shown once. Export it, then call slash v1, account one, me. The fake upstream echoes it back. | 0:10 |
 
 ## (d) Deploy to a VPS (1:11)
 
