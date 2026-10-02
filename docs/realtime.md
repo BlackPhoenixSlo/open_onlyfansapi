@@ -24,7 +24,7 @@ const ws = new WebSocket('wss://gateway.example.com/v1/ws', ['bearer', 'bearer.'
 ws.onmessage = (m) => {
   const frame = JSON.parse(m.data);
   if (frame.type === 'ready') return console.log('streaming accounts', frame.accountIds ?? 'all');
-  console.log(frame.type, frame.accountId, frame.data);
+  console.log(frame.event, frame.account_id, frame.payload);
 };
 ws.onclose = (e) => console.log('closed', e.code, e.reason);
 ```
@@ -32,7 +32,7 @@ ws.onclose = (e) => console.log('closed', e.code, e.reason);
 Node 22 or later (the global `WebSocket`) works the same way:
 
 ```js
-const ws = new WebSocket(`wss://gateway.example.com/v1/ws?accountId=117183`, ['bearer', `bearer.${process.env.API_KEY}`]);
+const ws = new WebSocket(`wss://gateway.example.com/v1/ws?accountId=1001`, ['bearer', `bearer.${process.env.API_KEY}`]);
 ws.addEventListener('message', (m) => console.log(JSON.parse(m.data)));
 ```
 
@@ -53,18 +53,19 @@ header is the only way to send a key.
 
 Every frame is one JSON object in a text frame.
 
-- First, once: `{"type":"ready","accountIds":[117183]}`. `accountIds` lists the accounts this socket receives: the
+- First, once: `{"type":"ready","accountIds":[1001]}`. `accountIds` lists the accounts this socket receives: the
   `accountId` filter, otherwise the key's allowed accounts, or `null` for every account.
-- Then one frame per event, the same body as a webhook delivery:
+- Then one frame per event, byte for byte the same JSON as a webhook delivery body (`event`, `account_id` as a
+  string, `payload`; see [webhooks.md](webhooks.md#the-request)):
 
 ```json
-{"id":"evt_...","type":"message.received","createdAt":"2026-10-02T12:00:00.000Z","accountId":117183,
- "data":{"messageId":5551234,"fanId":42,"text":"hi","price":0,"mediaCount":0}}
+{"event":"messages.received","account_id":"1001","payload":{"id":1002,"text":"hi","fromUser":{"id":1003}}}
 ```
 
-See [webhooks.md](webhooks.md#event-types) for the event types. An event with no account (`accountId: null`) goes
-only to sockets that see every account. Messages the client sends are ignored. A client message larger than 4 KiB
-closes the socket (1009).
+Only `ready` has a `type` key; an event frame has `event` instead. See [webhooks.md](webhooks.md#event-types) for
+the event types. An event with no account has no `account_id` key and goes only to sockets that see every account.
+Frames carry no event id and no `X-OFAPI-Idempotency-Key`: the socket has no retries to de-duplicate. Messages the
+client sends are ignored. A client message larger than 4 KiB closes the socket (1009).
 
 ## Refusals
 
@@ -90,7 +91,7 @@ A browser does not expose the HTTP status of a refused handshake. It only report
 ```sh
 curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
   -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Authorization: Bearer $API_KEY" \
-  "https://gateway.example.com/v1/ws?accountId=117183"
+  "https://gateway.example.com/v1/ws?accountId=1001"
 ```
 
 Refusals after the key was accepted also appear in the request log.
