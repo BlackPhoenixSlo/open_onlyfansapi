@@ -50,7 +50,7 @@ export async function buildApp(opts: AppOptions = {}) {
 
   await app.register(swagger, {
     openapi: {
-      info: { title: 'Gateway API', version: '0.1.0' },
+      info: { title: 'Gateway API', version: '1.0.0' },
       components: { securitySchemes: { ApiKey: { type: 'http', scheme: 'bearer', description: 'An API key (`gk_…`)' } } },
       security: [{ ApiKey: [] }],
     },
