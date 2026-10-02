@@ -68,3 +68,16 @@ def test_malformed_frames_yield_nothing():
     assert classify(ACCOUNT, {}, now=NOW) == []
     assert classify(ACCOUNT, {"api2_chat_message": {"text": "no id"}}, now=NOW) == []
     assert classify(ACCOUNT, {"post_expire": None}, now=NOW) == []
+
+
+def test_dropped_keys_are_logged_once(caplog, monkeypatch):
+    import events
+    monkeypatch.setattr(events, "_dropped_keys", set())
+    with caplog.at_level("WARNING", logger="upstream.events"):
+        for _ in range(3):
+            classify(ACCOUNT, {"brand_new_counter": 1}, now=NOW)
+            classify(ACCOUNT, {"online_status": {}}, now=NOW)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert len(msgs) == 2
+    assert any("'brand_new_counter' as a counter" in m for m in msgs)
+    assert any("'online_status' as noise" in m for m in msgs)

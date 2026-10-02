@@ -2,14 +2,19 @@
 
 The only code that knows OF's WebSocket shapes. `classify` is pure apart from
 reading the clock when a frame carries no time of its own (`now` overrides it).
+Dropping noise is logged once per key, so losses stay visible.
 Mappings exist only for frames the lifted code has seen (`api2_chat_message`,
 `post_expire`); every other key, minus the noise below, is passed through as
 `upstream.<key>` with its raw value.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
+
+log = logging.getLogger("upstream.events")
+_dropped_keys: set[str] = set()
 
 # Presence, handshake and counter frames: never forwarded.
 NOISE_KEYS = frozenset({
@@ -80,6 +85,13 @@ def _chat_message(account_id: int, msg: Any, now: datetime) -> dict | None:
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire"})
 
 
+def _drop(keys: Any, why: str) -> None:
+    for key in keys:
+        if key not in _dropped_keys:
+            _dropped_keys.add(key)
+            log.warning("dropping OF frame key %r as %s (logged once per key)", key, why)
+
+
 def _counter_only(frame: dict) -> bool:
     """Unread/priority counters arrive as frames of bare numbers: noise."""
     return not MAPPED_KEYS & frame.keys() and all(
@@ -88,12 +100,16 @@ def _counter_only(frame: dict) -> bool:
 
 def classify(account_id: int, frame: dict, *, now: datetime | None = None) -> list[dict]:
     """The §2.2 frames one OF socket frame yields (often none)."""
-    if not isinstance(frame, dict) or not frame or _counter_only(frame):
+    if not isinstance(frame, dict) or not frame:
+        return []
+    if _counter_only(frame):
+        _drop(frame, "a counter")
         return []
     now = now or datetime.now(UTC)
     out: list[dict] = []
     for key, value in frame.items():
         if key in NOISE_KEYS:
+            _drop([key], "noise")
             continue
         if key == "api2_chat_message":
             ev = _chat_message(account_id, value, now)

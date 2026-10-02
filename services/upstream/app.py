@@ -2,7 +2,7 @@
 the `/ws` event stream for the gateway (plan-v4 §2.1, §2.2).
 
 Run exactly one worker: the pumps and the hub live in this process.
-    UPSTREAM_TOKEN=... uvicorn app:app --port 8000 --workers 1
+    UPSTREAM_TOKEN=... uvicorn app:app --port 8000 --workers 1 --ws websockets-sansio
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path as PathType
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
@@ -33,6 +34,8 @@ logging.basicConfig(
     level=(os.environ.get("LOG_LEVEL") or "info").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# websockets at DEBUG would log OF's connect token and fans' message text.
+logging.getLogger("websockets").setLevel(max(logging.INFO, logging.getLogger().level))
 log = logging.getLogger("upstream")
 
 TOKEN = os.environ.get("UPSTREAM_TOKEN") or ""
@@ -41,11 +44,10 @@ if len(TOKEN) < 16:
 _BEARER = f"Bearer {TOKEN}".encode()
 _WS_PROTOCOL = f"bearer.{TOKEN}".encode()
 
-REQUIRE_PROXY = (os.environ.get("OF_REQUIRE_PROXY") or "true").strip().lower() not in {
-    "0", "false", "no", "off"}
-
 hub = Hub()
-supervisor = Supervisor(hub, require_proxy=REQUIRE_PROXY)
+# `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
+supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "true").strip().lower()
+                        not in {"0", "false", "no", "off"})
 
 
 @asynccontextmanager
@@ -54,7 +56,7 @@ async def lifespan(_app: FastAPI):
     if not os.environ.get("STATIC_PARAM"):
         log.warning("STATIC_PARAM is unset: /session/bootstrap needs a static_param field "
                     "unless a session at the same OF revision already exists")
-    if not REQUIRE_PROXY:
+    if not supervisor.require_proxy:
         log.warning("OF_REQUIRE_PROXY is off: accounts without a proxy reach OF from this host's IP")
     tasks = [asyncio.create_task(supervisor.run()), asyncio.create_task(hub.heartbeat())]
     try:
@@ -120,7 +122,7 @@ async def bearer_auth(request: Request, call_next):
 
 
 @app.get("/healthz", include_in_schema=False)
-def healthz() -> dict:
+async def healthz() -> dict:
     return {"ok": True}
 
 
@@ -139,14 +141,19 @@ def account_client(
     aid = str(int(raw))
     if not accounts.is_account(aid):
         raise ApiError(404, "unknown_account")
-    if accounts.latest_session_path(aid) is None:
+    blocked = supervisor.blocker(aid)
+    if blocked == "no_session":
         raise ApiError(409, "no_session")
-    if REQUIRE_PROXY and proxies.get_for_account(aid) is None:
+    if blocked == "no_proxy":
         raise ApiError(409, "proxy_required")
+    # session_expired is not blocked here: OF's own 401 passes through as of_error.
     try:
-        return client_pool.get(aid)
+        client = client_pool.get(aid)
     except FileNotFoundError as e:
         raise ApiError(409, "no_session") from e
+    if supervisor.require_proxy and not getattr(client, "proxy_url", None):
+        raise ApiError(409, "proxy_required")  # never fall back to this host's IP
+    return client
 
 
 Client = Annotated[OFClient, Depends(account_client)]
@@ -219,6 +226,12 @@ app.include_router(of)
 
 @app.get("/of-accounts", tags=["of-accounts"], operation_id="ofAccounts.list")
 def of_accounts() -> list[dict]:
+    """Connected OF accounts. `status`:
+    `active` — a frame has been received since the pump started (not proof of live connectivity);
+    `connecting` — runnable, pump starting or no frame yet;
+    `session_expired` — OF answered 401 (or a JSON 403); waits for a new session;
+    `no_session` — no captured session; `no_proxy` — no proxy while OF_REQUIRE_PROXY is on.
+    """
     rows = []
     for meta in accounts.list_accounts():
         aid = str(meta.get("id") or "")
@@ -250,38 +263,78 @@ def _proxy_entry(url: str) -> dict:
         port = None
     if u.scheme not in {"http", "https", "socks5", "socks5h"} or not u.hostname or not port:
         raise ApiError(400, "invalid_proxy_url", "expected scheme://[user:pass@]host:port")
+    # "" rather than None, so upsert clears credentials a previous URL had.
     return {"scheme": u.scheme, "host": u.hostname, "port": port,
-            "username": u.username, "password": u.password}
+            "username": u.username or "", "password": u.password or ""}
+
+
+def _snapshot_latest(uid: str) -> tuple[bytes, int, int] | None:
+    """latest.json's bytes and (atime, mtime) in ns, or None when there is none."""
+    latest = accounts.account_dir(uid) / "latest.json"
+    try:
+        st = latest.stat()
+        return latest.read_bytes(), st.st_atime_ns, st.st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+def _restore_latest(uid: str, snapshot: tuple[bytes, int, int] | None, failed: PathType) -> None:
+    """Put latest.json back byte- and mtime-exact, so the pump key (and an expired
+    session's mark) is unchanged; delete the failed session file and its cookies."""
+    latest = accounts.account_dir(uid) / "latest.json"
+    if snapshot is None:
+        latest.unlink(missing_ok=True)
+    else:
+        data, atime_ns, mtime_ns = snapshot
+        latest.write_bytes(data)
+        os.utime(latest, ns=(atime_ns, mtime_ns))
+    if accounts.latest_session_path(uid) != failed:
+        failed.unlink(missing_ok=True)
 
 
 def _bootstrap(body: Bootstrap) -> dict:
-    entry = _proxy_entry(body.proxy_url) if body.proxy_url else None
+    """Parse, check the proxy, capture, validate with me() through that proxy, and
+    only then commit the proxy binding; a failed validation restores the old session."""
     try:
-        curl_uid = str(session_bootstrap.parse_curl(body.curl)["headers"].get("user-id") or "")
+        parsed = session_bootstrap.parse_curl(body.curl)
     except ValueError as e:
         raise ApiError(400, "invalid_curl", str(e)) from e
-    if not curl_uid.isdigit():
+    uid = str(parsed["headers"].get("user-id") or "")
+    if not uid.isdigit():
         raise ApiError(400, "invalid_curl", "the curl has no numeric user-id header")
-    existing = proxies.get_for_account(curl_uid)
-    if entry is None and existing is None and REQUIRE_PROXY:
-        raise ApiError(409, "proxy_required", "pass proxy_url: OF_REQUIRE_PROXY is on")
-    proxy_url = body.proxy_url.strip() if body.proxy_url else (
-        proxies.proxy_url(existing) if existing else None)
+    if not parsed["cookies"]:
+        raise ApiError(400, "invalid_curl", "the curl has no -b cookies; use DevTools "
+                       "'Copy as cURL (bash)' (a -H 'cookie: ...' header is not supported)")
 
+    new_entry = _proxy_entry(body.proxy_url) if body.proxy_url else None
+    entry = new_entry or proxies.get_for_account(uid)
+    if entry is None and supervisor.require_proxy:
+        raise ApiError(409, "proxy_required", "pass proxy_url: OF_REQUIRE_PROXY is on")
+    proxy_url = proxies.proxy_url(entry) if entry else None
+
+    snapshot = _snapshot_latest(uid)
     try:
         path = session_bootstrap.from_curl(
             body.curl, static_param_override=body.static_param or None,
             nickname=body.nickname, proxy_url=proxy_url)
     except (ValueError, RuntimeError) as e:
         raise ApiError(400, "bootstrap_failed", str(e)) from e
-    uid = path.parent.name
 
-    if entry is not None:
+    try:
+        probe = OFClient.from_session_file(
+            path, proxies=proxies.proxies_dict_for_requests(entry) if entry else None,
+            proxy_label=entry.get("label") if entry else None)
+        me = probe.me()
+    except Exception:
+        log.warning("bootstrap: me() failed for account=%s; previous session restored", uid)
+        _restore_latest(uid, snapshot, path)
+        raise
+
+    if new_entry is not None:
         label = f"acct-{uid}"
-        proxies.upsert({"label": label, **entry})
+        proxies.upsert({"label": label, **new_entry})
         proxies.assign_account(label, uid)
     client_pool.evict(uid)
-    me = client_pool.get(uid).me()
     meta = accounts.load_meta(uid) or {"id": uid}
     meta.update(username=me.get("username"), name=me.get("name"), avatar=me.get("avatar"))
     accounts.save_meta(uid, meta)

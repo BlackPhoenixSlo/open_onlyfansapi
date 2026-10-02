@@ -27,6 +27,7 @@ services:
     ports:
       - "127.0.0.1:3001:8000"
     volumes:
+      # Captured OF sessions and proxy credentials: `docker compose down -v` deletes them.
       - upstream-data:/data
 
 volumes:

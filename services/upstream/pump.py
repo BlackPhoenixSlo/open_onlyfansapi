@@ -4,7 +4,7 @@ One process, one event loop: the Supervisor runs one task per account that has a
 session (and a proxy while proxies are required), classifies each OF frame and
 publishes the result to the Hub, which copies it into a bounded queue per
 connected `/ws` socket. Delivery is at-most-once; a socket that falls 1000 frames
-behind is closed with 1013 and the gateway reconnects.
+behind, or stalls a send for 10 s, is closed with 1013 and the gateway reconnects.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,14 +29,16 @@ log = logging.getLogger("upstream.pump")
 QUEUE_SIZE = 1000
 HEARTBEAT_S = 30
 RECONCILE_S = 30
+SEND_TIMEOUT_S = 10
+NO_SOCKET_WARN_S = 60
 CLOSE_TRY_AGAIN_LATER = 1013
 
-FrameSource = Callable[[str], AsyncIterator[dict]]
+FrameSource = Callable[[Any], AsyncIterator[dict]]
+ClientFactory = Callable[[str], Any]
 
 
-async def of_frames(account_id: str) -> AsyncIterator[dict]:
-    """The real frame source: the account's pooled OFClient over OF's socket."""
-    client = await asyncio.to_thread(client_pool.get, account_id)
+async def of_frames(client: Any) -> AsyncIterator[dict]:
+    """The real frame source: OF's socket for an already-built OFClient."""
     ws = OFWebSocket(client)
     try:
         async for frame in ws.events():
@@ -50,20 +53,31 @@ _CLOSE = object()  # queued in place of the backlog when a socket overflows
 
 
 class Hub:
-    def __init__(self, queue_size: int = QUEUE_SIZE) -> None:
+    def __init__(self, queue_size: int = QUEUE_SIZE, send_timeout: float = SEND_TIMEOUT_S) -> None:
         self.queue_size = queue_size
+        self.send_timeout = send_timeout
         self._queues: set[asyncio.Queue] = set()
+        self._unsent = 0             # events published while no socket was connected
+        self._unsent_logged_at = 0.0
 
     def publish(self, frame: dict) -> None:
+        if not self._queues and frame.get("type") != "heartbeat":
+            self._unsent += 1
+            now = time.monotonic()
+            if now - self._unsent_logged_at >= NO_SOCKET_WARN_S:
+                log.warning("no /ws consumer: %d event(s) dropped since the last warning", self._unsent)
+                self._unsent, self._unsent_logged_at = 0, now
         for q in list(self._queues):
             try:
                 q.put_nowait(frame)
             except asyncio.QueueFull:
                 # Slow consumer: drop its backlog, close it with 1013.
                 self._queues.discard(q)
+                dropped = q.qsize() + 1
                 while not q.empty():
                     q.get_nowait()
                 q.put_nowait(_CLOSE)
+                log.warning("/ws consumer overflowed: dropped %d frame(s), closing 1013", dropped)
 
     async def heartbeat(self, interval: float = HEARTBEAT_S) -> None:
         while True:
@@ -84,9 +98,15 @@ class Hub:
                     return
                 item = getter.result()
                 if item is _CLOSE:
-                    await ws.close(code=CLOSE_TRY_AGAIN_LATER)
+                    await self._close_slow(ws)
                     return
-                await ws.send_text(json.dumps(item, separators=(",", ":")))
+                try:
+                    await asyncio.wait_for(
+                        ws.send_text(json.dumps(item, separators=(",", ":"))), self.send_timeout)
+                except TimeoutError:
+                    log.warning("/ws send stalled %.0fs: closing 1013", self.send_timeout)
+                    await self._close_slow(ws)
+                    return
         except Exception:  # the peer went away mid-send
             log.debug("ws send failed", exc_info=True)
         finally:
@@ -94,6 +114,10 @@ class Hub:
             reader.cancel()
             if reader.done() and not reader.cancelled():
                 reader.exception()  # retrieved: a failed read just means the peer is gone
+
+    async def _close_slow(self, ws: Any) -> None:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(ws.close(code=CLOSE_TRY_AGAIN_LATER), self.send_timeout)
 
     @property
     def sockets(self) -> int:
@@ -110,36 +134,71 @@ async def _until_disconnect(ws: Any) -> None:
 
 # ─── Supervisor ──────────────────────────────────────────────────
 
+# What a pump runs against: the session on disk and the proxy the registry assigns.
+# Either changing restarts the pump.
+Key = tuple[float, str | None]
+
 
 @dataclass
 class _Pump:
     task: asyncio.Task
-    mtime: float
+    key: Key
+
+
+def _expired(exc: SessionExpired) -> bool:
+    """A real session expiry: 401, or a 403 with OF's JSON body. An HTML or other
+    403 is Cloudflare or a flagged proxy IP, which a restart (or a new proxy) may fix."""
+    resp = getattr(exc.__cause__, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status == 401:
+        return True
+    if status == 403:
+        ctype = (getattr(resp, "headers", None) or {}).get("content-type") or ""
+        return "json" in ctype.lower()
+    return status is None  # no response to inspect: trust of_ws
 
 
 class Supervisor:
     def __init__(self, hub: Hub, *, require_proxy: bool = True,
-                 source: FrameSource = of_frames) -> None:
+                 source: FrameSource = of_frames,
+                 client_factory: ClientFactory | None = None) -> None:
         self.hub = hub
         self.require_proxy = require_proxy
         self.source = source
+        # Looked up per call, so the pool stays the one place clients are built.
+        self.client_factory = client_factory or (lambda aid: client_pool.get(aid))
         self._pumps: dict[str, _Pump] = {}
         self._live: set[str] = set()          # pumps that have seen a frame
         self._expired: dict[str, float] = {}  # account -> latest.json mtime that expired
         self._lock = asyncio.Lock()
 
-    # Status is derived from disk + pump state, so `/of-accounts` is right even
-    # between reconciles.
-    def status(self, account_id: str) -> str:
+    def key(self, account_id: str) -> Key | None:
         mtime = _session_mtime(account_id)
         if mtime is None:
+            return None
+        p = proxies.get_for_account(account_id)
+        return (mtime, proxies.proxy_url(p) if p else None)
+
+    def blocker(self, account_id: str, key: Key | None = None) -> str | None:
+        """Why this account cannot run, or None: the one session/proxy gate for
+        `/of/*`, `/of-accounts`, bootstrap and the pumps."""
+        key = key or self.key(account_id)
+        if key is None:
             return "no_session"
-        if self.require_proxy and proxies.get_for_account(account_id) is None:
+        if self.require_proxy and key[1] is None:
             return "no_proxy"
-        if self._expired.get(account_id) == mtime:
+        if self._expired.get(account_id) == key[0]:
             return "session_expired"
+        return None
+
+    def status(self, account_id: str) -> str:
+        """`active` means a frame has arrived since the pump started, not live connectivity."""
+        key = self.key(account_id)
+        blocked = self.blocker(account_id, key)
+        if blocked:
+            return blocked
         pump = self._pumps.get(account_id)
-        if pump is not None and pump.mtime == mtime and account_id in self._live:
+        if pump is not None and pump.key == key and account_id in self._live:
             return "active"
         return "connecting"
 
@@ -161,25 +220,28 @@ class Supervisor:
                     await self._reconcile_one(aid)
 
     async def _reconcile_one(self, aid: str) -> None:
-        mtime = _session_mtime(aid)
-        runnable = mtime is not None and not (
-            self.require_proxy and proxies.get_for_account(aid) is None)
-        if not runnable or self._expired.get(aid) == mtime:
+        key = self.key(aid)
+        if key is None or self.blocker(aid, key):
             await self._stop(aid)
             return
         pump = self._pumps.get(aid)
-        if pump is not None and pump.mtime == mtime and not pump.task.done():
+        if pump is not None and pump.key == key and not pump.task.done():
             return
-        # New session (or a pump that died): rebuild the client from disk.
+        # New session or proxy (or a pump that died): rebuild the client from disk.
         await self._stop(aid)
         self._expired.pop(aid, None)
         client_pool.evict(aid)
-        self._pumps[aid] = _Pump(asyncio.create_task(self._pump(aid, mtime)), mtime)
+        self._pumps[aid] = _Pump(asyncio.create_task(self._pump(aid, key)), key)
 
-    async def _pump(self, aid: str, mtime: float) -> None:
+    async def _pump(self, aid: str, key: Key) -> None:
         account_id = int(aid)
         try:
-            async for frame in self.source(aid):
+            client = await asyncio.to_thread(self.client_factory, aid)
+            if self.require_proxy and not getattr(client, "proxy_url", None):
+                # Fail closed; the next reconcile retries.
+                log.warning("client for account=%s has no proxy: not connecting", aid)
+                return
+            async for frame in self.source(client):
                 self._live.add(aid)
                 try:
                     out = events.classify(account_id, frame)
@@ -189,14 +251,16 @@ class Supervisor:
                 for ev in out:
                     self.hub.publish(ev)
             log.warning("frame source ended account=%s", aid)
-        except SessionExpired:
+        except SessionExpired as e:
+            if not _expired(e):
+                log.warning("account=%s: OF refused the session (%s) without OF's JSON body; "
+                            "likely Cloudflare or the proxy IP, retrying on the next reconcile", aid, e)
+                return
             log.warning("session expired account=%s", aid)
-            self._expired[aid] = mtime
+            self._expired[aid] = key[0]
             self.hub.publish(events.event(
-                "account.session_expired", account_id, int(mtime),
+                "account.session_expired", account_id, int(key[0]),
                 events.iso(datetime.now(UTC)), {}))
-        except asyncio.CancelledError:
-            raise
         except Exception:  # restarted by the next reconcile
             log.exception("pump failed account=%s", aid)
         finally:

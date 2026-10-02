@@ -1,10 +1,13 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from conftest import frame, make_account, new_session
 
 import client_pool
+import proxies
 import pump
+from of_client import OFAPIError
 from of_ws import SessionExpired
 from pump import Supervisor
 
@@ -17,6 +20,11 @@ class FakeHub:
         self.frames.append(f)
 
 
+class FakeClient:
+    def __init__(self, aid, proxy_url="http://203.0.113.10:8080"):
+        self.aid, self.proxy_url = aid, proxy_url
+
+
 class FakeSource:
     """One feed per pump start: the test pushes OF frames, or an exception to raise."""
 
@@ -25,9 +33,9 @@ class FakeSource:
         self.feeds = []
         self.closed = 0
 
-    async def __call__(self, aid):
+    async def __call__(self, client):
         feed = asyncio.Queue()
-        self.starts.append(aid)
+        self.starts.append(client.aid)
         self.feeds.append(feed)
         try:
             while True:
@@ -37,6 +45,21 @@ class FakeSource:
                 yield item
         finally:
             self.closed += 1
+
+
+def supervisor(hub=None, **kw):
+    src = FakeSource()
+    kw.setdefault("client_factory", FakeClient)
+    return Supervisor(hub or FakeHub(), source=src, **kw), src
+
+
+def expired_by(status, content_type="application/json"):
+    """SessionExpired as of_ws raises it: from the OFAPIError of /users/me."""
+    resp = SimpleNamespace(status_code=status, headers={"content-type": content_type})
+    try:
+        raise SessionExpired(f"/users/me answered {status}") from OFAPIError(str(status), response=resp)
+    except SessionExpired as e:
+        return e
 
 
 @pytest.fixture
@@ -53,8 +76,8 @@ async def settle():
 
 def test_pump_classifies_frames_into_the_hub(evicted):
     async def main():
-        hub, src = FakeHub(), FakeSource()
-        sup = Supervisor(hub, source=src)
+        hub = FakeHub()
+        sup, src = supervisor(hub)
         make_account("100001")
         await sup.reconcile()
         await settle()
@@ -77,8 +100,7 @@ def test_pump_classifies_frames_into_the_hub(evicted):
 
 def test_restart_on_session_change(evicted):
     async def main():
-        src = FakeSource()
-        sup = Supervisor(FakeHub(), source=src)
+        sup, src = supervisor()
         make_account("100001")
         await sup.reconcile()
         await settle()
@@ -93,16 +115,32 @@ def test_restart_on_session_change(evicted):
     asyncio.run(main())
 
 
-def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
+def test_restart_on_proxy_change(evicted):
     async def main():
-        hub, src = FakeHub(), FakeSource()
-        sup = Supervisor(hub, source=src)
+        sup, src = supervisor()
         make_account("100001")
         await sup.reconcile()
         await settle()
-        src.feeds[0].put_nowait(SessionExpired("401"))
+        proxies.upsert({"label": "acct-100001", "scheme": "http", "host": "203.0.113.11", "port": 8080})
+        await sup.reconcile()
         await settle()
-        assert sup.status("100001") == "session_expired"
+        assert src.starts == ["100001", "100001"] and src.closed == 1
+        assert evicted == ["100001", "100001"]
+        await sup.stop()
+
+    asyncio.run(main())
+
+
+def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        src.feeds[0].put_nowait(expired_by(401))
+        await settle()
+        assert sup.status("100001") == sup.blocker("100001") == "session_expired"
         [ev] = hub.frames
         assert ev["type"] == "account.session_expired" and ev["account_id"] == 100001
         assert ev["payload"] == {} and ev["id"].startswith("account.session_expired:100001:")
@@ -120,10 +158,44 @@ def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
     asyncio.run(main())
 
 
+def test_json_403_expires_the_session(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        src.feeds[0].put_nowait(expired_by(403, "application/json; charset=utf-8"))
+        await settle()
+        assert sup.status("100001") == "session_expired"
+        assert [f["type"] for f in hub.frames] == ["account.session_expired"]
+        await sup.stop()
+
+    asyncio.run(main())
+
+
+def test_html_403_is_not_an_expiry(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        src.feeds[0].put_nowait(expired_by(403, "text/html"))  # Cloudflare / flagged proxy IP
+        await settle()
+        assert hub.frames == []
+        assert sup.status("100001") == "connecting"
+        await sup.reconcile()  # the next reconcile restarts it
+        await settle()
+        assert src.starts == ["100001", "100001"]
+        await sup.stop()
+
+    asyncio.run(main())
+
+
 def test_a_crashed_pump_is_restarted(evicted):
     async def main():
-        src = FakeSource()
-        sup = Supervisor(FakeHub(), source=src)
+        sup, src = supervisor()
         make_account("100001")
         await sup.reconcile()
         await settle()
@@ -139,8 +211,7 @@ def test_a_crashed_pump_is_restarted(evicted):
 
 def test_no_pump_without_session_or_proxy(evicted):
     async def main():
-        src = FakeSource()
-        sup = Supervisor(FakeHub(), source=src)
+        sup, src = supervisor()
         make_account("100001", session=False)
         make_account("100002", proxy=False)
         await sup.reconcile()
@@ -156,10 +227,28 @@ def test_no_pump_without_session_or_proxy(evicted):
     asyncio.run(main())
 
 
+def test_a_client_built_without_a_proxy_never_connects(evicted):
+    async def main():
+        sup, src = supervisor(client_factory=lambda aid: FakeClient(aid, proxy_url=None))
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        assert src.starts == []
+        await sup.reconcile()  # fails closed again; each reconcile retries
+        await settle()
+        assert src.starts == []
+        sup.client_factory = FakeClient
+        await sup.reconcile()
+        await settle()
+        assert src.starts == ["100001"]
+        await sup.stop()
+
+    asyncio.run(main())
+
+
 def test_removed_account_stops_its_pump(evicted, monkeypatch):
     async def main():
-        src = FakeSource()
-        sup = Supervisor(FakeHub(), source=src)
+        sup, src = supervisor()
         make_account("100001")
         await sup.reconcile()
         await settle()

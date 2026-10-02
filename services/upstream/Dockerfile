@@ -26,4 +26,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\") or 8000}/healthz', timeout=4)"
 
-CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers 1 --ws websockets-sansio"]
+# umask 077: session and proxy files (cookies, proxy passwords) are written 0600.
+CMD ["sh", "-c", "umask 077; exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers 1 --ws websockets-sansio"]
