@@ -20,9 +20,9 @@ const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
 const UPSTREAM_PLAIN_HOSTS = [...LOCAL_HOSTS, 'host.docker.internal', 'upstream'];
 
 /** True for an unencrypted (`http:` or `ws:`) URL whose host is not one of `allowedHosts`. */
-function isPlainHttp(value: string, allowedHosts: string[], protocol: 'http:' | 'ws:' = 'http:') {
+function isUnencrypted(value: string, allowedHosts: string[]) {
   const url = URL.parse(value);
-  return url?.protocol === protocol && !allowedHosts.includes(url.hostname);
+  return (url?.protocol === 'http:' || url?.protocol === 'ws:') && !allowedHosts.includes(url.hostname);
 }
 
 export const envSchema = z.object({
@@ -63,7 +63,7 @@ export const envSchema = z.object({
 }).superRefine((e, ctx) => {
   if (e.NODE_ENV !== 'production') return;
   for (const key of ['APP_URL', 'BETTER_AUTH_URL'] as const) {
-    if (isPlainHttp(e[key], LOCAL_HOSTS)) {
+    if (isUnencrypted(e[key], LOCAL_HOSTS)) {
       ctx.addIssue({
         code: 'custom',
         path: [key],
@@ -80,10 +80,10 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-if (isPlainHttp(env.UPSTREAM_URL, UPSTREAM_PLAIN_HOSTS)) {
+if (isUnencrypted(env.UPSTREAM_URL, UPSTREAM_PLAIN_HOSTS)) {
   console.warn('UPSTREAM_URL is plain http:// to a remote host: UPSTREAM_TOKEN and request bodies travel unencrypted.');
 }
-if (env.UPSTREAM_WS_URL && isPlainHttp(env.UPSTREAM_WS_URL, UPSTREAM_PLAIN_HOSTS, 'ws:')) {
+if (env.UPSTREAM_WS_URL && isUnencrypted(env.UPSTREAM_WS_URL, UPSTREAM_PLAIN_HOSTS)) {
   console.warn('UPSTREAM_WS_URL is plain ws:// to a remote host: UPSTREAM_TOKEN and events travel unencrypted.');
 }
 /** Every variable the API reads (`.env.example` must list them all). */
