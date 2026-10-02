@@ -148,7 +148,7 @@ def test_send_maps_the_body_to_of(client, of_fake):
 
 
 def test_v4_paths_are_gone(client, of_fake):
-    for path in ("/of/users/me", "/of/vault/media", "/of/vault/media/1006"):
+    for path in ("/of/vault/media", "/of/vault/media/1006"):  # users/me is served by P3 users/{username}
         assert client.get(path, headers=H).status_code == 404, path
     assert of_fake.calls == []
 
