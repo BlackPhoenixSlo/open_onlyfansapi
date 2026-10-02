@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from conftest import frame, key_paths, payload_fixture
 
 from events import classify
@@ -48,20 +49,42 @@ def test_post_expire_with_a_numeric_id_is_not_a_counter():
 
 # ─── payload contracts (fixtures/payloads) ─────────────────────────
 
-def test_messages_received_has_the_fixture_key_paths():
-    fx = payload_fixture("messages.received")
-    msg = {k: v for k, v in fx["payload"].items() if k != "fanData"}  # OF's frame; fanData is ours
-    [ev] = classify(1001, {"api2_chat_message": msg}, now=NOW)
-    assert (ev["type"], ev["id"]) == (fx["event"], "message.received:1001:1002")
-    assert key_paths(fx["payload"]) <= key_paths(ev["payload"])
+def _parent(path):
+    return path[:-2] if path.endswith("[]") else path.rsplit(".", 1)[0]
 
 
-def test_messages_sent_has_the_fixture_key_paths():
-    fx = payload_fixture("messages.sent")
-    msg = {**fx["payload"], "fromUser": {"id": 1001, "_view": "s"}}  # OF names the sender; the reference omits it
+def _gaps(fixture_payload, payload):
+    """Key paths of the fixture that `payload` lacks, each reported at its topmost missing node."""
+    missing = key_paths(fixture_payload) - key_paths(payload)
+    return {p for p in missing if _parent(p) not in missing}
+
+
+# What our OF frames (`fixtures/of_frames/`, reconstructions, not captures) lack against the reference
+# product's example: the payload is OF's message as it arrives, so these keys reach a client only when
+# OF's frame carries them. A real capture (plan-v4 §9 Q1) replaces the frames and shrinks these sets.
+# Our frame's fromUser is {id, _view}: every other key of the reference's 42-key fromUser is a gap.
+_FROM_USER = [k for k in payload_fixture("messages.received")["payload"]["fromUser"] if k != "id"]
+KNOWN_GAPS = {
+    "messages.received": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.replyToMessage",
+                          *(f"$.fromUser.{k}" for k in _FROM_USER)},
+    "messages.sent": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.releaseForms", "$.toUser", "$.media[]"},
+}
+
+
+@pytest.mark.parametrize(("event", "of_frame", "frame_id"), [
+    ("messages.received", "api2_chat_message.received", "message.received:100001:5551234"),
+    ("messages.sent", "api2_chat_message.sent", "message.sent:100001:5551235"),
+])
+def test_message_payloads_against_the_fixture(event, of_frame, frame_id):
+    [ev] = classify(ACCOUNT, frame(of_frame), now=NOW)
+    assert (ev["type"], ev["id"]) == (event, frame_id)
+    assert _gaps(payload_fixture(event)["payload"], ev["payload"]) == KNOWN_GAPS[event]
+
+
+def test_frame_id_keeps_the_v4_name():
+    msg = {**frame("api2_chat_message.received")["api2_chat_message"], "id": 1002}
     [ev] = classify(1001, {"api2_chat_message": msg}, now=NOW)
-    assert (ev["type"], ev["id"]) == (fx["event"], "message.sent:1001:1007")
-    assert key_paths(fx["payload"]) <= key_paths(ev["payload"])
+    assert (ev["type"], ev["id"]) == ("messages.received", "message.received:1001:1002")
 
 
 def test_posts_expired_matches_the_fixture():

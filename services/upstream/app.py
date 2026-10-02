@@ -219,7 +219,6 @@ def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
     only then commit the proxy binding; a failed validation restores the old session.
     Returns the response body and the `accounts.connected` / `accounts.reconnected` frame:
     `reconnected` when the account already had a session."""
-    started_at = events.iso(datetime.now(UTC))
     try:
         parsed = session_bootstrap.parse_curl(body.curl)
     except ValueError as e:
@@ -265,10 +264,9 @@ def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
     meta.update(username=me.get("username"), name=me.get("name"), avatar=me.get("avatar"))
     accounts.save_meta(uid, meta)
     key = supervisor.key(uid)
-    frame = events.event(
-        "accounts.reconnected" if had_session else "accounts.connected", int(uid),
-        int(key[0]) if key else None, events.iso(datetime.now(UTC)),
-        events.account_state("authenticated", started_at))
+    assert key is not None, "from_curl wrote no session"
+    frame = events.account_event("accounts.reconnected" if had_session else "accounts.connected", int(uid),
+                                 key[0], "authenticated", events.iso(datetime.now(UTC)))
     return {"accountId": int(uid), "username": me.get("username")}, frame
 
 

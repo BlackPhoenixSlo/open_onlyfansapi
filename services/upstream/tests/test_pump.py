@@ -143,7 +143,9 @@ def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
         assert sup.status("100001") == sup.blocker("100001") == "session_expired"
         [ev] = hub.frames
         assert ev["type"] == "accounts.session_expired" and ev["account_id"] == 100001
-        assert ev["id"].startswith("account.session_expired:100001:")  # the v4 name: same dedup key
+        mtime = sup.key("100001")[0]
+        assert ev["id"] == f"account.session_expired:100001:{int(mtime)}"  # v4's id: same dedup key
+        assert ev["payload"]["latestAuthAttempt"]["completed_at"] == ev["ts"]
         assert ev["amount_cents"] is None and ev["payload"]["state"] == "session_expired"
         assert key_paths(ev["payload"]) == key_paths(payload_fixture("accounts.session_expired")["payload"])
         for _ in range(2):  # later reconciles neither restart nor re-announce
@@ -155,6 +157,25 @@ def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
         await settle()
         assert src.starts == ["100001", "100001"]
         assert sup.status("100001") == "connecting"
+        await sup.stop()
+
+    asyncio.run(main())
+
+
+def test_a_stale_pump_does_not_announce_expiry(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        new_session("100001", bump=5)  # a new session lands before the old pump's 401 arrives
+        src.feeds[0].put_nowait(expired_by(401))
+        await settle()
+        assert hub.frames == []
+        await sup.reconcile()
+        await settle()
+        assert sup.status("100001") == "connecting" and src.starts == ["100001", "100001"]
         await sup.stop()
 
     asyncio.run(main())

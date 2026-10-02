@@ -258,10 +258,10 @@ class Supervisor:
                 return
             log.warning("session expired account=%s", aid)
             self._expired[aid] = key[0]
-            # The latest auth attempt is the bootstrap that wrote this session (latest.json's mtime).
-            self.hub.publish(events.event(
-                "account.session_expired", account_id, int(key[0]), events.iso(datetime.now(UTC)),
-                events.account_state("session_expired", events.iso(datetime.fromtimestamp(key[0], UTC)))))
+            if self.key(aid) == key:  # a pump outlived by a new session or proxy announces nothing
+                self.hub.publish(events.account_event(
+                    "account.session_expired", account_id, key[0], "session_expired",
+                    events.iso(datetime.now(UTC))))
         except Exception:  # restarted by the next reconcile
             log.exception("pump failed account=%s", aid)
         finally:

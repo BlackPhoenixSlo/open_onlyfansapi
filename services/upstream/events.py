@@ -81,22 +81,26 @@ def event(type_: str, account_id: int, object_id: Any, ts: str, payload: Any,
     }
 
 
-def account_state(state: str, started_at: str) -> dict:
-    """The `accounts.*` payload: the account's state and its latest authentication, which for this
-    gateway is the last `POST /session/bootstrap` (it never asks for an OTP)."""
-    return {
+def account_event(type_: str, account_id: int, mtime: float, state: str, ts: str) -> dict:
+    """An `accounts.*` frame for the session whose `latest.json` has `mtime`. The latest authentication
+    is the `POST /session/bootstrap` that wrote that session (it never asks for an OTP).
+
+    The id's object part is the mtime in ms; `account.session_expired` keeps v4's whole seconds, so its
+    ledger dedup key is unchanged (plan-v5 §2.4)."""
+    object_id = int(mtime) if type_ == "account.session_expired" else int(mtime * 1000)
+    return event(type_, account_id, object_id, ts, {
         "state": state,
         "progress": "completed",
         "latestAuthAttempt": {
-            "started_at": started_at,
-            "completed_at": None,
+            "started_at": iso(datetime.fromtimestamp(mtime, UTC)),
+            "completed_at": ts,
             "success": True,
             "error_message": None,
             "needs_otp": False,
             "needs_face_otp": False,
             "otp_phone_ending": None,
         },
-    }
+    })
 
 
 def _fan_data(ts: str) -> dict:

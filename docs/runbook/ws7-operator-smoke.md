@@ -45,7 +45,8 @@ the browser. You never edit code, never run commands and never type credentials.
 3. **Create a key.** On the Keys page, create a key named `smoke-read` with read scope and no account restriction.
    The secret is shown once and starts with `gk_`. In your report, give only the visible prefix, never the full
    secret. After you close the dialog, the list shows `smoke-read` with read scope.
-4. **Playground.** Pick the operation for `/v1/{account}/me` (search `/me`), choose account `1` and
+4. **Playground.** Pick the operation `GET /v1/{account}/me` (search `/me`, then pick the row whose path is exactly that,
+   not `/media/vault` or `/chats/{chat_id}/messages`), choose account `1` and
    send. Expect status `200`, a response body containing `"echo"` and `/of/me`, and a curl snippet.
 5. **Logs.** The newest row is that call: `GET`, path ending `/me`, status `200`. Open its detail. It shows a
    request id. The page text contains no `authorization` or `cookie` value and no `smoke-only-upstream-token`.

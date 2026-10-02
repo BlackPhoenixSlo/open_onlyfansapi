@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 import accounts
 import app as upstream
 import client_pool
+import events
 import proxies
 import session_bootstrap
 from of_client import API_BASE as OF
@@ -162,36 +164,69 @@ def _page(n, has_more):
 
 
 @pytest.mark.parametrize(("items", "has_more", "header"), [
-    (2, True, "/chats?limit=2&order=old&offset=12"),  # full page and hasMore
-    (2, False, None),                                 # OF says no more
-    (1, True, None),                                  # short page: OF's hasMore is unreliable
-    (0, True, None),                                  # empty page, even with hasMore
+    (2, True, "/chats?order=old&skip_users=all&limit=2&offset=12"),  # full page and hasMore
+    (2, False, None),                                                 # OF says no more
+    (1, True, None),                                                  # short page: OF's hasMore is unreliable
+    (0, True, None),                                                  # empty page, even with hasMore
 ])
 def test_chats_next_page(client, of_fake, items, has_more, header):
     of_fake.respond(_page(items, has_more))
-    r = client.get("/of/chats?limit=2&order=old&offset=10", headers=H)
+    r = client.get("/of/chats?limit=2&order=old&offset=10&unknown=1", headers=H)
     assert r.status_code == 200 and r.json() == _page(items, has_more)
-    assert r.headers.get("x-next-page") == header
+    assert r.headers.get("x-next-page") == header  # built from declared parameters only
 
 
 def test_chats_next_page_carries_the_default_limit(client, of_fake):
     of_fake.respond(_page(10, True))
-    assert client.get("/of/chats", headers=H).headers["x-next-page"] == "/chats?limit=10&offset=10"
+    r = client.get("/of/chats?query=fan_1", headers=H)
+    assert r.headers["x-next-page"] == "/chats?order=recent&skip_users=all&query=fan_1&limit=10&offset=10"
 
 
-def test_messages_next_page_is_older_than_the_oldest(client, of_fake):
-    of_fake.respond(_page(2, True))
+@pytest.mark.parametrize(("items", "has_more", "header"), [
+    (2, True, "/chats/1002/messages?order=desc&limit=2&first_id=1009"),
+    (1, True, "/chats/1002/messages?order=desc&limit=2&first_id=1010"),  # OF ignores limit: id cursor
+    (0, True, None),
+    (2, False, None),
+])
+def test_messages_desc_next_page_is_older_than_the_oldest(client, of_fake, items, has_more, header):
+    of_fake.respond(_page(items, has_more))
     r = client.get("/of/chats/1002/messages?limit=2", headers=H)
-    assert r.headers["x-next-page"] == "/chats/1002/messages?limit=2&first_id=1009"
+    assert r.headers.get("x-next-page") == header
+
+
+def test_messages_asc_pages_by_offset(client, of_fake):
     of_fake.respond(_page(2, True))
+    r = client.get("/of/chats/1002/messages?limit=2&order=asc&offset=4", headers=H)
+    assert of_fake.calls == [("GET", f"{OF}/chats/1002/messages?limit=2&order=asc&skip_users=all&offset=4", None)]
+    assert r.headers["x-next-page"] == "/chats/1002/messages?order=asc&limit=2&offset=6"
+    of_fake.respond(_page(1, True))
     assert "x-next-page" not in client.get("/of/chats/1002/messages?limit=2&order=asc", headers=H).headers
 
 
-@pytest.mark.parametrize("path", ["/of/posts?limit=2", "/of/media/vault?limit=2"])
-def test_offset_lists_set_a_next_page(client, of_fake, path):
+@pytest.mark.parametrize("body", [[{"id": 1001}], {"list": None, "hasMore": True}, {"list": [1001], "hasMore": True},
+                                  {"list": [{"id": "x"}], "hasMore": True}, "text"])
+def test_unexpected_page_shapes_set_no_next_page(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/chats/1002/messages?limit=1", headers=H)
+    assert r.status_code == 200 and "x-next-page" not in r.headers
+
+
+@pytest.mark.parametrize(("path", "header"), [
+    ("/of/posts?limit=2", "/posts?limit=2&offset=2"),
+    ("/of/media/vault?limit=2&type=video", "/media/vault?field=recent&sort=desc&type=video&limit=2&offset=2"),
+])
+def test_offset_lists_set_a_next_page(client, of_fake, path, header):
     of_fake.respond(_page(2, True))
-    tail = path.removeprefix("/of").split("?")[0]
-    assert client.get(path, headers=H).headers["x-next-page"] == f"{tail}?limit=2&offset=2"
+    assert client.get(path, headers=H).headers["x-next-page"] == header
+
+
+@pytest.mark.parametrize("path", [
+    "/of/chats?limit=0", "/of/chats?limit=51", "/of/chats?offset=-1", "/of/chats/1002/messages?limit=101",
+    "/of/chats/1002/messages?first_id=-1", "/of/posts?limit=0", "/of/media/vault?limit=101", "/of/media/vault?type=",
+])
+def test_out_of_range_parameters_are_422(client, of_fake, path):
+    assert client.get(path, headers=H).status_code == 422
+    assert of_fake.calls == []
 
 
 @pytest.mark.parametrize(("error", "status", "body"), [
@@ -314,16 +349,20 @@ def test_bootstrap_with_proxy(routed, bootstrap_fakes):
 
 
 def test_bootstrap_emits_connected_then_reconnected(routed, bootstrap_fakes, monkeypatch):
-    frames = []
+    frames, mtimes = [], []
     monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=frames.append))
     for _ in range(2):
         r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "proxy_url": "http://203.0.113.10:8080"})
         assert r.status_code == 200, r.text
+        mtimes.append(upstream.supervisor.key("100001")[0])
     assert [f["type"] for f in frames] == ["accounts.connected", "accounts.reconnected"]
-    for f in frames:
+    for f, mtime in zip(frames, mtimes, strict=True):
         assert f["account_id"] == 100001 and f["amount_cents"] is None
-        assert f["id"].startswith(f"{f['type']}:100001:")  # new in v5: the public name is the id's name
-        assert f["payload"]["state"] == "authenticated" and f["payload"]["latestAuthAttempt"]["success"] is True
+        assert f["id"] == f"{f['type']}:100001:{int(mtime * 1000)}"  # new in v5: public name, ms mtime
+        attempt = f["payload"]["latestAuthAttempt"]
+        assert f["payload"]["state"] == "authenticated" and attempt["success"] is True
+        assert attempt["started_at"] == events.iso(datetime.fromtimestamp(mtime, UTC))
+        assert attempt["completed_at"] == f["ts"]
         assert key_paths(f["payload"]) == key_paths(payload_fixture(f["type"])["payload"])
 
 
