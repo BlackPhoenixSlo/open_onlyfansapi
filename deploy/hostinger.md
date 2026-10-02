@@ -114,8 +114,10 @@ every start. Then check:
 ```sh
 docker compose ps                        # gateway, upstream and postgres healthy, caddy running
 curl -fsS https://gw.example.com/healthz
-docker compose port upstream 8000        # prints no host address: the upstream is not published
+docker compose port upstream 8000        # "invalid IP:0" (or empty): the upstream is not published
 ```
+
+In `docker compose ps` only caddy shows `0.0.0.0:` mappings; the upstream lists a bare `8000/tcp`.
 
 Caddy requests the certificate as soon as it starts; allow a few seconds. If `curl` fails, see §12.
 

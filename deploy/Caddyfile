@@ -1,6 +1,7 @@
 # PUBLIC_URL drives the site address: an https:// value turns on automatic ACME TLS,
 # http://localhost serves plain HTTP on :80 for local smoke tests.
 {$PUBLIC_URL} {
+	# If you enable `log`, redact Sec-WebSocket-Protocol: it carries browser API keys (bearer.gk_…), and Caddy's default redaction does not cover it.
 	encode zstd gzip
 	reverse_proxy gateway:4000
 }
