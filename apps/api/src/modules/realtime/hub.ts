@@ -66,6 +66,8 @@ export async function sweep(): Promise<void> {
 export function startHub(log: FastifyBaseLogger): Hub {
   const clients = new Set<Client>();
   const pending = new Set<Promise<void>>();
+  /** Sockets the hub sent a close to, until their `close` event; out of `clients` already, so `stop()` needs them. */
+  const closing = new Set<WebSocket>();
   let sweeping: Promise<void> | null = null;
 
   function track(p: Promise<unknown>) {
@@ -93,6 +95,7 @@ export function startHub(log: FastifyBaseLogger): Hub {
   /** Server-side close; `reason` is also the log row's `error_code`. */
   function close(c: Client, code: number, reason: string) {
     finish(c, reason);
+    closing.add(c.socket);
     c.socket.close(code, reason);
   }
 
@@ -157,7 +160,10 @@ export function startHub(log: FastifyBaseLogger): Hub {
         c.alive = true;
       });
       // A client- or network-side close; after a server-side close this is a no-op.
-      socket.on('close', (code) => finish(c, code === 1006 ? 'connection_lost' : null));
+      socket.on('close', (code) => {
+        closing.delete(socket);
+        finish(c, code === 1006 ? 'connection_lost' : null);
+      });
       const ready = JSON.stringify({ type: 'ready', accountIds: c.accountId !== null ? [c.accountId] : c.allowed });
       send(c, ready, Buffer.byteLength(ready));
     },
@@ -179,10 +185,11 @@ export function startHub(log: FastifyBaseLogger): Hub {
       await sweeping?.catch(() => {});
       for (const c of [...clients]) {
         finish(c, null);
+        closing.add(c.socket);
         c.socket.close(1001, 'shutdown');
-        // A dead peer never answers the close; do not let it hold the shutdown (Docker's grace is 10 s).
-        setTimeout(() => c.socket.terminate(), 1000).unref();
       }
+      // A dead peer never answers the close; do not let it hold the shutdown (Docker's grace is 10 s).
+      for (const socket of closing) setTimeout(() => socket.terminate(), 1000).unref();
       await Promise.allSettled(pending);
     },
   };

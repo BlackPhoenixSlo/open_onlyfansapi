@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
@@ -270,9 +270,36 @@ describe('GET /v1/ws', () => {
     }
   });
 
-  it('closes open sockets with 1001 when the app closes', async () => {
+  it('closes open sockets with 1001 when the app closes, terminating a peer that never answers a close', async () => {
     const s = await connect(keyB.secret);
+    // A raw upgrade that reads but never answers the close frame (ws would wait 30 s for it).
+    const opened = new Promise<{ bufferedAmount: number }>((resolve) => app.websocketServer.once('connection', resolve));
+    const raw = await new Promise<Socket>((resolve, reject) => {
+      const req = http.request({
+        agent: false,
+        port,
+        host: '127.0.0.1',
+        path: '/v1/ws',
+        headers: { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', ...protocols(keyB.secret) },
+      });
+      req.on('upgrade', (_res, socket: Socket, head: Buffer) => {
+        if (head.length > 0) resolve(socket);
+        else socket.once('data', () => resolve(socket));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    let received = '';
+    raw.on('data', (chunk: Buffer) => (received += chunk.toString('latin1')));
+    const rawClosed = new Promise((resolve) => raw.on('close', resolve));
+    Object.defineProperty(await opened, 'bufferedAmount', { get: () => 2 * 1024 * 1024 });
+    publish(event(1));
+    await until(() => received.includes('slow_consumer'));
+
+    const started = Date.now();
     await app.close();
+    expect(Date.now() - started).toBeLessThan(2000);
     expect((await s.closed).code).toBe(1001);
+    await rawClosed;
   });
 });
