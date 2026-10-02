@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from config import PROXIES_PATH, STATE_DIR, ensure_dir
@@ -60,11 +62,20 @@ def load() -> dict[str, Any]:
 
 
 def save(data: dict[str, Any]) -> None:
+    """Write atomically: a temp file in the same dir (mkstemp creates it
+    0600), then os.replace() over the target, so readers never see a torn
+    file. The temp file is removed if anything fails before the replace."""
     ensure_dir(STATE_DIR)
-    fd = os.open(PROXIES_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)  # also tightens a file that pre-existed with a looser mode
-    with os.fdopen(fd, "w") as f:
-        f.write(json.dumps(data, indent=2, sort_keys=False))
+    fd, tmp = tempfile.mkstemp(dir=STATE_DIR, prefix=".proxies.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, PROXIES_PATH)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def list_proxies() -> list[dict[str, Any]]:
