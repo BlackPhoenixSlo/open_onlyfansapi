@@ -114,6 +114,11 @@ registration order, so `/v1/webhooks` beats `/v1/:account/*` either way.)
 - **Breaker reset-on-2xx.** `consecutive_failures` resets on any single 2xx, so a *flapping* dead endpoint may never
   pause. Intended (only sustained failure pauses) — confirm.
 - **Redeliver mints a new `webhook-id`** (new `whd_…`); it is **not** idempotent replay. Documented, by design.
+- **`emit()` drops events for disabled endpoints** (nothing is queued while paused). Decide before P1b whether
+  paused endpoints should queue instead.
+- **No secret-rotation route.** Rotating a `whsec_` today means deleting and recreating the endpoint.
+- **Retention has no `created_at`-only index** on `webhook_delivery`; the batched delete scans. Add one if volume
+  makes it slow.
 
 **Acceptance.**
 ```
@@ -123,7 +128,7 @@ pnpm --filter @gateway/api test                                            # new
 tsx apps/api/src/db/webhook-receiver.ts &                                  # :4100, verifies signature
 curl -X POST .../v1/webhooks/$ID/test        # receiver logs "signature ok"
 FAIL=1 restart receiver                       # attempts++ on completion; first retry ~30s (not the lease)
-WEBHOOK_PAUSE_AFTER=3                          # endpoint pauses after 3 consecutive failures
+WEBHOOK_PAUSE_AFTER=3 WEBHOOK_MAX_ATTEMPTS=1   # pauses after 3 failed deliveries (the breaker counts exhausted deliveries)
 curl -X POST .../v1/webhooks/$ID/deliveries/$D/redeliver   # new row, replay_of set, new webhook-id
 ```
 Tests cover: signature round-trip (a Standard-Webhooks verifier accepts it), the backoff schedule (first retry 30 s),
