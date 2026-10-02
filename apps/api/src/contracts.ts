@@ -135,3 +135,79 @@ export const overview = z.object({
   activeKeys: z.number().int(),
 });
 export type Overview = z.infer<typeof overview>;
+
+// Webhooks
+/** The event catalogue. `upstream.*` subscribes to every opaque upstream event (`upstream.<name>`). */
+export const webhookEventType = z.enum(['message.received', 'account.session_expired', 'webhook.test', 'upstream.*']);
+export type WebhookEventType = z.infer<typeof webhookEventType>;
+export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
+  'message.received': 'A connected account received a message.',
+  'account.session_expired': "A connected account's session expired; reconnect it.",
+  'webhook.test': "Sent by the test route; delivered whatever the endpoint's events filter says.",
+  'upstream.*': 'Any other upstream event, passed through as `upstream.<name>`.',
+};
+export const webhookEventList = z.object({ items: z.array(z.object({ type: webhookEventType, description: z.string() })) });
+
+export const webhookEndpoint = z.object({
+  id: z.string(),
+  url: z.string(),
+  description: z.string().nullable(),
+  /** Empty = every event. */
+  events: z.array(z.string()),
+  /** `whsec_…`: verify deliveries with it (Standard Webhooks). */
+  secret: z.string(),
+  enabled: z.boolean(),
+  /** Why the endpoint is disabled: `failures` = paused by the breaker. */
+  pausedReason: z.enum(['failures', 'manual']).nullable(),
+  consecutiveFailures: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type WebhookEndpoint = z.infer<typeof webhookEndpoint>;
+export const webhookEndpointList = z.object({ items: z.array(webhookEndpoint) });
+
+const webhookUrl = z.url({ protocol: /^https?$/ }).max(2048);
+const webhookDescription = z.string().trim().max(500).nullable();
+const webhookEvents = z.array(webhookEventType).max(50);
+
+export const createWebhookBody = z.object({
+  url: webhookUrl,
+  description: webhookDescription.default(null),
+  events: webhookEvents.default([]),
+});
+export type CreateWebhookBody = z.input<typeof createWebhookBody>;
+
+// No defaults here: an omitted field is left unchanged. `enabled: true` also clears the failure breaker.
+export const updateWebhookBody = z.object({
+  url: webhookUrl.optional(),
+  description: webhookDescription.optional(),
+  events: webhookEvents.optional(),
+  enabled: z.boolean().optional(),
+});
+export type UpdateWebhookBody = z.input<typeof updateWebhookBody>;
+
+export const deliveryStatus = z.enum(['pending', 'succeeded', 'failed']);
+export type DeliveryStatus = z.infer<typeof deliveryStatus>;
+
+export const webhookDelivery = z.object({
+  /** Also the `webhook-id` header. */
+  id: z.string(),
+  endpointId: z.string(),
+  eventType: z.string(),
+  accountId: z.number().int().nullable(),
+  /** The envelope's `data`. */
+  payload: z.unknown(),
+  status: deliveryStatus,
+  /** Finished attempts. */
+  attempts: z.number().int(),
+  nextAttemptAt: z.string(),
+  lastStatusCode: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  lastAttemptAt: z.string().nullable(),
+  /** The delivery this one re-sent. */
+  replayOf: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type WebhookDelivery = z.infer<typeof webhookDelivery>;
+export const webhookDeliveryList = z.object({ items: z.array(webhookDelivery), nextCursor: z.string().nullable() });
+export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;

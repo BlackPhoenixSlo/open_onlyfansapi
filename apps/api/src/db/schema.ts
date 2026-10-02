@@ -1,5 +1,5 @@
-import { desc } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { desc, sql } from 'drizzle-orm';
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { organization, user } from './auth-schema.js';
 
 export * from './auth-schema.js';
@@ -63,5 +63,56 @@ export const requestLog = pgTable(
   (t) => [
     index('request_log_team_created_idx').on(t.teamId, desc(t.createdAt), desc(t.id)),
     index('request_log_team_key_created_idx').on(t.teamId, t.apiKeyId, desc(t.createdAt)),
+  ],
+);
+
+/** A URL that receives signed event deliveries (`whe_…`). `events` empty = every event. */
+export const webhookEndpoint = pgTable('webhook_endpoint', {
+  id: text('id').primaryKey(),
+  teamId: text('team_id')
+    .notNull()
+    .references(() => organization.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  description: text('description'),
+  events: text('events').array().notNull().default(sql`'{}'::text[]`),
+  /** `whsec_…`, stored in plaintext: signing needs it. */
+  secret: text('secret').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  pausedReason: text('paused_reason', { enum: ['failures', 'manual'] }),
+  consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** One event for one endpoint. `id` (`whd_…`) is also the `webhook-id` the receiver dedups on. */
+export const webhookDelivery = pgTable(
+  'webhook_delivery',
+  {
+    id: text('id').primaryKey(),
+    teamId: text('team_id').notNull(),
+    endpointId: text('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoint.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    accountId: integer('account_id'),
+    payload: jsonb('payload').$type<unknown>().notNull(),
+    status: text('status', { enum: ['pending', 'succeeded', 'failed'] }).notNull().default('pending'),
+    /** Completed attempts (incremented when a POST finishes, not when it is claimed). */
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    /** The delivery this one re-sends. */
+    replayOf: text('replay_of'),
+    /** Upstream event dedup (event source, after v1.0). */
+    dedupKey: text('dedup_key'),
+    // Millisecond precision so the (created_at, id) keyset cursor round-trips through a JS Date.
+    createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('webhook_delivery_due_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),
+    index('webhook_delivery_endpoint_created_idx').on(t.endpointId, desc(t.createdAt)),
+    uniqueIndex('webhook_delivery_endpoint_dedup_idx').on(t.endpointId, t.dedupKey).where(sql`${t.dedupKey} is not null`),
   ],
 );

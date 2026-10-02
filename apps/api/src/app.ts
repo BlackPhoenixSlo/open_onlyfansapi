@@ -14,6 +14,7 @@ import logsRoutes from './modules/logs/routes.js';
 import openapiRoutes from './modules/openapi/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
 import usageRoutes from './modules/usage/routes.js';
+import webhooksRoutes from './modules/webhooks/routes.js';
 import whoamiRoutes from './modules/whoami/routes.js';
 import { authenticate } from './plugins/actor.js';
 import sessionPlugin from './plugins/session.js';
@@ -80,6 +81,7 @@ export async function buildApp(opts: AppOptions = {}) {
       });
       await v1.register(whoamiRoutes);
       await v1.register(accountsRoutes);
+      await v1.register(webhooksRoutes);
       await v1.register(proxyRoutes);
     },
     { prefix: '/v1' },

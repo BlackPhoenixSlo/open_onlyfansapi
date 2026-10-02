@@ -24,6 +24,14 @@ const freePort = () =>
   });
 
 type Param = { name: string; in: string; required?: boolean; schema?: unknown };
+const WEBHOOK_PATHS = [
+  '/v1/webhooks',
+  '/v1/webhooks/events',
+  '/v1/webhooks/{id}',
+  '/v1/webhooks/{id}/deliveries',
+  '/v1/webhooks/{id}/deliveries/{deliveryId}/redeliver',
+  '/v1/webhooks/{id}/test',
+];
 
 describe('openapi', () => {
   it('merges the upstream /of operations under /v1/{account} with the gateway /v1 routes', async () => {
@@ -35,6 +43,7 @@ describe('openapi', () => {
     // `/of-accounts` (not under `/of/`), dashboard routes and the proxy wildcard are not published.
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/v1/accounts',
+      ...WEBHOOK_PATHS,
       '/v1/whoami',
       '/v1/{account}/chats/{chatId}/messages',
       '/v1/{account}/users/me',
@@ -132,7 +141,7 @@ describe('openapi', () => {
       const res = await down.inject({ method: 'GET', url: '/openapi.json' });
       expect(res.statusCode).toBe(200);
       expect(res.headers['x-upstream-spec']).toBe('unavailable');
-      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', '/v1/whoami']);
+      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', ...WEBHOOK_PATHS, '/v1/whoami']);
     } finally {
       await down.close();
     }
