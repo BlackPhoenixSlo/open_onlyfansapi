@@ -30,7 +30,7 @@ Set these values in `.env`:
 |---|---|
 | `BETTER_AUTH_SECRET` | A random secret of at least 16 characters. `openssl rand -base64 32` works. |
 | `UPSTREAM_URL` | The upstream service's origin. Defaults to `http://localhost:3001`. |
-| `UPSTREAM_TOKEN` | The bearer token the gateway sends on every upstream call (at least 16 characters). Use `dev-upstream-token` with the fake upstream. |
+| `UPSTREAM_TOKEN` | The bearer token the gateway sends on every upstream call (at least 16 characters; letters, digits and `-._~` only, e.g. `openssl rand -hex 32`, because it also travels as a WebSocket subprotocol). Use `dev-upstream-token` with the fake upstream. |
 
 `.env.example` already fills in the rest for local use. `APP_URL` is the dashboard origin
 (`http://localhost:5173`) and `BETTER_AUTH_URL` is where the API serves sign-in (`http://localhost:4000`).

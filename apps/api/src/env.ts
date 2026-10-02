@@ -37,7 +37,12 @@ export const envSchema = z.object({
   TRUST_PROXY: z.string().default('false').transform(parseTrustProxy),
   /** The upstream service's origin; any path in it is ignored. */
   UPSTREAM_URL: z.string().url(),
-  UPSTREAM_TOKEN: z.string().min(16),
+  // Also travels as the WebSocket subprotocol `bearer.<token>` (plan v4 §1.7), so RFC 7230 token chars only:
+  // a base64 token with `=` or `/` would make `new WebSocket()` throw at boot. Use `openssl rand -hex 32`.
+  UPSTREAM_TOKEN: z
+    .string()
+    .min(16)
+    .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, 'UPSTREAM_TOKEN: use letters, digits and -._~ only (e.g. openssl rand -hex 32)'),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   /** The upstream's event socket (`ws://…/ws`). Unset or empty = no event source, and `/v1/ws` answers 503. */
   UPSTREAM_WS_URL: z

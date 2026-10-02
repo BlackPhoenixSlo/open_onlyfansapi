@@ -60,6 +60,19 @@ describe('hygiene', () => {
     expect(ws().data?.EVENT_RETENTION_DAYS).toBe(365);
   });
 
+  it('UPSTREAM_TOKEN: subprotocol-safe characters only', () => {
+    const base = {
+      DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',
+      APP_URL: 'http://localhost:5173',
+      BETTER_AUTH_URL: 'http://localhost:4000',
+      BETTER_AUTH_SECRET: 'x'.repeat(16),
+      UPSTREAM_URL: 'http://upstream:8000',
+    };
+    const tok = (UPSTREAM_TOKEN: string) => envSchema.safeParse({ ...base, UPSTREAM_TOKEN }).success;
+    expect([tok('dev-upstream-token'), tok('a'.repeat(64)), tok('A1b2-C3d4_e5F6.g7~h8')]).toEqual([true, true, true]);
+    expect([tok('x'.repeat(16) + '='), tok('abc/def+ghi=jkl=mno'), tok('has space in it!!')]).toEqual([false, false, false]);
+  });
+
   it('check-secrets finds a staged token in a path with spaces', () => {
     const repo = mkdtempSync(join(tmpdir(), 'secrets-'));
     const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
