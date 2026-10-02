@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from conftest import frame, make_account, new_session
+from conftest import frame, key_paths, make_account, new_session, payload_fixture
 
 import client_pool
 import proxies
@@ -88,7 +88,7 @@ def test_pump_classifies_frames_into_the_hub(evicted):
         src.feeds[0].put_nowait(frame("api2_chat_message.received"))
         await settle()
         assert sup.status("100001") == "active"
-        assert [f["type"] for f in hub.frames] == ["message.received"]
+        assert [f["type"] for f in hub.frames] == ["messages.received"]
         assert hub.frames[0]["account_id"] == 100001
         await sup.reconcile()  # nothing changed: same pump keeps running
         assert src.starts == ["100001"]
@@ -142,8 +142,10 @@ def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
         await settle()
         assert sup.status("100001") == sup.blocker("100001") == "session_expired"
         [ev] = hub.frames
-        assert ev["type"] == "account.session_expired" and ev["account_id"] == 100001
-        assert ev["payload"] == {} and ev["id"].startswith("account.session_expired:100001:")
+        assert ev["type"] == "accounts.session_expired" and ev["account_id"] == 100001
+        assert ev["id"].startswith("account.session_expired:100001:")  # the v4 name: same dedup key
+        assert ev["amount_cents"] is None and ev["payload"]["state"] == "session_expired"
+        assert key_paths(ev["payload"]) == key_paths(payload_fixture("accounts.session_expired")["payload"])
         for _ in range(2):  # later reconciles neither restart nor re-announce
             await sup.reconcile()
             await settle()
@@ -168,7 +170,7 @@ def test_json_403_expires_the_session(evicted):
         src.feeds[0].put_nowait(expired_by(403, "application/json; charset=utf-8"))
         await settle()
         assert sup.status("100001") == "session_expired"
-        assert [f["type"] for f in hub.frames] == ["account.session_expired"]
+        assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
         await sup.stop()
 
     asyncio.run(main())

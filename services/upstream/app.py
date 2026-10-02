@@ -11,11 +11,12 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated, Any
+from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlsplit
 
 from curl_cffi.requests import exceptions as curl_errors
-from fastapi import APIRouter, FastAPI, Path, Request, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -23,9 +24,10 @@ from starlette.concurrency import run_in_threadpool
 import accounts
 import client_pool
 import config
+import events
 import proxies
 import session_bootstrap
-from deps import ApiError, Client, account_client  # noqa: F401  (tests override it)
+from deps import ApiError, account_client  # noqa: F401  (tests override it)
 from of_client import OFAPIError, OFClient
 from pump import Hub, Supervisor
 from routes import ROUTERS
@@ -121,70 +123,7 @@ async def healthz() -> dict:
     return {"ok": True}
 
 
-# ─── /of/* ────────────────────────────────────────────────────────
-
-of = APIRouter(prefix="/of", tags=["of-api"])
-
-
-@of.get("/users/me", operation_id="users.me")
-def users_me(client: Client) -> Any:
-    return client.me()
-
-
-@of.get("/chats", operation_id="chats.list")
-def chats_list(client: Client, limit: int = 10, offset: int = 0, order: str = "recent") -> Any:
-    return client.list_chats(limit=limit, offset=offset, order=order)
-
-
-@of.get("/chats/{chatId}/messages", operation_id="chats.messages.list")
-def chats_messages_list(
-    client: Client,
-    chat_id: Annotated[int, Path(alias="chatId")],
-    limit: int = 10,
-    order: str = "desc",
-    id: int = 0,  # OF's own name: messages older than this id; 0 = newest
-) -> Any:
-    return client.get_messages(chat_id, limit=limit, order=order, before_id=id or None)
-
-
-class SendMessage(BaseModel):
-    text: str
-    price: float = 0
-    mediaFiles: list[int] = []  # OF's wire names
-    previews: list[int] = []
-    lockedText: bool = False
-
-
-@of.post("/chats/{chatId}/messages", operation_id="chats.messages.send")
-def chats_messages_send(
-    client: Client, chat_id: Annotated[int, Path(alias="chatId")], body: SendMessage,
-) -> Any:
-    return client.send_message(
-        chat_id, body.text, price=body.price, media_files=body.mediaFiles,
-        previews=body.previews, locked_text=body.lockedText)
-
-
-@of.get("/posts", operation_id="posts.list")
-def posts_list(client: Client, limit: int = 10, offset: int = 0) -> Any:
-    return client.list_posts(limit=limit, offset=offset)
-
-
-@of.get("/posts/{postId}", operation_id="posts.get")
-def posts_get(client: Client, post_id: Annotated[int, Path(alias="postId")]) -> Any:
-    return client.get_post(post_id)
-
-
-@of.get("/vault/media", operation_id="vault.media.list")
-def vault_media_list(client: Client, limit: int = 24, offset: int = 0) -> Any:
-    return client.vault_media(limit=limit, offset=offset)
-
-
-@of.get("/vault/media/{mediaId}", operation_id="vault.media.get")
-def vault_media_get(client: Client, media_id: Annotated[int, Path(alias="mediaId")]) -> Any:
-    return client.vault_media_by_id(media_id)
-
-
-app.include_router(of)
+# ─── /of/* (one module per group in routes/) ─────────────────────
 
 for _router in ROUTERS:
     app.include_router(_router)
@@ -275,9 +214,12 @@ def _rollback_account(uid: str, snapshot: tuple[set[str], dict[str, tuple[bytes,
         os.utime(adir / name, ns=(atime_ns, mtime_ns))
 
 
-def _bootstrap(body: Bootstrap) -> dict:
+def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
     """Parse, check the proxy, capture, validate with me() through that proxy, and
-    only then commit the proxy binding; a failed validation restores the old session."""
+    only then commit the proxy binding; a failed validation restores the old session.
+    Returns the response body and the `accounts.connected` / `accounts.reconnected` frame:
+    `reconnected` when the account already had a session."""
+    started_at = events.iso(datetime.now(UTC))
     try:
         parsed = session_bootstrap.parse_curl(body.curl)
     except ValueError as e:
@@ -296,6 +238,7 @@ def _bootstrap(body: Bootstrap) -> dict:
     proxy_url = proxies.proxy_url(entry) if entry else None
 
     snapshot = _snapshot_account(uid)
+    had_session = accounts.latest_session_path(uid) is not None
     try:
         path = session_bootstrap.from_curl(
             body.curl, static_param_override=body.static_param or None,
@@ -321,12 +264,18 @@ def _bootstrap(body: Bootstrap) -> dict:
     meta = accounts.load_meta(uid) or {"id": uid}
     meta.update(username=me.get("username"), name=me.get("name"), avatar=me.get("avatar"))
     accounts.save_meta(uid, meta)
-    return {"accountId": int(uid), "username": me.get("username")}
+    key = supervisor.key(uid)
+    frame = events.event(
+        "accounts.reconnected" if had_session else "accounts.connected", int(uid),
+        int(key[0]) if key else None, events.iso(datetime.now(UTC)),
+        events.account_state("authenticated", started_at))
+    return {"accountId": int(uid), "username": me.get("username")}, frame
 
 
 @app.post("/session/bootstrap", tags=["operator"], operation_id="session.bootstrap")
 async def session_bootstrap_route(body: Bootstrap) -> dict:
-    result = await run_in_threadpool(_bootstrap, body)
+    result, frame = await run_in_threadpool(_bootstrap, body)
+    supervisor.hub.publish(frame)
     await supervisor.reconcile()
     return {**result, "status": supervisor.status(str(result["accountId"]))}
 

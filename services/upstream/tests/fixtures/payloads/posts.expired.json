@@ -1,0 +1,7 @@
+{
+  "event": "posts.expired",
+  "account_id": "1001",
+  "payload": {
+    "postId": 1008
+  }
+}

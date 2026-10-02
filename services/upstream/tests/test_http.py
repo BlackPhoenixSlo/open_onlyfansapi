@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import AUTH, TOKEN, make_account
+from conftest import AUTH, TOKEN, OFFake, key_paths, make_account, payload_fixture
 from curl_cffi.requests import exceptions as curl_errors
 from fastapi.testclient import TestClient
 
@@ -14,44 +14,22 @@ import app as upstream
 import client_pool
 import proxies
 import session_bootstrap
+from of_client import API_BASE as OF
 from of_client import OFAPIError, OFClient
 
 H = {**AUTH, "x-of-proxy-account-id": "100001"}
 
 
-class FakeOFClient:
-    """OF at the object seam: records each call, returns canned data or raises `fail`."""
-
-    proxy_url = "http://203.0.113.10:8080"
-
-    def __init__(self):
-        self.calls = []
-        self.fail = None
-
-    def _call(self, name, *args, **kw):
-        self.calls.append((name, args, kw))
-        if self.fail is not None:
-            raise self.fail
-        return {"method": name}
-
-    def __getattr__(self, name):
-        if name in {"me", "list_chats", "get_messages", "send_message", "list_posts", "get_post",
-                    "vault_media", "vault_media_by_id"}:
-            return lambda *a, **kw: self._call(name, *a, **kw)
-        raise AttributeError(name)
-
-
 @pytest.fixture
 def fake():
-    return FakeOFClient()
+    """An `OFFake` handed out by a patched `client_pool.get` (header-routing and bootstrap tests)."""
+    return OFFake()
 
 
 @pytest.fixture
-def client(fake):
-    upstream.app.dependency_overrides[upstream.account_client] = lambda: fake
+def client(of_fake):
     with TestClient(upstream.app) as c:
         yield c
-    upstream.app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -65,7 +43,7 @@ def routed():
 
 def test_bearer_is_required_everywhere_but_healthz(routed):
     assert routed.get("/healthz").json() == {"ok": True}
-    for path in ("/of-accounts", "/docs/json", "/of/users/me"):
+    for path in ("/of-accounts", "/docs/json", "/of/me"):
         assert routed.get(path).status_code == 401
         r = routed.get(path, headers={"Authorization": "Bearer wrong-token-0123456789"})
         assert r.status_code == 401
@@ -85,7 +63,7 @@ def test_refuses_to_boot_with_a_short_token():
 
 def test_account_header_routing(routed, monkeypatch, fake):
     def code(headers):
-        r = routed.get("/of/users/me", headers={**AUTH, **headers})
+        r = routed.get("/of/me", headers={**AUTH, **headers})
         return r.status_code, r.json().get("error", {}).get("code")
 
     assert code({}) == (400, "invalid_account_id")
@@ -98,8 +76,9 @@ def test_account_header_routing(routed, monkeypatch, fake):
     make_account("100001")
     got = []
     monkeypatch.setattr(client_pool, "get", lambda aid: got.append(aid) or fake)
-    r = routed.get("/of/users/me", headers=H)
-    assert r.status_code == 200 and r.json() == {"method": "me"}
+    fake.respond({"id": 100001})
+    r = routed.get("/of/me", headers=H)
+    assert r.status_code == 200 and r.json() == {"id": 100001}
     assert got == ["100001"]
 
 
@@ -107,7 +86,7 @@ def test_a_client_built_without_a_proxy_is_refused(routed, monkeypatch, fake):
     make_account("100001")
     fake.proxy_url = None
     monkeypatch.setattr(client_pool, "get", lambda aid: fake)
-    r = routed.get("/of/users/me", headers=H)
+    r = routed.get("/of/me", headers=H)
     assert (r.status_code, r.json()["error"]["code"]) == (409, "proxy_required")
     assert fake.calls == []
 
@@ -117,55 +96,117 @@ def test_proxy_not_required_when_disabled(routed, monkeypatch, fake):
     fake.proxy_url = None
     monkeypatch.setattr(client_pool, "get", lambda aid: fake)
     make_account("100001", proxy=False)
-    assert routed.get("/of/users/me", headers=H).status_code == 200
+    fake.respond({"id": 100001})
+    assert routed.get("/of/me", headers=H).status_code == 200
 
 
 # ─── handlers ──────────────────────────────────────────────────────
 
-def test_each_handler_calls_its_client_method(client, fake):
-    cases = [
-        ("get", "/of/users/me", None, ("me", (), {})),
-        ("get", "/of/chats", None, ("list_chats", (), {"limit": 10, "offset": 0, "order": "recent"})),
-        ("get", "/of/chats?limit=5&offset=10&order=old", None,
-         ("list_chats", (), {"limit": 5, "offset": 10, "order": "old"})),
-        ("get", "/of/chats/42/messages", None,
-         ("get_messages", (42,), {"limit": 10, "order": "desc", "before_id": None})),
-        ("get", "/of/chats/42/messages?limit=3&order=asc&id=99", None,
-         ("get_messages", (42,), {"limit": 3, "order": "asc", "before_id": 99})),
-        ("post", "/of/chats/42/messages", {"text": "hi"},
-         ("send_message", (42, "hi"), {"price": 0, "media_files": [], "previews": [], "locked_text": False})),
-        ("post", "/of/chats/42/messages",
-         {"text": "ppv", "price": 5, "mediaFiles": [1, 2], "previews": [1], "lockedText": True},
-         ("send_message", (42, "ppv"), {"price": 5, "media_files": [1, 2], "previews": [1], "locked_text": True})),
-        ("get", "/of/posts", None, ("list_posts", (), {"limit": 10, "offset": 0})),
-        ("get", "/of/posts/7", None, ("get_post", (7,), {})),
-        ("get", "/of/vault/media", None, ("vault_media", (), {"limit": 24, "offset": 0})),
-        ("get", "/of/vault/media/8", None, ("vault_media_by_id", (8,), {})),
-    ]
-    for method, path, body, call in cases:
-        fake.calls.clear()
-        r = client.request(method, path, headers=H, json=body)
-        assert r.status_code == 200, (path, r.text)
-        assert r.json() == {"method": call[0]}
-        assert fake.calls == [call], path
+SENT_DEFAULTS = {"lockedText": False, "mediaFiles": [], "price": 0, "previews": [],
+                 "rfTag": [], "rfGuest": [], "rfPartner": [], "isForward": False, "isCouplePeopleMedia": False}
+
+
+@pytest.mark.parametrize(("method", "path", "body", "of_call"), [
+    ("get", "/of/me", None, ("GET", f"{OF}/users/me", None)),
+    ("get", "/of/chats", None, ("GET", f"{OF}/chats?limit=10&order=recent&offset=0&skip_users=all", None)),
+    ("get", "/of/chats?limit=5&offset=10&order=old&skip_users=none&filter=unread&query=fan_1", None,
+     ("GET", f"{OF}/chats?limit=5&order=old&offset=10&filter=unread&query=fan_1", None)),
+    ("get", "/of/chats/1002/messages", None,
+     ("GET", f"{OF}/chats/1002/messages?limit=10&order=desc&skip_users=all", None)),
+    ("get", "/of/chats/1002/messages?limit=3&order=asc&first_id=1003&id=1004", None,
+     ("GET", f"{OF}/chats/1002/messages?limit=3&order=asc&skip_users=all&id=1003", None)),
+    ("post", "/of/chats/1002/messages", {"text": "hi"}, None),
+    ("get", "/of/posts", None,
+     ("GET", f"{OF}/posts?limit=10&offset=0&order=publish_date_desc&skip_users=all", None)),
+    ("get", "/of/posts/1004", None, ("GET", f"{OF}/posts/1004", None)),
+    ("get", "/of/media/vault", None,
+     ("GET", f"{OF}/vault/media?limit=24&offset=0&sort=desc&field=recent&list=all", None)),
+    ("get", "/of/media/vault?limit=10&offset=20&type=video&list=1005&sort=asc&field=most-liked&query=x", None,
+     ("GET", f"{OF}/vault/media?limit=10&offset=20&sort=asc&field=most-liked&list=1005&type=video&query=x", None)),
+    ("get", "/of/media/vault/1006", None, ("GET", f"{OF}/vault/media/1006", None)),
+])
+def test_each_route_reaches_its_of_call(client, of_fake, method, path, body, of_call):
+    of_fake.respond({"id": 1001})
+    r = client.request(method, path, headers=H, json=body)
+    assert r.status_code == 200, (path, r.text)
+    assert r.json() == {"id": 1001}  # OF's body is the `data` value
+    if of_call is not None:
+        assert of_fake.calls == [of_call]
+
+
+def test_send_maps_the_body_to_of(client, of_fake):
+    of_fake.respond({"id": 1003})
+    r = client.post("/of/chats/1002/messages", headers=H,
+                    json={"text": "ppv", "price": 5, "mediaFiles": [1004, 1005], "previews": [1004], "lockedText": True})
+    assert r.status_code == 200
+    [(method, url, sent)] = of_fake.calls
+    assert (method, url) == ("POST", f"{OF}/chats/1002/messages")
+    assert {k: sent[k] for k in ("text", "price", "mediaFiles", "previews", "lockedText")} == {
+        "text": "<p>ppv</p>", "price": 5, "mediaFiles": [1004, 1005], "previews": [1004], "lockedText": True}
+
+
+def test_v4_paths_are_gone(client, of_fake):
+    for path in ("/of/users/me", "/of/vault/media", "/of/vault/media/1006"):
+        assert client.get(path, headers=H).status_code == 404, path
+    assert of_fake.calls == []
 
 
 def test_send_requires_text(client):
-    assert client.post("/of/chats/42/messages", headers=H, json={}).status_code == 422
+    assert client.post("/of/chats/1002/messages", headers=H, json={}).status_code == 422
+
+
+# ─── x-next-page ───────────────────────────────────────────────────
+
+def _page(n, has_more):
+    return {"list": [{"id": 1010 - i} for i in range(n)], "hasMore": has_more}
+
+
+@pytest.mark.parametrize(("items", "has_more", "header"), [
+    (2, True, "/chats?limit=2&order=old&offset=12"),  # full page and hasMore
+    (2, False, None),                                 # OF says no more
+    (1, True, None),                                  # short page: OF's hasMore is unreliable
+    (0, True, None),                                  # empty page, even with hasMore
+])
+def test_chats_next_page(client, of_fake, items, has_more, header):
+    of_fake.respond(_page(items, has_more))
+    r = client.get("/of/chats?limit=2&order=old&offset=10", headers=H)
+    assert r.status_code == 200 and r.json() == _page(items, has_more)
+    assert r.headers.get("x-next-page") == header
+
+
+def test_chats_next_page_carries_the_default_limit(client, of_fake):
+    of_fake.respond(_page(10, True))
+    assert client.get("/of/chats", headers=H).headers["x-next-page"] == "/chats?limit=10&offset=10"
+
+
+def test_messages_next_page_is_older_than_the_oldest(client, of_fake):
+    of_fake.respond(_page(2, True))
+    r = client.get("/of/chats/1002/messages?limit=2", headers=H)
+    assert r.headers["x-next-page"] == "/chats/1002/messages?limit=2&first_id=1009"
+    of_fake.respond(_page(2, True))
+    assert "x-next-page" not in client.get("/of/chats/1002/messages?limit=2&order=asc", headers=H).headers
+
+
+@pytest.mark.parametrize("path", ["/of/posts?limit=2", "/of/media/vault?limit=2"])
+def test_offset_lists_set_a_next_page(client, of_fake, path):
+    of_fake.respond(_page(2, True))
+    tail = path.removeprefix("/of").split("?")[0]
+    assert client.get(path, headers=H).headers["x-next-page"] == f"{tail}?limit=2&offset=2"
 
 
 @pytest.mark.parametrize(("error", "status", "body"), [
-    (OFAPIError("404 for /api2/v2/posts/7", response=SimpleNamespace(status_code=404)), 404,
-     {"error": {"code": "of_error", "status": 404}}),
-    (OFAPIError("401", response=SimpleNamespace(status_code=401)), 401,
-     {"error": {"code": "of_error", "status": 401}}),
+    (404, 404, {"error": {"code": "of_error", "status": 404}}),  # an OF status: of_error
+    (401, 401, {"error": {"code": "of_error", "status": 401}}),
     (curl_errors.ProxyError("CONNECT 403"), 502, {"error": {"code": "proxy_error"}}),
     (curl_errors.ConnectionError("refused"), 502, {"error": {"code": "of_unreachable"}}),
     (curl_errors.Timeout("timed out"), 504, {"error": {"code": "of_timeout"}}),
 ])
-def test_of_errors_pass_through(client, fake, error, status, body):
-    fake.fail = error
-    r = client.get("/of/posts/7", headers=H)
+def test_of_errors_pass_through(client, of_fake, error, status, body):
+    if isinstance(error, int):
+        of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=error)
+    else:
+        of_fake.fail(error)
+    r = client.get("/of/posts/1004", headers=H)
     assert (r.status_code, r.json()) == (status, body)
 
 
@@ -194,14 +235,14 @@ def test_docs_json_lists_the_of_api_operations(routed):
            for path, item in spec["paths"].items() for method, op in item.items()
            if "of-api" in op.get("tags", [])}
     assert {k: v[:2] for k, v in ops.items()} == {
-        "users.me": ("get", "/of/users/me"),
+        "me.get": ("get", "/of/me"),
         "chats.list": ("get", "/of/chats"),
-        "chats.messages.list": ("get", "/of/chats/{chatId}/messages"),
-        "chats.messages.send": ("post", "/of/chats/{chatId}/messages"),
+        "chats.messages.list": ("get", "/of/chats/{chat_id}/messages"),
+        "chats.messages.send": ("post", "/of/chats/{chat_id}/messages"),
         "posts.list": ("get", "/of/posts"),
-        "posts.get": ("get", "/of/posts/{postId}"),
-        "vault.media.list": ("get", "/of/vault/media"),
-        "vault.media.get": ("get", "/of/vault/media/{mediaId}"),
+        "posts.get": ("get", "/of/posts/{post_id}"),
+        "media.vault.list": ("get", "/of/media/vault"),
+        "media.vault.get": ("get", "/of/media/vault/{media_id}"),
         "of.passthrough.get": ("get", "/of/_of/{path}"),
         "of.passthrough.post": ("post", "/of/_of/{path}"),
         "of.passthrough.put": ("put", "/of/_of/{path}"),
@@ -270,6 +311,28 @@ def test_bootstrap_with_proxy(routed, bootstrap_fakes):
     assert (meta["nickname"], meta["username"], meta["name"]) == ("Main", "main_acct", "Main")
     assert "secret" not in r.text and "sess" not in r.text
     assert "100001" in upstream.supervisor._pumps  # reconciled: the pump is running
+
+
+def test_bootstrap_emits_connected_then_reconnected(routed, bootstrap_fakes, monkeypatch):
+    frames = []
+    monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=frames.append))
+    for _ in range(2):
+        r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "proxy_url": "http://203.0.113.10:8080"})
+        assert r.status_code == 200, r.text
+    assert [f["type"] for f in frames] == ["accounts.connected", "accounts.reconnected"]
+    for f in frames:
+        assert f["account_id"] == 100001 and f["amount_cents"] is None
+        assert f["id"].startswith(f"{f['type']}:100001:")  # new in v5: the public name is the id's name
+        assert f["payload"]["state"] == "authenticated" and f["payload"]["latestAuthAttempt"]["success"] is True
+        assert key_paths(f["payload"]) == key_paths(payload_fixture(f["type"])["payload"])
+
+
+def test_failed_bootstrap_emits_nothing(routed, bootstrap_fakes, fake, monkeypatch):
+    frames = []
+    monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=frames.append))
+    fake.me = lambda: (_ for _ in ()).throw(OFAPIError("401", response=SimpleNamespace(status_code=401)))
+    r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "proxy_url": "http://203.0.113.10:8080"})
+    assert r.status_code == 401 and frames == []
 
 
 def test_bootstrap_refuses_without_a_proxy(routed, bootstrap_fakes):

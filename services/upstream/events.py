@@ -1,4 +1,4 @@
-"""OF socket frame -> catalogue events (plan-v4 §2.2, §2.3).
+"""OF socket frame -> catalogue events (plan-v4 §2.2, plan-v5 §1.9, §2.4).
 
 The only code that knows OF's WebSocket shapes. `classify` is pure apart from
 reading the clock when a frame carries no time of its own (`now` overrides it).
@@ -6,6 +6,10 @@ Dropping noise is logged once per key, so losses stay visible.
 Mappings exist only for frames the lifted code has seen (`api2_chat_message`,
 `post_expire`); every other key, minus the noise below, is passed through as
 `upstream.<key>` with its raw value.
+
+Event names are internal (v4) here; `event()` builds the frame id from the internal name and
+publishes the public (v5) name in `type`. Payloads follow the reference product's example for
+each type; `tests/fixtures/payloads/` holds their key structure.
 """
 from __future__ import annotations
 
@@ -50,36 +54,73 @@ def _user_id(user: Any) -> int | None:
     return _int(user.get("id")) if isinstance(user, dict) else None
 
 
-def event(type_: str, account_id: int, object_id: Any, ts: str, payload: Any) -> dict:
+# Internal (v4) name -> public (v5) name (plan-v5 §2.4). Names missing here are public as they are.
+PUBLIC = {
+    "message.received": "messages.received",
+    "message.sent": "messages.sent",
+    "ppv.unlocked": "messages.ppv.unlocked",
+    "tip.received": "tips.received",
+    "subscription.new": "subscriptions.new",
+    "subscription.renewed": "subscriptions.renewed",
+    "subscription.expired": "subscriptions.expired",
+    "account.session_expired": "accounts.session_expired",
+    "post.expired": "posts.expired",
+}
+
+
+def event(type_: str, account_id: int, object_id: Any, ts: str, payload: Any,
+          amount_cents: int | None = None) -> dict:
+    """A §2.2 frame. The id keeps the internal name, so the ledger's dedup key survives the rename."""
     return {
         "id": f"{type_}:{account_id}:{object_id}" if object_id is not None else None,
-        "type": type_,
+        "type": PUBLIC.get(type_, type_),
         "account_id": account_id,
         "ts": ts,
+        "amount_cents": amount_cents,
         "payload": payload,
     }
 
 
+def account_state(state: str, started_at: str) -> dict:
+    """The `accounts.*` payload: the account's state and its latest authentication, which for this
+    gateway is the last `POST /session/bootstrap` (it never asks for an OTP)."""
+    return {
+        "state": state,
+        "progress": "completed",
+        "latestAuthAttempt": {
+            "started_at": started_at,
+            "completed_at": None,
+            "success": True,
+            "error_message": None,
+            "needs_otp": False,
+            "needs_face_otp": False,
+            "otp_phone_ending": None,
+        },
+    }
+
+
+def _fan_data(ts: str) -> dict:
+    """The reference product's per-fan spending block. This gateway keeps no spending history, so it
+    says so: `available` is false and every amount is 0."""
+    return {
+        "available": False,
+        "last_updated_at": ts,
+        "spending": {"total": 0, "messages": 0, "subscribes": 0, "posts": 0, "tips": 0, "streams": 0},
+    }
+
+
 def _chat_message(account_id: int, msg: Any, now: datetime) -> dict | None:
+    """OF's message object is the payload, as in the reference product; a received one gains `fanData`."""
     if not isinstance(msg, dict):
         return None
     message_id = _int(msg.get("id"))
     from_id = _user_id(msg.get("fromUser"))
     if message_id is None or from_id is None:
         return None
-    sent = from_id == account_id
-    media = msg.get("media")
-    media_count = msg.get("mediaCount")
-    if not isinstance(media_count, int):
-        media_count = len(media) if isinstance(media, list) else 0
-    type_ = "message.sent" if sent else "message.received"
-    return event(type_, account_id, message_id, _ts(msg.get("createdAt"), now), {
-        "messageId": message_id,
-        "fanId": _user_id(msg.get("toUser")) if sent else from_id,
-        "text": msg.get("text"),
-        "price": msg.get("price"),
-        "mediaCount": media_count,
-    })
+    ts = _ts(msg.get("createdAt"), now)
+    if from_id == account_id:
+        return event("message.sent", account_id, message_id, ts, msg)
+    return event("message.received", account_id, message_id, ts, {**msg, "fanData": _fan_data(ts)})
 
 
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire"})
