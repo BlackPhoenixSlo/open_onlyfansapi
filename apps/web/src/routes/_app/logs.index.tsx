@@ -83,7 +83,7 @@ function Logs() {
         />
         <form key={`${search.endpoint}|${search.q}`} onSubmit={onSubmit} className="flex gap-2">
           <Input name="endpoint" defaultValue={search.endpoint} placeholder="Endpoint contains…" className="w-48" />
-          <Input name="q" defaultValue={search.q} placeholder="Request ID" className="w-48 font-mono" />
+          <Input name="q" defaultValue={search.q} placeholder="Request ID or path…" className="w-48 font-mono" />
           <Button type="submit" variant="secondary">
             Search
           </Button>

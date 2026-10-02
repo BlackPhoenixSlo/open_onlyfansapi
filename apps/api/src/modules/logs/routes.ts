@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, lt, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, lt, or, sql, type SQL } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -16,7 +16,7 @@ const listQuery = z.object({
   method: z.string().toUpperCase().optional(),
   /** case-insensitive substring of the normalised endpoint */
   endpoint: z.string().optional(),
-  /** request id */
+  /** request id, or a case-insensitive substring of the path or endpoint */
   q: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -55,6 +55,9 @@ function decodeCursor(cursor: string): [string, string] {
   throw new AppError(400, 'invalid_cursor', 'The cursor is invalid');
 }
 
+/** ILIKE pattern matching `text` anywhere, with LIKE wildcards escaped. */
+const contains = (text: string) => `%${text.replace(/[\\%_]/g, '\\$&')}%`;
+
 const withIso = <T extends { createdAt: Date }>(row: T) => ({ ...row, createdAt: row.createdAt.toISOString() });
 
 /** Dashboard request logs (session cookie). Mounted at /api/logs. */
@@ -75,8 +78,12 @@ export default async function logsRoutes(app: FastifyInstance) {
     if (f.keyId) where.push(eq(requestLog.apiKeyId, f.keyId));
     if (f.accountId !== undefined) where.push(eq(requestLog.accountId, f.accountId));
     if (f.method) where.push(eq(requestLog.method, f.method));
-    if (f.endpoint) where.push(ilike(requestLog.endpoint, `%${f.endpoint.replace(/[\\%_]/g, '\\$&')}%`));
-    if (f.q) where.push(eq(requestLog.id, f.q.trim()));
+    if (f.endpoint) where.push(ilike(requestLog.endpoint, contains(f.endpoint)));
+    if (f.q?.trim()) {
+      // Evaluated as a filter while walking the (team_id, created_at) index range, so the scan stays bounded by LIMIT.
+      const q = f.q.trim();
+      where.push(or(eq(requestLog.id, q), ilike(requestLog.path, contains(q)), ilike(requestLog.endpoint, contains(q))));
+    }
     if (f.cursor) {
       const [ts, id] = decodeCursor(f.cursor);
       where.push(sql`(${requestLog.createdAt}, ${requestLog.id}) < (${ts}::timestamptz, ${id})`);

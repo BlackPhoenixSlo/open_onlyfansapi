@@ -102,7 +102,7 @@ describe('request logs', () => {
     expect((await detail(who.headers['x-request-id'] as string)).json().endpoint).toBe('GET /v1/whoami');
   });
 
-  it('filters by status, key, method, endpoint, account and request id', async () => {
+  it('filters by status, key, method, endpoint, account and request id or path search', async () => {
     const pick = async (q: string) => (await logs(q)).json().items.map((i: { id: string }) => i.id);
     expect(await pick('?status=4xx')).toEqual([ids.forbidden]);
     expect(await pick('?status=5xx')).toEqual([ids.down]);
@@ -112,6 +112,10 @@ describe('request logs', () => {
     expect(await pick('?endpoint=users%2Fme')).toEqual([ids.down, ids.ok]);
     expect(await pick('?accountId=13')).toEqual([]);
     expect(await pick(`?q=${ids.ok}`)).toEqual([ids.ok]);
+    expect(await pick('?q=users%2Fme')).toEqual([ids.down, ids.ok]);
+    expect(await pick('?q=%2F12%2Fchats')).toEqual([ids.forbidden]); // path only
+    expect(await pick('?q=%3Aid%2FMUTE')).toEqual([ids.forbidden]); // endpoint only, case-insensitive
+    expect(await pick('?q=%25')).toEqual([]); // LIKE wildcards are literal
     expect(await pick(`?to=${new Date(Date.now() + 60_000).toISOString()}&from=2020-01-01T00:00:00Z&status=2xx`)).toContain(ids.ok);
   });
 
