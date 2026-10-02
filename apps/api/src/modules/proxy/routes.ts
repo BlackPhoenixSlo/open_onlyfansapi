@@ -42,6 +42,19 @@ export function resolveUpstream(rawUrl: string): { accountId: number; path: stri
   return { accountId, path: `${rest}${query}` };
 }
 
+/**
+ * Whether `/<rest>?<query>` (as returned by `resolveUpstream`) is the raw passthrough `/_of/…`: its first segment,
+ * decoded, is `_of`, so `%5Fof` counts too. Passthrough responses are forwarded as they are (plan-v5 §2.2).
+ */
+export function isPassthrough(rest: string): boolean {
+  const segment = rest.slice(1).split(/[/?]/, 1)[0] ?? '';
+  try {
+    return decodeURIComponent(segment) === '_of';
+  } catch {
+    return false;
+  }
+}
+
 /** `ALL /v1/:account/*` → upstream `/of/*`, for a linked workspace, scoped by `x-of-proxy-account-id`. */
 export default async function proxyRoutes(app: FastifyInstance) {
   // Forward JSON bodies verbatim (and allow empty ones).
@@ -74,6 +87,7 @@ export default async function proxyRoutes(app: FastifyInstance) {
     res.headers.forEach((value, key) => {
       if (FORWARDED_RESPONSE_HEADERS.has(key) || key.startsWith('x-ratelimit-')) reply.header(key, value);
     });
+    // The response wrapper (plan-v5 §2.2) goes here and skips `isPassthrough(path)`.
     return reply.send(res.body);
   });
 }

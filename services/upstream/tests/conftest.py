@@ -15,10 +15,14 @@ os.environ["UPSTREAM_STATE_DIR"] = tempfile.mkdtemp(prefix="upstream-test-")
 os.environ["UPSTREAM_TOKEN"] = TOKEN = "test-token-0123456789"
 os.environ["OF_REQUIRE_PROXY"] = "true"
 
+from curl_cffi.requests import Response
+from curl_cffi.requests.headers import Headers
+
 import accounts
 import client_pool
 import config
 import proxies
+from of_client import OFClient
 
 FIXTURES = HERE / "fixtures" / "of_frames"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -67,3 +71,54 @@ def new_session(aid: str, *, bump: float = 0) -> None:
 
 def frame(name: str) -> dict:
     return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+# ─── of_fake: OF at the wire ───────────────────────────────────────
+
+FAKE_SESSION = {
+    "headers": {"user_id": "1001", "x_bc": "test-x-bc", "x_of_rev": "test-rev", "user_agent": "test-agent"},
+    "signing": {"rules": {"static_param": "test-static", "start": "0", "end": "0",
+                          "checksum_indexes": [0], "checksum_constant": 0}},
+}
+
+
+class OFFake(OFClient):
+    """A real OFClient cut at `_http_call`: each call is recorded as `(method, url, json_body)`
+    and answered from the queue; an empty queue fails the test."""
+
+    def __init__(self):
+        super().__init__(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"})
+        self.calls = []
+        self._queue = []
+
+    def respond(self, body=None, status=200, headers=None):
+        """Queue one OF response. `body`: bytes as-is, anything else JSON-encoded."""
+        r = Response()
+        r.status_code, r.ok = status, status < 400
+        r.content = body if isinstance(body, bytes) else json.dumps(body).encode()
+        r.headers = Headers({"content-type": "application/json"} if headers is None else headers)
+        self._queue.append(r)
+
+    def fail(self, error):
+        """Queue a transport failure (a curl_cffi exception)."""
+        self._queue.append(error)
+
+    def _http_call(self, method, url, *, json_body=None):
+        self.calls.append((method, url, json_body))
+        assert self._queue, f"unexpected OF call: {method} {url}"
+        item = self._queue.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        item.url = url
+        return item
+
+
+@pytest.fixture
+def of_fake():
+    """An `OFFake` served for every account through the `account_client` override."""
+    import app as upstream
+
+    fake = OFFake()
+    upstream.app.dependency_overrides[upstream.account_client] = lambda: fake
+    yield fake
+    upstream.app.dependency_overrides.pop(upstream.account_client, None)

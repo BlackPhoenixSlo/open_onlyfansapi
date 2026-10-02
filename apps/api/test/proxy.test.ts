@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
-import { resolveUpstream } from '../src/modules/proxy/routes.js';
+import { isPassthrough, resolveUpstream } from '../src/modules/proxy/routes.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
@@ -144,6 +144,24 @@ describe('proxy', () => {
       expect(() => resolveUpstream(raw)).toThrow(/disallowed segment/);
     },
   );
+
+  it.each(['/_of/users/me', '/%5Fof/users/me'])('forwards the passthrough %s byte for byte', async (rest) => {
+    const res = await app.inject({ method: 'GET', url: `/v1/12${rest}?limit=5&a%20b=c`, headers: bearer(writeKey) });
+    const url = `/of${rest}?limit=5&a%20b=c`;
+    expect(res.statusCode).toBe(200);
+    expect(last().url).toBe(url);
+    expect(res.rawPayload.equals(Buffer.from(JSON.stringify({ echo: true, method: 'GET', url })))).toBe(true);
+    expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
+  });
+
+  it('isPassthrough matches the decoded first segment only', () => {
+    for (const rest of ['/_of', '/_of/users/me', '/_of?x=1', '/%5Fof/users/me', '/%5fof', '/_%6Ff/a']) {
+      expect(isPassthrough(rest), rest).toBe(true);
+    }
+    for (const rest of ['/', '/users/me', '/users/_of', '/_off/a', '/%5Fofx', '/%E0%A4%A/a', '/?_of']) {
+      expect(isPassthrough(rest), rest).toBe(false);
+    }
+  });
 
   it('lists accounts with whitelisted fields, filtered by the allowlist', async () => {
     const all = await app.inject({ method: 'GET', url: '/v1/accounts', headers: bearer(writeKey) });

@@ -219,6 +219,12 @@ def vault_media_get(client: Client, media_id: Annotated[int, Path(alias="mediaId
 
 app.include_router(of)
 
+# Route modules import `ApiError` and `Client` from this module, so they load once both exist.
+from routes import ROUTERS
+
+for _router in ROUTERS:
+    app.include_router(_router)
+
 
 # ─── Accounts and bootstrap (operator surface, never forwarded) ──────
 
