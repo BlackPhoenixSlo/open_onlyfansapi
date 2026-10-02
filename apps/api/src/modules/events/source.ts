@@ -63,7 +63,7 @@ export function startEventSource(log: FastifyBaseLogger, timings: SourceTimings 
       if (socket !== sock) return;
       armStale(sock);
       backoff = timings.backoffMinMs;
-      const frame = typeof ev.data === 'string' ? parseFrame(ev.data) : 'malformed';
+      const frame = typeof ev.data === 'string' ? parseFrame(ev.data, () => queue.drop('bad_amount')) : 'malformed';
       if (frame === 'heartbeat') return;
       if (typeof frame === 'string') queue.drop(frame);
       else queue.push(frame);

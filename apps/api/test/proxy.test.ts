@@ -46,7 +46,7 @@ describe('proxy', () => {
       payload: '{"text":"hi"}',
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ echo: true, method: 'POST', url: '/of/chats/1/messages?limit=5&a%20b=c' });
+    expect(res.json().data).toMatchObject({ echo: true, method: 'POST', url: '/of/chats/1/messages?limit=5&a%20b=c' });
     expect(res.headers['x-of-cache']).toBe('MISS');
     expect(res.headers['x-ratelimit-remaining']).toBe('299');
 
@@ -152,6 +152,77 @@ describe('proxy', () => {
     expect(last().url).toBe(url);
     expect(res.rawPayload.equals(Buffer.from(JSON.stringify({ echo: true, method: 'GET', url })))).toBe(true);
     expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
+  });
+
+  describe('response wrapper', () => {
+    const shaped = (q: Record<string, string>) => `/v1/1001/shaped?${new URLSearchParams(q)}`;
+    const get = (url: string) => app.inject({ method: 'GET', url, headers: bearer(writeKey) });
+
+    it('wraps a 2xx JSON body as {data, _meta}: data is the upstream bytes, content-length matches', async () => {
+      const body = '{"id":12345678901234567890,"name":"fan_1","nested":[1.50,{"a":null}]}';
+      const res = await get(shaped({ type: 'application/json', body }));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe(`{"data":${body},"_meta":{}}`);
+      expect(res.headers['content-length']).toBe(String(Buffer.byteLength(res.body)));
+      expect(res.headers['content-type']).toBe('application/json');
+
+      for (const [type, data] of [['application/json; charset=utf-8', '[]'], ['application/problem+json', 'null']] as const) {
+        const r = await get(shaped({ type, body: data }));
+        expect(r.body, type).toBe(`{"data":${data},"_meta":{}}`);
+      }
+      // A named route that echoes: the whole echo is the data.
+      const echo = await get('/v1/1001/chats?limit=5');
+      expect(echo.json()).toEqual({ data: { echo: true, method: 'GET', url: '/of/chats?limit=5' }, _meta: {} });
+    });
+
+    it('turns x-next-page into an absolute _pagination.next_page and never forwards x-next-page', async () => {
+      const res = await get(shaped({ type: 'application/json', body: '[1]', next: '/chats?limit=10&offset=10' }));
+      expect(res.body).toBe('{"data":[1],"_meta":{},"_pagination":{"next_page":"http://localhost:5173/v1/1001/chats?limit=10&offset=10"}}');
+      expect(res.headers['x-next-page']).toBeUndefined();
+      expect(res.headers['content-length']).toBe(String(Buffer.byteLength(res.body)));
+
+      const odd = await get(shaped({ type: 'application/json', body: '{}', next: '/chats?q="a\\b"' }));
+      expect(odd.json()).toEqual({ data: {}, _meta: {}, _pagination: { next_page: 'http://localhost:5173/v1/1001/chats?q="a\\b"' } });
+      expect(odd.headers['x-next-page']).toBeUndefined();
+    });
+
+    it.each<[string, Record<string, string>]>([
+      ['4xx', { status: '404', type: 'application/json', body: '{"error":{"code":"of_error","status":404}}' }],
+      ['204', { status: '204', type: 'application/json', body: '' }],
+      ['empty', { type: 'application/json', body: '' }],
+      ['non-JSON', { type: 'text/plain', body: '{"a":1}' }],
+      ['no content-type', { body: '{"a":1}' }],
+      ['whitespace-only', { type: 'application/json', body: ' \n ' }],
+      ['BOM-prefixed', { type: 'application/json', body: '\uFEFF{"a":1}' }],
+      ['truncated JSON', { type: 'application/json', body: '{"a":' }],
+      ['two JSON values', { type: 'application/json', body: '{"a":1}{"b":2}' }],
+    ])('passes a %s response through unwrapped', async (_name, q) => {
+      const res = await get(shaped({ ...q, next: '/chats?offset=10' }));
+      expect(res.statusCode).toBe(Number(q.status ?? 200));
+      expect(res.body).toBe(q.body);
+      expect(res.headers['x-next-page']).toBeUndefined();
+    });
+
+    it('wraps a gzipped upstream body: the upstream client already decoded it', async () => {
+      const res = await get(shaped({ type: 'application/json', body: '{"a":1}', gzip: '1' }));
+      expect(res.body).toBe('{"data":{"a":1},"_meta":{}}');
+      expect(res.headers['content-encoding']).toBeUndefined();
+    });
+
+    it.each(['chats?offset=10', '//evil.example/chats', 'https://evil.example/chats', ''])(
+      'omits _pagination for the x-next-page value %j',
+      async (next) => {
+        const res = await get(shaped({ type: 'application/json', body: '[1]', next }));
+        expect(res.body).toBe('{"data":[1],"_meta":{}}');
+        expect(res.headers['x-next-page']).toBeUndefined();
+      },
+    );
+
+    it.each(['_of', '%5Fof'])('never wraps the passthrough /%s/…', async (segment) => {
+      const res = await get(`/v1/1001/${segment}/users/me`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ echo: true, method: 'GET', url: `/of/${segment}/users/me` });
+    });
   });
 
   it('isPassthrough matches the decoded first segment only', () => {

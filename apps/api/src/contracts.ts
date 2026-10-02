@@ -144,34 +144,71 @@ export type Overview = z.infer<typeof overview>;
 
 // Webhooks
 /**
- * The event catalogue. `upstream.*` subscribes to every opaque upstream event (`upstream.<name>`).
- * TBC: `tip.received`, `ppv.unlocked` and `subscription.*` are emitted only once the upstream maps their frames;
- * until then those frames arrive as `upstream.<name>`.
+ * The event catalogue (plan-v5 §1.12, §2.4): every in-scope event name of the reference API, plus our own
+ * `posts.expired`, `webhook.test` and `upstream.*` (every opaque upstream event, as `upstream.<name>`).
+ * Each description says whether the event is emitted, TBC (the OF source is known but not mapped yet; until then
+ * such frames may arrive as `upstream.<name>`) or never (no source in a self-hosted gateway).
  */
 export const webhookEventType = z.enum([
-  'message.received',
-  'message.sent',
-  'tip.received',
-  'ppv.unlocked',
-  'subscription.new',
-  'subscription.renewed',
-  'subscription.expired',
-  'post.expired',
-  'account.session_expired',
+  'messages.received',
+  'messages.sent',
+  'messages.ppv.unlocked',
+  'messages.deleted',
+  'messages.liked',
+  'messages.unliked',
+  'chat_queue.updated',
+  'chat_queue.finished',
+  'subscriptions.new',
+  'subscriptions.renewed',
+  'subscriptions.expired',
+  'users.typing',
+  'users.online',
+  'users.offline',
+  'posts.liked',
+  'posts.expired',
+  'tips.received',
+  'transactions.new',
+  'accounts.connected',
+  'accounts.reconnected',
+  'accounts.disconnected',
+  'accounts.session_expired',
+  'accounts.authentication_failed',
+  'accounts.otp_code_required',
+  'accounts.face_otp_required',
+  'media_uploads.completed',
+  'media_uploads.failed',
   'webhook.test',
   'upstream.*',
 ]);
 export type WebhookEventType = z.infer<typeof webhookEventType>;
 export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
-  'message.received': 'A connected account received a message.',
-  'message.sent': 'A connected account sent a message.',
-  'tip.received': 'A connected account received a tip (TBC: not emitted yet).',
-  'ppv.unlocked': 'A fan unlocked paid content (TBC: not emitted yet).',
-  'subscription.new': 'A fan subscribed to a connected account (TBC: not emitted yet).',
-  'subscription.renewed': 'A fan renewed a subscription (TBC: not emitted yet).',
-  'subscription.expired': 'A fan subscription expired (TBC: not emitted yet).',
-  'post.expired': 'A post of a connected account expired.',
-  'account.session_expired': "A connected account's session expired; reconnect it.",
+  'messages.received': 'A connected account received a message.',
+  'messages.sent': 'A connected account sent a message.',
+  'messages.ppv.unlocked': 'A fan unlocked a paid message (TBC: not emitted yet).',
+  'messages.deleted': 'A message was deleted (TBC: not emitted yet).',
+  'messages.liked': 'A fan liked a message (TBC: not emitted yet).',
+  'messages.unliked': 'A fan unliked a message (TBC: not emitted yet).',
+  'chat_queue.updated': 'A mass-message queue made progress (TBC: not emitted yet).',
+  'chat_queue.finished': 'A mass-message queue finished (TBC: not emitted yet).',
+  'subscriptions.new': 'A fan subscribed to a connected account (TBC: not emitted yet).',
+  'subscriptions.renewed': 'A fan renewed a subscription (TBC: not emitted yet).',
+  'subscriptions.expired': 'A fan subscription expired (TBC: not emitted yet).',
+  'users.typing': 'A fan is typing (TBC: not emitted yet).',
+  'users.online': 'A fan came online (TBC: not emitted yet).',
+  'users.offline': 'A fan went offline (TBC: not emitted yet).',
+  'posts.liked': 'A fan liked a post (TBC: not emitted yet).',
+  'posts.expired': 'A post of a connected account expired.',
+  'tips.received': 'A connected account received a tip (TBC: not emitted yet).',
+  'transactions.new': 'A new earnings transaction (TBC: not emitted yet).',
+  'accounts.connected': 'An account was connected for the first time.',
+  'accounts.reconnected': 'An account that already had a session was connected again.',
+  'accounts.disconnected': 'An account was disconnected (never emitted by this gateway).',
+  'accounts.session_expired': "A connected account's session expired; reconnect it.",
+  'accounts.authentication_failed': 'Connecting an account failed (never emitted by this gateway).',
+  'accounts.otp_code_required': 'Connecting an account needs an OTP code (never emitted by this gateway).',
+  'accounts.face_otp_required': 'Connecting an account needs a face check (never emitted by this gateway).',
+  'media_uploads.completed': 'A media upload completed (never emitted by this gateway).',
+  'media_uploads.failed': 'A media upload failed (never emitted by this gateway).',
   'webhook.test': "Sent by the Test action, regardless of the endpoint's event filter.",
   'upstream.*': 'Any other upstream event, passed through as upstream.<name>.',
 };
@@ -183,7 +220,7 @@ export const webhookEndpoint = z.object({
   description: z.string().nullable(),
   /** Empty = every event. */
   events: z.array(z.string()),
-  /** `whsec_…`: verify deliveries with it (Standard Webhooks). Omitted for read-only keys. */
+  /** `whsec_…`: the HMAC key of the `Signature` header, used as-is. Omitted for read-only keys. */
   secret: z.string().optional(),
   enabled: z.boolean(),
   /** Why the endpoint is disabled: `failures` = paused by the breaker. */
@@ -215,16 +252,18 @@ export const updateWebhookBody = z.object({
 });
 export type UpdateWebhookBody = z.input<typeof updateWebhookBody>;
 
-export const deliveryStatus = z.enum(['pending', 'succeeded', 'failed']);
+/** `dropped`: a pending v4 delivery the 2.0 migration cancelled; never sent. */
+export const deliveryStatus = z.enum(['pending', 'succeeded', 'failed', 'dropped']);
 export type DeliveryStatus = z.infer<typeof deliveryStatus>;
 
 export const webhookDelivery = z.object({
-  /** Also the `webhook-id` header. */
   id: z.string(),
+  /** The event's `evt_…` id, sent as `X-OFAPI-Idempotency-Key`: the same on retries and redeliveries. */
+  eventId: z.string(),
   endpointId: z.string(),
   eventType: z.string(),
   accountId: z.number().int().nullable(),
-  /** The envelope's `data`. */
+  /** The envelope's `payload`. */
   payload: z.unknown(),
   status: deliveryStatus,
   /** Finished attempts. */
@@ -235,6 +274,8 @@ export const webhookDelivery = z.object({
   lastAttemptAt: z.string().nullable(),
   /** The delivery this one re-sent. */
   replayOf: z.string().nullable(),
+  /** False for `dropped` deliveries and 1.x event names: redeliver answers 409. */
+  redeliverable: z.boolean(),
   createdAt: z.string(),
 });
 export type WebhookDelivery = z.infer<typeof webhookDelivery>;
@@ -249,7 +290,7 @@ export const statsQuery = z.object({
   from: isoDay.optional(),
   to: isoDay.optional(),
   accountId: z.coerce.number().int().positive().optional(),
-  /** Comma-separated event types, e.g. `message.received,tip.received`. */
+  /** Comma-separated event types, e.g. `messages.received,tips.received`. */
   types: z.string().optional(),
 });
 export type StatsQuery = z.input<typeof statsQuery>;

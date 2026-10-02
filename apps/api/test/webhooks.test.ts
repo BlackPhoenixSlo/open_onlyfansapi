@@ -6,6 +6,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { deleteExpired } from '../src/jobs/retention.js';
+import { envelope, sign, verifySignature } from '../src/lib/signature.js';
 import { emit } from '../src/modules/webhooks/service.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
 import { bearer, createKey, dashboard, resetDb, signUp } from './helpers.js';
@@ -74,11 +75,19 @@ async function sendTest(endpointId: string): Promise<string> {
 
 async function delivery(id: string) {
   const { rows } = await pool.query(
-    `SELECT status, attempts, last_status_code, last_error, replay_of,
+    `SELECT status, attempts, last_status_code, last_error, replay_of, event_id,
        extract(epoch from next_attempt_at - now())::float AS due_in FROM webhook_delivery WHERE id = $1`,
     [id],
   );
-  return rows[0] as { status: string; attempts: number; last_status_code: number | null; last_error: string | null; replay_of: string | null; due_in: number };
+  return rows[0] as {
+    status: string;
+    attempts: number;
+    last_status_code: number | null;
+    last_error: string | null;
+    replay_of: string | null;
+    event_id: string;
+    due_in: number;
+  };
 }
 
 const makeDue = (id: string) => pool.query('UPDATE webhook_delivery SET next_attempt_at = now() WHERE id = $1', [id]);
@@ -86,15 +95,8 @@ const makeDue = (id: string) => pool.query('UPDATE webhook_delivery SET next_att
 const getEndpoint = async (id: string): Promise<Endpoint> =>
   (await app.inject({ method: 'GET', url: `/v1/webhooks/${id}`, headers: bearer(readKey) })).json().endpoint;
 
-/** Written from the Standard Webhooks spec, independently of lib/signature.ts. */
-function standardWebhooksVerify(secret: string, headers: Record<string, string | string[] | undefined>, payload: string) {
-  const id = String(headers['webhook-id']);
-  const timestamp = String(headers['webhook-timestamp']);
-  const key = Buffer.from(secret.startsWith('whsec_') ? secret.substring(6) : secret, 'base64');
-  const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${payload}`).digest('base64');
-  const fresh = Math.abs(Date.now() / 1000 - Number(timestamp)) <= 300;
-  return fresh && String(headers['webhook-signature']).split(' ').some((s) => s === `v1,${expected}`);
-}
+/** The plan-v5 §2.3 scheme written with node:crypto, independently of lib/signature.ts. */
+const hmacHex = (secret: string, body: string) => createHmac('sha256', Buffer.from(secret, 'utf8')).update(body).digest('hex');
 
 describe('webhooks API', () => {
   it('manages endpoints: https-only, write scope, team-scoped, event catalogue', async () => {
@@ -107,16 +109,21 @@ describe('webhooks API', () => {
       method: 'POST',
       url: '/v1/webhooks',
       headers: bearer(writeKey),
-      payload: { url: 'https://example.com/h', description: 'mine', events: ['message.received'] },
+      payload: { url: 'https://example.com/h', description: 'mine', events: ['messages.received'] },
     });
     expect(created.statusCode).toBe(201);
     const endpoint = created.json().endpoint;
-    expect(endpoint).toMatchObject({ url: 'https://example.com/h', description: 'mine', events: ['message.received'], enabled: true });
+    expect(endpoint).toMatchObject({ url: 'https://example.com/h', description: 'mine', events: ['messages.received'], enabled: true });
     expect(endpoint.id).toMatch(/^whe_/);
     expect(endpoint.secret).toMatch(/^whsec_[A-Za-z0-9+/]+=*$/);
 
     const bad = await app.inject({ method: 'POST', url: '/v1/webhooks', headers: bearer(writeKey), payload: { url: 'https://e.com', events: ['nope'] } });
     expect(bad.statusCode).toBe(400);
+    // v4 names and out-of-scope names of the reference API are refused.
+    for (const name of ['message.received', 'data_exports.completed']) {
+      const refused = await app.inject({ method: 'POST', url: '/v1/webhooks', headers: bearer(writeKey), payload: { url: 'https://e.com', events: [name] } });
+      expect(refused.statusCode, name).toBe(400);
+    }
 
     const readOnly = await app.inject({ method: 'POST', url: '/v1/webhooks', headers: bearer(readKey), payload: { url: 'https://e.com' } });
     expect(readOnly.statusCode).toBe(403);
@@ -124,19 +131,64 @@ describe('webhooks API', () => {
     expect(list.json().items.map((e: Endpoint) => e.id)).toEqual([endpoint.id]);
 
     const events = await app.inject({ method: 'GET', url: '/v1/webhooks/events', headers: bearer(readKey) });
-    expect(events.json().items.map((e: { type: string }) => e.type)).toEqual([
-      'message.received',
-      'message.sent',
-      'tip.received',
-      'ppv.unlocked',
-      'subscription.new',
-      'subscription.renewed',
-      'subscription.expired',
-      'post.expired',
-      'account.session_expired',
+    const catalogue = events.json().items.map((e: { type: string }) => e.type);
+    expect(catalogue).toEqual([
+      'messages.received',
+      'messages.sent',
+      'messages.ppv.unlocked',
+      'messages.deleted',
+      'messages.liked',
+      'messages.unliked',
+      'chat_queue.updated',
+      'chat_queue.finished',
+      'subscriptions.new',
+      'subscriptions.renewed',
+      'subscriptions.expired',
+      'users.typing',
+      'users.online',
+      'users.offline',
+      'posts.liked',
+      'posts.expired',
+      'tips.received',
+      'transactions.new',
+      'accounts.connected',
+      'accounts.reconnected',
+      'accounts.disconnected',
+      'accounts.session_expired',
+      'accounts.authentication_failed',
+      'accounts.otp_code_required',
+      'accounts.face_otp_required',
+      'media_uploads.completed',
+      'media_uploads.failed',
       'webhook.test',
       'upstream.*',
     ]);
+    // Each description carries the status: TBC, never, or (unmarked) emitted.
+    const status = (d: string) => (d.includes('(TBC: not emitted yet)') ? 'tbc' : d.includes('(never emitted') ? 'never' : 'emitted');
+    const byStatus = (want: string) =>
+      (events.json().items as { type: string; description: string }[]).filter((e) => status(e.description) === want).map((e) => e.type);
+    expect(byStatus('emitted')).toEqual([
+      'messages.received',
+      'messages.sent',
+      'posts.expired',
+      'accounts.connected',
+      'accounts.reconnected',
+      'accounts.session_expired',
+      'webhook.test',
+      'upstream.*',
+    ]);
+    expect(byStatus('never')).toEqual([
+      'accounts.disconnected',
+      'accounts.authentication_failed',
+      'accounts.otp_code_required',
+      'accounts.face_otp_required',
+      'media_uploads.completed',
+      'media_uploads.failed',
+    ]);
+    const all = await app.inject({ method: 'POST', url: '/v1/webhooks', headers: bearer(writeKey), payload: { url: 'https://e.com/all', events: catalogue } });
+    expect(all.statusCode).toBe(201);
+    expect(all.json().endpoint.events).toEqual(catalogue);
+    await app.inject({ method: 'DELETE', url: `/v1/webhooks/${all.json().endpoint.id}`, headers: bearer(writeKey) });
 
     // The dashboard session works too.
     const viaSession = await app.inject({
@@ -209,6 +261,7 @@ describe('webhooks API', () => {
     const copy = replay.json().delivery;
     expect(copy.id).not.toBe(first);
     expect(copy).toMatchObject({ replayOf: first, status: 'pending', attempts: 0, eventType: 'webhook.test' });
+    expect(copy.eventId).toBe((await delivery(first)).event_id);
     const missing = await app.inject({
       method: 'POST',
       url: `/v1/webhooks/${endpoint.id}/deliveries/whd_missing/redeliver`,
@@ -217,13 +270,13 @@ describe('webhooks API', () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it('a null payload is stored as jsonb null, delivered as data: null and redelivered as null', async () => {
+  it('a null payload is stored as jsonb null, delivered as payload: null and redelivered as null', async () => {
     const endpoint = await createEndpoint();
-    expect(await emit(teamId, 'post.expired', 117183, null)).toBe(1);
+    expect(await emit(teamId, 'evt_1001', 'posts.expired', 1001, null)).toBe(1);
     const { rows } = await pool.query('SELECT id, jsonb_typeof(payload) AS kind FROM webhook_delivery');
     expect(rows).toEqual([{ id: expect.any(String), kind: 'null' }]);
     expect(await deliverDue()).toBe(1);
-    expect(JSON.parse(received[0]!.body)).toMatchObject({ id: rows[0].id, type: 'post.expired', data: null });
+    expect(received[0]!.body).toBe('{"event":"posts.expired","account_id":"1001","payload":null}');
 
     const replay = await app.inject({
       method: 'POST',
@@ -235,27 +288,74 @@ describe('webhooks API', () => {
   });
 });
 
-describe('signature', () => {
-  it('a Standard Webhooks verifier accepts the delivery', async () => {
+describe('envelope and signature', () => {
+  it('a fixed event serialises to exact bytes: event, account_id (a string), payload', () => {
+    expect(envelope({ type: 'messages.received', accountId: 1001, data: { id: 1002, text: 'hi', fromUser: { id: 1003 } } })).toBe(
+      '{"event":"messages.received","account_id":"1001","payload":{"id":1002,"text":"hi","fromUser":{"id":1003}}}',
+    );
+    expect(envelope({ type: 'webhook.test', accountId: null, data: { message: 'm' } })).toBe('{"event":"webhook.test","payload":{"message":"m"}}');
+  });
+
+  it('Signature matches a known vector computed with node:crypto, and verifySignature rejects one flipped byte', () => {
+    const secret = 'whsec_dGVzdC1vbmx5LXNlY3JldC0wMTIzNDU2Nzg5YWJjZGVm';
+    const body = '{"event":"messages.received","account_id":"1001","payload":{"id":1002}}';
+    const expected = hmacHex(secret, body);
+    expect(expected).toMatch(/^[0-9a-f]{64}$/);
+    expect(sign(secret, body)).toBe(expected);
+    expect(sign(secret, Buffer.from(body))).toBe(expected);
+
+    expect(verifySignature(secret, expected, body)).toBe(true);
+    const flipped = (expected[0] === 'a' ? 'b' : 'a') + expected.slice(1);
+    expect(verifySignature(secret, flipped, body)).toBe(false);
+    expect(verifySignature(secret, expected, body.replace('1002', '1003'))).toBe(false);
+    expect(verifySignature(secret + 'x', expected, body)).toBe(false);
+    for (const bad of ['', expected.slice(2), `v1,${expected}`, expected + '00', 'z'.repeat(64)]) {
+      expect(verifySignature(secret, bad, body), bad).toBe(false);
+    }
+  });
+
+  it('a delivery carries Signature and X-OFAPI-Idempotency-Key, no webhook-* header, and no account_id for webhook.test', async () => {
     const endpoint = await createEndpoint();
     const id = await sendTest(endpoint.id);
     expect(await deliverDue()).toBe(1);
 
     expect(received).toHaveLength(1);
     const { headers, body } = received[0]!;
-    expect(headers['webhook-id']).toBe(id);
+    expect(body).toBe('{"event":"webhook.test","payload":{"message":"Test event from the gateway"}}');
     expect(headers['content-type']).toBe('application/json');
-    expect(standardWebhooksVerify(endpoint.secret, headers, body)).toBe(true);
-    expect(standardWebhooksVerify(endpoint.secret, headers, body + ' ')).toBe(false);
-    expect(JSON.parse(body)).toMatchObject({ id, type: 'webhook.test', accountId: null, data: { message: expect.any(String) } });
+    expect(headers['user-agent']).toBe('Gateway-Webhooks');
+    expect(headers.signature).toBe(hmacHex(endpoint.secret, body));
+    expect(headers['x-ofapi-idempotency-key']).toBe((await delivery(id)).event_id);
+    expect(headers['x-ofapi-idempotency-key']).toMatch(/^evt_/);
+    expect(Object.keys(headers).filter((h) => h.startsWith('webhook-'))).toEqual([]);
     expect(await delivery(id)).toMatchObject({ status: 'succeeded', attempts: 1, last_status_code: 200, last_error: null });
   });
 
-  it('matches the Standard Webhooks reference vector', async () => {
-    const { sign } = await import('../src/lib/signature.js');
-    expect(sign('whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw', 'msg_p5jXN8AQM9LWM0D4loKWxJek', 1614265330, '{"test": 2432232314}')).toBe(
-      'v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=',
-    );
+  it('the idempotency key is the event id, the same on an automatic retry and a manual redelivery', async () => {
+    const endpoint = await createEndpoint();
+    expect(await emit(teamId, 'evt_1001', 'messages.received', 1001, { id: 1002 })).toBe(1);
+    const [{ id }] = (await pool.query('SELECT id FROM webhook_delivery')).rows;
+    receiver.status = 500;
+    expect(await deliverDue()).toBe(1);
+    await makeDue(id);
+    receiver.status = 200;
+    expect(await deliverDue()).toBe(1);
+
+    const replay = await app.inject({ method: 'POST', url: `/v1/webhooks/${endpoint.id}/deliveries/${id}/redeliver`, headers: bearer(writeKey) });
+    expect(replay.json().delivery).toMatchObject({ eventId: 'evt_1001', replayOf: id });
+    expect(replay.json().delivery.id).not.toBe(id);
+    expect(await deliverDue()).toBe(1);
+
+    expect(received.map((r) => r.headers['x-ofapi-idempotency-key'])).toEqual(['evt_1001', 'evt_1001', 'evt_1001']);
+    expect(new Set(received.map((r) => r.body))).toEqual(new Set(['{"event":"messages.received","account_id":"1001","payload":{"id":1002}}']));
+
+    // Two Test actions are two events: each gets a fresh key.
+    received.length = 0;
+    await sendTest(endpoint.id);
+    await sendTest(endpoint.id);
+    expect(await deliverDue()).toBe(2);
+    const keys = received.map((r) => r.headers['x-ofapi-idempotency-key']);
+    expect(new Set(keys).size).toBe(2);
   });
 });
 
@@ -335,8 +435,8 @@ describe('worker', () => {
   it('concurrent claims never return the same delivery', async () => {
     const endpoint = await createEndpoint();
     await pool.query(
-      `INSERT INTO webhook_delivery (id, team_id, endpoint_id, event_type, payload)
-       SELECT 'whd_c' || g, $1, $2, 'webhook.test', '{}' FROM generate_series(1, 50) g`,
+      `INSERT INTO webhook_delivery (id, team_id, endpoint_id, event_id, event_type, payload)
+       SELECT 'whd_c' || g, $1, $2, 'evt_c' || g, 'webhook.test', '{}' FROM generate_series(1, 50) g`,
       [teamId, endpoint.id],
     );
     const batches = await Promise.all(Array.from({ length: 5 }, () => claimDeliveries()));
@@ -391,6 +491,38 @@ describe('worker', () => {
     expect(await delivery(id)).toMatchObject({ status: 'succeeded', attempts: 1, last_status_code: 200 });
   });
 
+  it('never sends a dropped delivery (a pending v4 delivery cancelled by the 2.0 migration)', async () => {
+    const endpoint = await createEndpoint();
+    const id = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'dropped' WHERE id = $1`, [id]);
+    expect(await deliverDue()).toBe(0);
+    expect(received).toHaveLength(0);
+    const listed = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}/deliveries?status=dropped`, headers: bearer(readKey) });
+    expect(listed.json().items).toMatchObject([{ id, status: 'dropped' }]);
+  });
+
+  it('refuses to redeliver a dropped delivery or a 1.x event name with 409', async () => {
+    const endpoint = await createEndpoint();
+    const dropped = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'dropped' WHERE id = $1`, [dropped]);
+    const legacy = await sendTest(endpoint.id);
+    await pool.query(`UPDATE webhook_delivery SET status = 'succeeded', event_type = 'message.received' WHERE id = $1`, [legacy]);
+    expect(await emit(teamId, 'evt_1001', 'upstream.chat_typing', 1001, {})).toBe(1);
+    const { rows } = await pool.query(`SELECT id FROM webhook_delivery WHERE event_type = 'upstream.chat_typing'`);
+
+    const list = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}/deliveries`, headers: bearer(readKey) });
+    const flags = Object.fromEntries(list.json().items.map((d: { id: string; redeliverable: boolean }) => [d.id, d.redeliverable]));
+    expect(flags).toEqual({ [dropped]: false, [legacy]: false, [rows[0].id]: true });
+
+    for (const id of [dropped, legacy]) {
+      const res = await app.inject({ method: 'POST', url: `/v1/webhooks/${endpoint.id}/deliveries/${id}/redeliver`, headers: bearer(writeKey) });
+      expect(res.statusCode, id).toBe(409);
+      expect(res.json().error.code).toBe('not_redeliverable');
+    }
+    const ok = await app.inject({ method: 'POST', url: `/v1/webhooks/${endpoint.id}/deliveries/${rows[0].id}/redeliver`, headers: bearer(writeKey) });
+    expect(ok.statusCode).toBe(202);
+  });
+
   it('retention keeps pending deliveries', async () => {
     const endpoint = await createEndpoint();
     const pending = await sendTest(endpoint.id);
@@ -405,28 +537,29 @@ describe('worker', () => {
 describe('emit', () => {
   it('queues one delivery per enabled, subscribed endpoint in one insert', async () => {
     const all = await createEndpoint();
-    const messages = await createEndpoint({ events: ['message.received'] });
+    const messages = await createEndpoint({ events: ['messages.received'] });
     const upstream = await createEndpoint({ events: ['upstream.*'] });
-    await createEndpoint({ events: ['account.session_expired'] });
+    await createEndpoint({ events: ['accounts.session_expired'] });
     const disabled = await createEndpoint();
     await app.inject({ method: 'PATCH', url: `/v1/webhooks/${disabled.id}`, headers: bearer(writeKey), payload: { enabled: false } });
 
-    expect(await emit(teamId, 'message.received', 12, { text: 'hi' })).toBe(2);
-    expect(await emit(teamId, 'upstream.chat_typing', 12, {})).toBe(2);
+    expect(await emit(teamId, 'evt_1', 'messages.received', 12, { text: 'hi' })).toBe(2);
+    expect(await emit(teamId, 'evt_2', 'upstream.chat_typing', 12, {})).toBe(2);
     const byKey = (a: { event_type: string; endpoint_id: string }, b: { event_type: string; endpoint_id: string }) =>
       `${a.event_type} ${a.endpoint_id}` < `${b.event_type} ${b.endpoint_id}` ? -1 : 1;
     const { rows } = await pool.query('SELECT endpoint_id, event_type, account_id, payload FROM webhook_delivery');
+    expect((await pool.query('SELECT DISTINCT event_id FROM webhook_delivery ORDER BY event_id')).rows).toEqual([{ event_id: 'evt_1' }, { event_id: 'evt_2' }]);
     expect(rows.sort(byKey)).toEqual(
       [
-        { endpoint_id: all.id, event_type: 'message.received', account_id: 12, payload: { text: 'hi' } },
-        { endpoint_id: messages.id, event_type: 'message.received', account_id: 12, payload: { text: 'hi' } },
+        { endpoint_id: all.id, event_type: 'messages.received', account_id: 12, payload: { text: 'hi' } },
+        { endpoint_id: messages.id, event_type: 'messages.received', account_id: 12, payload: { text: 'hi' } },
         { endpoint_id: all.id, event_type: 'upstream.chat_typing', account_id: 12, payload: {} },
         { endpoint_id: upstream.id, event_type: 'upstream.chat_typing', account_id: 12, payload: {} },
       ].sort(byKey),
     );
 
     // A burst queues behind the concurrency cap instead of failing.
-    const burst = await Promise.all(Array.from({ length: 30 }, () => emit(teamId, 'message.received', null, {})));
+    const burst = await Promise.all(Array.from({ length: 30 }, (_, i) => emit(teamId, `evt_b${i}`, 'messages.received', null, {})));
     expect(burst.every((n) => n === 2)).toBe(true);
   });
 });

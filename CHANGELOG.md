@@ -4,6 +4,70 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - Unreleased
+
+v2 makes the gateway a drop-in for clients of the reference API: its webhook event names, body and signature, and
+its response shape on per-account routes. Every change below breaks 1.x clients; read
+[Upgrading to 2.0](#upgrading-to-20) before you deploy.
+
+### Added
+
+- **Raw passthrough** `/v1/{account}/_of/{path}` reaches any OnlyFans call that has no named route yet, in OF's own
+  paths and shapes.
+- Webhook deliveries carry `X-OFAPI-Idempotency-Key`, the event's `evt_` id, which stays the same on retries and
+  redeliveries. Deliveries expose it as `eventId`.
+- The webhook catalogue accepts every in-scope event name of the reference API, each marked emitted, TBC or never
+  (see [docs/webhooks.md](docs/webhooks.md#event-types)). New events emitted: `accounts.connected` and
+  `accounts.reconnected`.
+- A `dropped` delivery status, for pending 1.x deliveries the migration cancels.
+
+### Upgrading to 2.0
+
+**Upgrade the gateway and upstream images together.** The gateway drops event frames whose type it does not know,
+so a mixed pair loses events until both run 2.0. The database migration runs on start.
+
+- *Gateway 2.0 with upstream 1.x:* every renamed event is dropped as an unknown type (`posts.expired` and
+  `accounts.session_expired` included); only `upstream.*` frames still arrive. 1.x frames have no `amount_cents`, so
+  any amount would be stored as null. The 1.x paths (`users/me`, `vault/media`, ...) still work, but their
+  responses come back wrapped.
+- *Upstream 2.0 with gateway 1.x:* every stored event, `accounts.session_expired` included, is dropped as an
+  unknown type, and the three renamed paths return 404 from the upstream.
+
+1. **Webhook body.** `{"id","type","createdAt","accountId","data"}` is now `{"event","account_id","payload"}`, in
+   that order. `account_id` is a JSON string, and is omitted for events without an account (`webhook.test`).
+   There is no `id` or `createdAt` in the body any more. Client `/v1/ws` frames are the same JSON (the `ready`
+   frame is unchanged).
+2. **Signature.** The `webhook-id`, `webhook-timestamp` and `webhook-signature` (Standard Webhooks) headers are
+   gone. Deliveries carry `Signature`: lowercase hex HMAC-SHA256 of the raw body, keyed with the endpoint's
+   `whsec_...` secret string as-is (not base64-decoded). There is no timestamp and so no replay window. Existing
+   secrets stay valid. De-duplicate on `X-OFAPI-Idempotency-Key` instead of `webhook-id`. See
+   [docs/webhooks.md](docs/webhooks.md#verifying-the-signature).
+3. **Event names are plural**, as in the reference API. The 1.x names are refused with `400`:
+
+   | 1.x | 2.0 |
+   |---|---|
+   | `message.received` | `messages.received` |
+   | `message.sent` | `messages.sent` |
+   | `ppv.unlocked` | `messages.ppv.unlocked` |
+   | `tip.received` | `tips.received` |
+   | `subscription.new` / `.renewed` / `.expired` | `subscriptions.new` / `.renewed` / `.expired` |
+   | `account.session_expired` | `accounts.session_expired` |
+   | `post.expired` | `posts.expired` |
+
+   The migration renames the names in stored endpoint `events` filters and in the event ledger (so `/v1/stats`
+   returns the 2.0 names; use them in `?types=`). Pending deliveries of a renamed 1.x event are set to `dropped`
+   and never sent, so no 1.x body goes out under a 2.0 name; finished deliveries keep their 1.x name as history.
+   Neither can be redelivered (`409 not_redeliverable`; deliveries carry a `redeliverable` flag).
+   Payloads changed too: they follow the reference API's examples (for instance `messages.received` carries the
+   full OnlyFans message object), and amounts are no longer read from the payload. See the event table.
+4. **Three per-account paths were renamed**, with no aliases: `users/me` is now `me`, `vault/media` is now
+   `media/vault`, and `vault/media/{mediaId}` is now `media/vault/{media_id}`. The query parameters of the moved
+   routes use the reference API's names. `/v1/{account}/_of/users/me` still returns OF's own body.
+5. **Per-account responses are wrapped.** A `2xx` JSON response of a named `/v1/{account}/...` route is now
+   `{"data": <1.x body>, "_meta": {}}`, plus `"_pagination": {"next_page": "<absolute URL>"}` when there is a next
+   page. Errors, `204` and empty responses, the `_of` passthrough, and the team-level routes (`/v1/whoami`,
+   `/v1/accounts`, `/v1/webhooks*`, `/v1/stats`) are not wrapped. `/openapi.json` documents the wrapped shapes.
+
 ## [1.0.0] - 2026-10-02
 
 ### Added

@@ -9,24 +9,24 @@ const secret = process.env.WEBHOOK_SECRET;
 const fail = process.env.FAIL === '1';
 
 createServer((req, res) => {
-  let body = '';
-  req.setEncoding('utf8');
-  req.on('data', (chunk: string) => (body += chunk));
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
+    const body = Buffer.concat(chunks);
     const header = (name: string) => String(req.headers[name] ?? '');
-    const id = header('webhook-id');
+    const key = header('x-ofapi-idempotency-key');
     const verdict = !secret
       ? 'signature not checked (WEBHOOK_SECRET unset)'
-      : verifySignature(secret, { id, timestamp: header('webhook-timestamp'), signature: header('webhook-signature') }, body)
+      : verifySignature(secret, header('signature'), body)
         ? 'signature ok'
         : 'signature INVALID';
     let type = '?';
     try {
-      type = (JSON.parse(body) as { type?: string }).type ?? '?';
+      type = (JSON.parse(body.toString()) as { event?: string }).event ?? '?';
     } catch {
       // not JSON
     }
-    console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${id} ${type}: ${verdict}${fail ? ' (FAIL=1: 500)' : ''}`);
+    console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${key} ${type}: ${verdict}${fail ? ' (FAIL=1: 500)' : ''}`);
     res.writeHead(fail ? 500 : 200).end();
   });
 }).listen(PORT, () => console.log(`webhook receiver on http://localhost:${PORT}${fail ? ' (FAIL=1)' : ''}`));

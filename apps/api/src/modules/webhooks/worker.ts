@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { env } from '../../env.js';
 import { limiter } from '../../lib/limiter.js';
-import { envelope, signatureHeaders } from '../../lib/signature.js';
+import { envelope, sign } from '../../lib/signature.js';
 
 /** Delay before retry n (after the nth finished attempt); the last step repeats. */
 export const BACKOFF_SECONDS = [30, 120, 600, 3600, 21_600];
@@ -20,11 +20,11 @@ const MAX_ERROR_LENGTH = 500;
 export type Claimed = {
   id: string;
   endpointId: string;
+  /** `X-OFAPI-Idempotency-Key`. */
+  eventId: string;
   eventType: string;
   accountId: number | null;
   payload: unknown;
-  /** Postgres timestamptz text (raw `execute` rows are not mapped by drizzle). */
-  createdAt: string;
   /** The `next_attempt_at` this claim set, as exact Postgres text: completion is fenced on it. */
   leasedUntil: string;
   url: string;
@@ -49,8 +49,8 @@ export async function claimDeliveries(limit = BATCH): Promise<Claimed[]> {
       )
       returning *
     )
-    select c.id, c.endpoint_id as "endpointId", c.event_type as "eventType", c.account_id as "accountId",
-      c.payload, c.created_at as "createdAt", c.next_attempt_at as "leasedUntil", e.url, e.secret
+    select c.id, c.endpoint_id as "endpointId", c.event_id as "eventId", c.event_type as "eventType",
+      c.account_id as "accountId", c.payload, c.next_attempt_at as "leasedUntil", e.url, e.secret
     from claimed c join webhook_endpoint e on e.id = c.endpoint_id`);
   return res.rows;
 }
@@ -126,10 +126,15 @@ async function post(c: Claimed): Promise<{ statusCode: number | null; error: str
   try {
     const url = new URL(c.url);
     await assertDeliverable(url, signal);
-    const body = envelope({ id: c.id, type: c.eventType, createdAt: new Date(c.createdAt), accountId: c.accountId, data: c.payload });
+    const body = envelope({ type: c.eventType, accountId: c.accountId, data: c.payload });
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': 'Gateway-Webhooks', ...signatureHeaders(c.secret, c.id, body) },
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'Gateway-Webhooks',
+        'X-OFAPI-Idempotency-Key': c.eventId,
+        Signature: sign(c.secret, body),
+      },
       body,
       redirect: 'manual',
       signal,

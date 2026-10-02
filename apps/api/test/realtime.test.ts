@@ -5,6 +5,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { publish } from '../src/lib/event-bus.js';
+import { envelope } from '../src/lib/signature.js';
 import { sweep } from '../src/modules/realtime/hub.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
@@ -41,20 +42,25 @@ async function until(check: () => boolean | Promise<boolean>, timeoutMs = 2000) 
   }
 }
 
-type Frame = { type?: string; id?: string; accountId?: number | null; accountIds?: number[] | null };
+/** `ready`, or an event envelope (whose payload carries the test event's id as `ref`). */
+type Frame = { type?: string; accountIds?: number[] | null; event?: string; account_id?: string; payload?: { ref?: string } };
 
 /** A browser-style client: the key as the `bearer.<key>` subprotocol. Resolves after the `ready` frame. */
 async function connect(secret: string, query = '') {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/v1/ws${query}`, ['bearer', `bearer.${secret}`]);
   const frames: Frame[] = [];
-  ws.addEventListener('message', (m) => frames.push(JSON.parse(String(m.data)) as Frame));
+  const raw: string[] = [];
+  ws.addEventListener('message', (m) => {
+    raw.push(String(m.data));
+    frames.push(JSON.parse(String(m.data)) as Frame);
+  });
   const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve));
   await new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve);
     ws.addEventListener('error', () => reject(new Error('socket refused')));
   });
   await until(() => frames.length > 0);
-  return { ws, frames, closed, ids: () => frames.filter((f) => f.id).map((f) => f.id) };
+  return { ws, frames, raw, closed, ids: () => frames.filter((f) => f.event).map((f) => f.payload?.ref) };
 }
 
 /** A raw handshake: the HTTP status, headers and body of a refusal, or the 101's headers (socket then dropped). */
@@ -85,13 +91,10 @@ function handshake(headers: Record<string, string>, query = '') {
 
 const protocols = (secret: string) => ({ 'sec-websocket-protocol': `bearer, bearer.${secret}` });
 let seq = 0;
-const event = (accountId: number | null) => ({
-  id: `evt_test${++seq}`,
-  type: 'message.received',
-  createdAt: new Date(),
-  accountId,
-  data: { text: 'hi' },
-});
+const event = (accountId: number | null) => {
+  const id = `evt_test${++seq}`;
+  return { id, type: 'messages.received', accountId, data: { text: 'hi', ref: id } };
+};
 const wsLogs = (keyId: string) =>
   pool.query('SELECT * FROM request_log WHERE api_key_id = $1 AND endpoint = $2', [keyId, 'GET /v1/ws']);
 
@@ -124,7 +127,9 @@ describe('GET /v1/ws', () => {
     await until(() => a.ids().includes(one.id) && b.ids().includes(one.id));
     expect(b.ids()).toEqual([two.id, one.id]);
     expect(a.ids()).toEqual([one.id]);
-    expect(b.frames[1]).toEqual({ id: two.id, type: 'message.received', createdAt: two.createdAt.toISOString(), accountId: 2, data: { text: 'hi' } });
+    // A WS frame is the webhook body: the same envelope() bytes.
+    expect(b.raw[1]).toBe(`{"event":"messages.received","account_id":"2","payload":{"text":"hi","ref":"${two.id}"}}`);
+    expect(b.raw[1]).toBe(envelope(two));
 
     const none = event(null);
     const again = event(1);
@@ -132,6 +137,7 @@ describe('GET /v1/ws', () => {
     publish(again);
     await until(() => a.ids().includes(again.id) && b.ids().includes(again.id));
     expect(b.ids().slice(2)).toEqual([none.id, again.id]);
+    expect(b.raw[3]).toBe(`{"event":"messages.received","payload":{"text":"hi","ref":"${none.id}"}}`);
     expect(a.ids()).toEqual([one.id, again.id]);
     a.ws.close();
     b.ws.close();

@@ -301,7 +301,7 @@ function EndpointFormDialog({
                   Copy
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">Verify the webhook-signature header with it.</p>
+              <p className="text-xs text-muted-foreground">Verify the Signature header with it: hex HMAC-SHA256 of the raw body, keyed with this secret as-is.</p>
             </div>
           )}
           <DialogFooter>

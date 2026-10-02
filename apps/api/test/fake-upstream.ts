@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import websocket, { type WebSocket } from '@fastify/websocket';
 import Fastify from 'fastify';
 
@@ -30,9 +31,16 @@ export const UPSTREAM_SPEC = {
     },
   },
   paths: {
-    '/of/users/me': {
-      get: of('users.me', {
+    '/of/me': {
+      get: of('me', {
         responses: { 200: { description: 'Me', content: { 'application/json': { schema: { $ref: '#/components/schemas/User' } } } } },
+      }),
+    },
+    // The raw passthrough: published, never wrapped.
+    '/of/_of/{path}': {
+      get: of('of.passthrough.get', {
+        parameters: [{ schema: { type: 'string' }, in: 'path', name: 'path', required: true }],
+        responses: { 200: { description: 'OF body', content: { 'application/json': { schema: {} } } } },
       }),
     },
     // An internal operation under /of/ that the upstream does not tag as public.
@@ -72,11 +80,26 @@ export const UPSTREAM_SPEC = {
   },
 };
 
+/**
+ * One upstream `/ws` event frame (plan-v5 §2.4): `type` is the v5 name, `id` keeps the v4 form
+ * (`message.received:<account>:<message>`), and `amount_cents` sits at the top level, beside the payload.
+ */
+export const eventFrame = (over: Record<string, unknown> = {}) => ({
+  id: 'message.received:1001:1002',
+  type: 'messages.received',
+  account_id: 1001,
+  ts: '2026-10-02T12:00:00.000Z',
+  amount_cents: null,
+  payload: { id: 1002, text: 'hi', price: 0, mediaCount: 0, fromUser: { id: 1003 } },
+  ...over,
+});
+
 /** The subprotocols a `/ws` client offered (`Sec-WebSocket-Protocol`). */
 const offered = (header: string | string[] | undefined) => String(header ?? '').split(',').map((p) => p.trim());
 
 /**
- * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed,
+ * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed (JSON),
+ * `/of/shaped?status&type&body&next&gzip` answers as told (`next` becomes `x-next-page`),
  * `/of-accounts` serves one account list and `/docs/json` a small OpenAPI spec. `/ws` (plan-v4 §2.2) instead needs
  * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
  * `pushFrame()` is given.
@@ -131,6 +154,14 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
       reply.raw.write('{"partial":');
       setTimeout(() => reply.raw.end('true}'), 2500).unref();
       return reply;
+    }
+    if (request.url.startsWith('/of/shaped')) {
+      const q = request.query as Record<string, string | undefined>;
+      if (q.next !== undefined) reply.header('x-next-page', q.next);
+      if (q.type) reply.header('content-type', q.type);
+      reply.status(Number(q.status ?? 200));
+      const body = Buffer.from(q.body ?? '');
+      return q.gzip ? reply.header('content-encoding', 'gzip').send(gzipSync(body)) : reply.send(body);
     }
     return { echo: true, method: request.method, url: request.url };
   });
