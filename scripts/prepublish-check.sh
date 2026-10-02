@@ -27,9 +27,9 @@ if [ -n "$brand_hits" ]; then
   echo "$brand_hits"
 fi
 
-# 2b. the private upstream must never be tracked
+# 2b. the private upstream must be filtered out before a public publish
 if git ls-files --error-unmatch services >/dev/null 2>&1; then
-  report "services/ is tracked; the upstream source must stay in the private image (see docs/spec/handoff-of-serving.md §6.1)"
+  report "services/ is tracked: private-only tree; filter it out before any public publish"
 fi
 
 # 3. README disclaimer
