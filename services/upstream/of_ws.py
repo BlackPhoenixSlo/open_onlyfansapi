@@ -126,6 +126,7 @@ class OFWebSocket:
                     # Background pinger for NAT keepalive
                     pinger = asyncio.create_task(_pinger(ws, self._stop))
                     stop_waiter = asyncio.create_task(self._stop.wait())
+                    recv_task = None
                     try:
                         # Race ws.recv() vs stop event so .stop() exits promptly
                         while not self._stop.is_set():
@@ -135,9 +136,11 @@ class OFWebSocket:
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
                             if stop_waiter in done:
-                                recv_task.cancel()
                                 break
                             raw = recv_task.result()
+                            # A frame arrived, so this (re)connect worked: the
+                            # next drop starts the backoff over.
+                            backoff = RECONNECT_MIN_S
                             if isinstance(raw, bytes):
                                 try:
                                     raw = raw.decode("utf-8")
@@ -153,8 +156,10 @@ class OFWebSocket:
                         pinger.cancel()
                         if not stop_waiter.done():
                             stop_waiter.cancel()
-                # Clean disconnect — reset backoff
-                backoff = RECONNECT_MIN_S
+                        # Cancelled mid-recv (pump restart) or stopped: don't
+                        # leave the recv dangling on a socket we're closing.
+                        if recv_task is not None and not recv_task.done():
+                            recv_task.cancel()
             except (asyncio.CancelledError, SessionExpired):
                 raise
             except Exception as e:
