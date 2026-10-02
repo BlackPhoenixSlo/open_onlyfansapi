@@ -46,3 +46,24 @@ jobs:
         run: docker build -f apps/api/Dockerfile -t gateway:ci .
       - name: production stack boots and answers through caddy
         run: sh scripts/compose-smoke.sh
+
+  upstream:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/upstream
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/upstream/requirements*.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ruff (lifted modules held to F,E9; service code to ruff defaults)
+        run: |
+          ruff check --select F,E9 .
+          ruff check app.py pump.py events.py connect.py tests
+      - run: pytest -q
+      - name: image builds
+        run: docker build -t gateway-upstream:ci .

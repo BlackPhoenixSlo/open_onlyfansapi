@@ -16,5 +16,19 @@ services:
       timeout: 3s
       retries: 20
 
+  # Our own upstream (services/upstream), a drop-in for test/fake-upstream.ts on :3001.
+  # Opt in: docker compose --profile upstream up -d upstream
+  upstream:
+    profiles: [upstream]
+    build: services/upstream
+    environment:
+      UPSTREAM_TOKEN: ${UPSTREAM_TOKEN:-dev-upstream-token}
+      STATIC_PARAM: ${STATIC_PARAM:-}
+    ports:
+      - "127.0.0.1:3001:8000"
+    volumes:
+      - upstream-data:/data
+
 volumes:
   pgdata:
+  upstream-data:
