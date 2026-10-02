@@ -112,7 +112,6 @@ it to the upstream. Include it when you report a problem.
 | 403 | `insufficient_scope` | A `read` key used a method other than `GET` or `HEAD`. |
 | 403 | `account_not_allowed` | The account is not in the key's allowlist. |
 | 403 | `csrf_failed` | A cookie-authenticated write lacked `x-dashboard: 1` or the right `Origin`. |
-| 403 | `no_workspace` | The signed-in user has no active workspace. |
 | 404 | `not_found` | Unknown route, a non-numeric account id, or a key or log entry that does not exist. |
 | 409 | `team_not_linked` | The workspace is not linked to the upstream yet. See [getting-started.md](getting-started.md). |
 | 429 | `rate_limited` | The key or user went over the per-minute limit. |

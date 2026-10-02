@@ -1,10 +1,7 @@
 import { fromNodeHeaders } from 'better-auth/node';
-import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { auth, CLIENT_IP_HEADER } from '../auth.js';
-import { db } from '../db/index.js';
-import { member } from '../db/schema.js';
+import { auth, CLIENT_IP_HEADER, ensureWorkspace } from '../auth.js';
 import { env } from '../env.js';
 import { AppError } from '../lib/errors.js';
 import { assertCsrf } from './csrf.js';
@@ -24,16 +21,9 @@ declare module 'fastify' {
 export async function loadSession(request: FastifyRequest): Promise<DashboardSession | null> {
   const res = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
   if (!res) return null;
-  const teamId = res.session.activeOrganizationId;
-  const [m] = teamId
-    ? await db
-        .select({ role: member.role })
-        .from(member)
-        .where(and(eq(member.organizationId, teamId), eq(member.userId, res.user.id)))
-        .limit(1)
-    : [];
-  if (!teamId || !m) throw new AppError(403, 'no_workspace', 'No active workspace for this session');
-  return { userId: res.user.id, teamId, role: m.role };
+  // The membership (one per user) is the source of truth; it is created here if sign-up failed to.
+  const m = await ensureWorkspace(res.user);
+  return { userId: res.user.id, teamId: m.organizationId, role: m.role };
 }
 
 export default fp(async (app: FastifyInstance) => {

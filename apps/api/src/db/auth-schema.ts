@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -98,7 +98,8 @@ export const member = pgTable(
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
-    index("member_userId_idx").on(table.userId),
+    // Hand edit, keep after `auth:generate`: one workspace per user (see ensureWorkspace in auth.ts).
+    uniqueIndex("member_userId_idx").on(table.userId),
   ],
 );
 
