@@ -126,7 +126,7 @@ from that list (the **Accounts** page shows the same list) and call the upstream
 
 ```sh
 export ACCOUNT_ID=123
-curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/users/me
+curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/me
 ```
 
 Anything under `/v1/{account}/` is forwarded to the upstream's account API for that account. The upstream's
