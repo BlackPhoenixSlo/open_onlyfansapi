@@ -226,7 +226,9 @@ def bootstrap_fakes(monkeypatch, fake):
     def from_curl(curl, **kw):
         seen.update(kw)
         make_account("100001", proxy=False, nickname=kw.get("nickname") or "Account 100001")
-        return accounts.latest_session_path("100001")
+        path = accounts.latest_session_path("100001")
+        (path.parent / f"chunk_2313_{path.stem.removeprefix('session_')}.js").write_text("chunk")
+        return path
 
     def from_session_file(path, **kw):
         seen["probe"] = (Path(path).name, kw)
@@ -347,7 +349,20 @@ def test_failed_validation_of_a_new_account_leaves_no_session(routed, bootstrap_
     r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "proxy_url": "http://203.0.113.12:3128"})
     assert r.status_code == 401
     assert accounts.latest_session_path("100001") is None
+    assert not accounts.account_dir("100001").exists()  # no session, chunk or meta.json left
     assert proxies.get_for_account("100001") is None
+
+
+def test_failed_bootstrap_keeps_prior_files_and_removes_its_own(routed, bootstrap_fakes, fake):
+    make_account("100001", nickname="Prior")
+    adir = accounts.account_dir("100001")
+    (adir / "chunk_2313_20261000T120000Z.js").write_text("prior chunk")
+    before = {p.name: p.read_bytes() for p in adir.iterdir()}
+    fake.me = lambda: (_ for _ in ()).throw(OFAPIError("401", response=SimpleNamespace(status_code=401)))
+    r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "nickname": "New"})
+    assert r.status_code == 401
+    assert {p.name: p.read_bytes() for p in adir.iterdir()} == before  # new debris gone, prior intact
+    assert accounts.load_meta("100001")["nickname"] == "Prior"
 
 
 def test_bootstrap_rejects_bad_input(routed, bootstrap_fakes):
