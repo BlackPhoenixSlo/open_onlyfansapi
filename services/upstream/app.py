@@ -12,7 +12,6 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path as PathType
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
@@ -268,28 +267,42 @@ def _proxy_entry(url: str) -> dict:
             "username": u.username or "", "password": u.password or ""}
 
 
-def _snapshot_latest(uid: str) -> tuple[bytes, int, int] | None:
-    """latest.json's bytes and (atime, mtime) in ns, or None when there is none."""
-    latest = accounts.account_dir(uid) / "latest.json"
+# from_curl rewrites these in place; everything else it writes is a new file.
+_REWRITTEN = ("latest.json", "meta.json")
+
+
+def _snapshot_account(uid: str) -> tuple[set[str], dict[str, tuple[bytes, int, int]]] | None:
+    """The account dir's file names, plus latest.json's and meta.json's bytes and
+    (atime, mtime) in ns; None when the account has no dir yet."""
+    adir = accounts.account_dir(uid)
     try:
-        st = latest.stat()
-        return latest.read_bytes(), st.st_atime_ns, st.st_mtime_ns
+        names = {p.name for p in adir.iterdir()}
     except FileNotFoundError:
         return None
+    kept = {}
+    for name in _REWRITTEN:
+        if name in names:
+            st = (adir / name).stat()
+            kept[name] = (adir / name).read_bytes(), st.st_atime_ns, st.st_mtime_ns
+    return names, kept
 
 
-def _restore_latest(uid: str, snapshot: tuple[bytes, int, int] | None, failed: PathType) -> None:
-    """Put latest.json back byte- and mtime-exact, so the pump key (and an expired
-    session's mark) is unchanged; delete the failed session file and its cookies."""
-    latest = accounts.account_dir(uid) / "latest.json"
+def _rollback_account(uid: str, snapshot: tuple[set[str], dict[str, tuple[bytes, int, int]]] | None) -> None:
+    """Undo a failed bootstrap: a new account is deleted outright; otherwise delete every
+    file it created (session, chunk) and put latest.json and meta.json back byte- and
+    mtime-exact, so the pump key (and an expired session's mark) and the nickname are
+    unchanged."""
     if snapshot is None:
-        latest.unlink(missing_ok=True)
-    else:
-        data, atime_ns, mtime_ns = snapshot
-        latest.write_bytes(data)
-        os.utime(latest, ns=(atime_ns, mtime_ns))
-    if accounts.latest_session_path(uid) != failed:
-        failed.unlink(missing_ok=True)
+        accounts.delete_account(uid)
+        return
+    adir = accounts.account_dir(uid)
+    names, kept = snapshot
+    for p in adir.iterdir():
+        if p.name not in names:
+            p.unlink(missing_ok=True)
+    for name, (data, atime_ns, mtime_ns) in kept.items():
+        (adir / name).write_bytes(data)
+        os.utime(adir / name, ns=(atime_ns, mtime_ns))
 
 
 def _bootstrap(body: Bootstrap) -> dict:
@@ -312,7 +325,7 @@ def _bootstrap(body: Bootstrap) -> dict:
         raise ApiError(409, "proxy_required", "pass proxy_url: OF_REQUIRE_PROXY is on")
     proxy_url = proxies.proxy_url(entry) if entry else None
 
-    snapshot = _snapshot_latest(uid)
+    snapshot = _snapshot_account(uid)
     try:
         path = session_bootstrap.from_curl(
             body.curl, static_param_override=body.static_param or None,
@@ -327,7 +340,7 @@ def _bootstrap(body: Bootstrap) -> dict:
         me = probe.me()
     except Exception:
         log.warning("bootstrap: me() failed for account=%s; previous session restored", uid)
-        _restore_latest(uid, snapshot, path)
+        _rollback_account(uid, snapshot)
         raise
 
     if new_entry is not None:
