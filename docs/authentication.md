@@ -122,7 +122,8 @@ it to the upstream. Include it when you report a problem.
 
 Other HTTP-level failures use a code based on the status: `bad_request` (400), `payload_too_large` (413) and
 `unsupported_media_type` (415, for a body type the gateway does not read; send JSON). The dashboard's own
-`/api` routes also use `invalid_range`, `range_too_large` and `invalid_cursor`.
+`/api` routes also use `invalid_range`, `range_too_large` and `invalid_cursor`; `/v1/stats` uses `invalid_range` and
+`range_too_large`.
 
 ### Upstream errors
 

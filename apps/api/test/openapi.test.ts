@@ -43,6 +43,7 @@ describe('openapi', () => {
     // `/of-accounts` (not under `/of/`), dashboard routes and the proxy wildcard are not published.
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/v1/accounts',
+      '/v1/stats',
       ...WEBHOOK_PATHS,
       '/v1/whoami',
       '/v1/{account}/chats/{chatId}/messages',
@@ -141,7 +142,7 @@ describe('openapi', () => {
       const res = await down.inject({ method: 'GET', url: '/openapi.json' });
       expect(res.statusCode).toBe(200);
       expect(res.headers['x-upstream-spec']).toBe('unavailable');
-      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', ...WEBHOOK_PATHS, '/v1/whoami']);
+      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', '/v1/stats', ...WEBHOOK_PATHS, '/v1/whoami']);
     } finally {
       await down.close();
     }
