@@ -380,7 +380,7 @@ names (yaml), not v4's: `me` → `fans.py`, `chats*` → `chats.py`, `posts*` an
 `docs/spec/parity/baseline.txt`, and `.github/workflows/ci.yml` (the §2.5 step).
 
 **Acceptance.**
-- `extract` on a mirror page writes about 445 lines. `grep -c 'api/{account' docs/spec/parity/onlyfansapi-routes.txt`
+- `extract` on a mirror page writes about 445 lines. `grep -c 'api/{account' docs/spec/parity/reference-routes.txt`
   gives 236.
 - Run on P1b's dump, `check` reports no off-spec routes, and `check --have` prints the 8 v4 operations. That output
   is the first `baseline.txt`.
