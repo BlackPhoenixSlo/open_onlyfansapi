@@ -187,7 +187,7 @@ def test_of_accounts_shape(routed):
     ]
 
 
-def test_docs_json_lists_the_eight_of_api_operations(routed):
+def test_docs_json_lists_the_of_api_operations(routed):
     assert routed.get("/docs").status_code in (401, 404)
     spec = routed.get("/docs/json", headers=AUTH).json()
     ops = {op["operationId"]: (method, path, op)
@@ -202,6 +202,11 @@ def test_docs_json_lists_the_eight_of_api_operations(routed):
         "posts.get": ("get", "/of/posts/{postId}"),
         "vault.media.list": ("get", "/of/vault/media"),
         "vault.media.get": ("get", "/of/vault/media/{mediaId}"),
+        "of.passthrough.get": ("get", "/of/_of/{path}"),
+        "of.passthrough.post": ("post", "/of/_of/{path}"),
+        "of.passthrough.put": ("put", "/of/_of/{path}"),
+        "of.passthrough.patch": ("patch", "/of/_of/{path}"),
+        "of.passthrough.delete": ("delete", "/of/_of/{path}"),
     }
     for _, path, op in ops.values():
         assert path.startswith("/of/")
