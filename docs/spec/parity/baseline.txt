@@ -1,4 +1,3 @@
-DELETE bundles/{}
 DELETE chats/{}/messages/{}
 DELETE chats/{}/messages/{}/unlike
 DELETE chats/{}/messages/{}/unpin
@@ -46,7 +45,6 @@ GET media/vault
 GET media/vault/lists
 GET media/vault/lists/{}
 GET media/vault/{}
-GET notifications
 GET notifications/counts
 GET notifications/tabs-order
 GET payouts/balances
