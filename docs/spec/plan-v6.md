@@ -8,7 +8,8 @@ env var, and ships as **v2.1.0** (additive, §7). Principles: **YAGNI** (no new 
 and **no guessing**: a GET ships when its OF call is sourced or a derived candidate passes a read-only probe (§3); a
 write ships only under the rule in §1.2.
 
-**Size.** 32 operations ship on sources alone; 20 more ship only if their probe passes; 108 operations stay `?` (§4).
+**Size.** 32 operations ship on sources alone; 20 more ship only if their probe passes; 108 operations stay `?` (§4). After the §3
+probes: 43 operations ship and 117 stay `?` (§4).
 
 **Known gaps after v6** (a client written for the reference API hits these):
 - The 104 `?` rows (108 operations) below, plus any probe-gated row whose probe fails. They are reachable only
@@ -316,29 +317,33 @@ caps only; never ids or values).
 
 | Probe | Statuses | Evidence (keys, booleans, counts) | Decision |
 |---|---|---|---|
-| P01 | *pending* | | |
-| P02 | *pending* | | |
-| P03 | *pending* | | |
-| P04 | *pending* | | |
-| P05 | *pending* | | |
-| P06 | *pending* | | |
-| P07 | *pending* | | |
-| P08 + P19 | *pending* | | |
-| P09 + P20 | *pending* | | |
-| P10 | *pending* | | |
-| P11 | *pending* | | |
-| P12 + P22 | *pending* | | |
-| P13 + P22 | *pending* | | |
-| P22 promotions | *pending* | | |
-| P14 | *pending* | | |
-| P15 | *pending* | | |
-| P16 | *pending* | | |
-| P17 | *pending* | | |
-| P18 | *pending* | | |
-| P21 | *pending* | | |
-| P23 | *pending* | | |
-| P24 | *pending* | | |
-| Log purge | *pending* | first count, final count | |
+| P01 | 200 ×5 | `chats` `{list, hasMore, nextOffset}`; messages `{list, hasMore}`, item has `id`. `id=M1+1` → first is M1: same. `id=MO+1` → first is MO: same. MO ≠ M1: different. C2 first ≠ M1: true. | pass: v5 #1 S |
+| P02 | 200 ×1 (P02b not sent) | `messages/queue` is a bare array, len 0 | inconclusive (empty queue): v5 #2 `?` |
+| P03 | 200 ×1 (P03b, P03c not sent) | `{list, hasMore, order, sort}`, 22 lists; type `blocked`: 0, type `restricted`: 0 | fail: v5 #5, #6 `?`; the `users/{username}` validator stays |
+| P04 | 200 | user object; `has("notice")`: false | fail: v5 #7 `?` |
+| P05 | 200 | bare array, len 0; chartAmount, chartCount, total, delta: false | fail: v5 #18 `?` |
+| P06 | 200 | keys `purchases`, `messages`; group_messages + group_messages_purchases: false; direct_messages + direct_messages_purchases: false | fail: v5 #21 `?`; #20 stays `?` |
+| P07 | 200 ×2 | `{list, hasMore, nextOffset, order, sort, hashSort}`; item has `postsCount`: true; offset 0 vs 1: different | pass: posts #3 S, Pages offset |
+| P08 + P19 | 200 ×3 | `{list, hasMore, all, canCreateVaultLists, order, sort}`; limit 100 → count 18, hasMore false; offset 0 vs 1: different; `vault/lists/{id}` `.id == V`: true | #11 pass: S. #9 Pages offset; cap unknown (fewer folders than the page) → `vault_lists`' default 10 |
+| P09 + P20 | 200 ×3 | archive `{list, hasMore, marker}`; offset 0 vs 1: same; `stories/{id}` `.id == S`: true | #11 pass: S. #3 Pages none (OF ignores offset; it pages by `marker`) |
+| P10 | 200 | `{currentCode, isEnabled, options}`; onekey: `top` | pass: saved-for-later #2 S, `data` is the whole object |
+| P11 | 200 | `{currentCode, isEnabled, options}`; onekey: `top` | pass: saved-for-later #6 S, `data` is the whole object |
+| P12 + P22 | 200, 200, 404 | `campaigns` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `campaigns/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0 |
+| P13 + P22 | 200, 200, 404 | `trials` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `trials/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0 |
+| P22 promotions | 200 ×2 | `{hasMore, items}`, limit 1 → len 1; offset 0 vs 1: different | pass: promotions #1 Pages adaptor |
+| P14 | 200 | `has("blockedCountries")`: true; drmkey: `isDrmEnabled` | pass: settings #2, #4 S |
+| P15 | 200 ×3 | `{list, marker}` on all three; list len 0 (no chargebacks); paging: inconclusive; dates: 200 | gate pass: v5 #17 S; Pages none (P15 paging inconclusive); dates sent |
+| P16 | 200 ×4 | `direct` and `group` both `{hasMore, items}`; default page len 10, limit 1 → len 1; offset 0 vs 1: same on both | gate pass: v5 #19 S, Pages none. `group` ignores offset: the §1.8.1 fix applies |
+| P17 | 200 | `{purchases}` | gate pass: v5 #22 S |
+| P18 | 200 ×4 | `posts` bare array, len 1; comments bare array, len 0 on all three | inconclusive (no comments): posts #9 Pages none, `sort=asc` 422 |
+| P21 | 200 ×2 | `{list, hasMore, syncInProcess}`, len 0 | inconclusive (empty): saved-for-later #1 Pages none |
+| P23 | 200 | bare array, len 0; check: false | fail: settings #14 `?` |
+| P24 | 200 ×2 | `{items, hasMore}`, item has `id`; offset 0 vs 1: different | pass: release-forms #6 Pages adaptor |
+| Log purge | psql | first count 46 (= n); bodies on status < 400: 0; bodies on status >= 400: 2 (the two 404s, LOG_BODIES default `errors`); deleted 46; final count 0 | done |
+
+Run 2026-10-04: 46 requests (three follow-up calls not sent because their chained id was empty), no stop. Pre-checks:
+`OF_REQUIRE_PROXY` `true` in the upstream container; the `.env` grep was skipped (the container value is the decisive
+one); key `v6-probe`, scope `read`.
 
 ---
 
@@ -364,22 +369,22 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | # | M | Tail | Module | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|---|
-| 1 | GET | `chats/{chat_id}/messages/{message_id}` | chats | cand: c:`get_messages(chat_id, limit=1, order="desc", before_id=message_id + 1)` (OF's `id` is an older-than bound, `of_client.py:461-463`). Reshape §2.1 #1. P01. | — | none | L |
-| 2 | GET | `mass-messaging/{mass_messaging}` | chats | cand: `messages/queue/{id}`, the resource c:`cancel_scheduled` deletes. OF's object as is. P02. | — | none | L |
-| 5 | GET | `users/blocked` | fans | cand: c:`list_users_in("<word>")`, the word P03 recorded. Declared before `users/{username}`. | q limit (≤20), offset; query dropped | offset (v5's `user-lists/{id}/users` call) | L |
-| 6 | GET | `users/restricted` | fans | as #5, the restricted list. P03. | as #5 | as #5 | L |
-| 7 | GET | `fans/{fan_id}/notes` | fans | cand: c:`get_user(fan_id)` → `{"notes": <notice>}` (§2.1 #2). **Assumption:** `notice` on `users/{id}` is the note c:`set_fan_note` writes on `subscriptions/{id}`; `of_client.py:1873-1876` calls fan notes a third-party feature. P04 only shows the key exists. | — | none | L |
-| 17 | GET | `chargebacks` | money | x:`payouts/chargebacks` | q start_date, end_date (empty = all; sent per P15), limit, offset | offset (P15) | S·gate P15 |
-| 18 | GET | `chargebacks/statistics` | money | cand: x:`payouts/chargebacks/chart`. P05. | q start_date, end_date | none | L |
-| 19 | GET | `engagement/messages/direct-messages` | money | x:`users/me/stats/messages/direct`, the direct twin of v5's `…/group` call | q startDate*, endDate*, limit, offset; query dropped | adaptor (P16) | S·gate P16 |
-| 21 | GET | `engagement/messages/mass-messages/chart` | money | cand: x:`messages/queue/chart`. P06. | q startDate, endDate, withTotal | none | L |
-| 22 | GET | `engagement/messages/top-message` | money | x:`users/me/stats/top/message` | q startDate, endDate | none | S·gate P17 |
+| 1 | GET | `chats/{chat_id}/messages/{message_id}` | chats | cand: c:`get_messages(chat_id, limit=1, order="desc", before_id=message_id + 1)` (OF's `id` is an older-than bound, `of_client.py:461-463`). Reshape §2.1 #1. P01 passed. | — | none | S |
+| 2 | GET | `mass-messaging/{mass_messaging}` | chats | cand: `messages/queue/{id}`, the resource c:`cancel_scheduled` deletes. OF's object as is. P02 inconclusive. | — | none | `?` |
+| 5 | GET | `users/blocked` | fans | cand: c:`list_users_in("<word>")`, the word P03 recorded. Declared before `users/{username}`. | q limit (≤20), offset; query dropped | offset (v5's `user-lists/{id}/users` call) | `?` (P03) |
+| 6 | GET | `users/restricted` | fans | as #5, the restricted list. P03. | as #5 | as #5 | `?` (P03) |
+| 7 | GET | `fans/{fan_id}/notes` | fans | cand: c:`get_user(fan_id)` → `{"notes": <notice>}` (§2.1 #2). **Assumption:** `notice` on `users/{id}` is the note c:`set_fan_note` writes on `subscriptions/{id}`; `of_client.py:1873-1876` calls fan notes a third-party feature. P04 only shows the key exists. | — | none | `?` (P04) |
+| 17 | GET | `chargebacks` | money | x:`payouts/chargebacks` | q start_date, end_date (empty = all; sent, P15), limit, offset | none (P15) | S (P15) |
+| 18 | GET | `chargebacks/statistics` | money | cand: x:`payouts/chargebacks/chart`. P05. | q start_date, end_date | none | `?` (P05) |
+| 19 | GET | `engagement/messages/direct-messages` | money | x:`users/me/stats/messages/direct`, the direct twin of v5's `…/group` call | q startDate*, endDate*, limit, offset; query dropped | none (P16) | S (P16) |
+| 21 | GET | `engagement/messages/mass-messages/chart` | money | cand: x:`messages/queue/chart`. P06. | q startDate, endDate, withTotal | none | `?` (P06) |
+| 22 | GET | `engagement/messages/top-message` | money | x:`users/me/stats/top/message` | q startDate, endDate | none | S (P17) |
 | 32 | DELETE | `fans/{fan_id}/notes` | fans | c:`set_fan_note(fan_id, "")` → `PUT subscriptions/{fan_id} {"notice": ""}` (VERIFIED LIVE; an empty string clears) | — | — | S |
 
 - `?` (23 rows, 24 ops): #3 `GET me/top-percentage`; #8 `GET fans/{user_id}/subscriptions-history`; #9
   `GET user-lists/{userListId}/users/pinned`; #10–16 `GET banking/available-payout-systems`, `banking/countries`,
   `banking/details/account-country`, `…/bank`, `…/dac7-form`, `…/legal-form`, `…/legal-info` (never probed, §9 Q2);
-  #20 `GET engagement/messages/direct-messages/chart` (P06 may promote it); #23
+  #20 `GET engagement/messages/direct-messages/chart` (P06 did not promote it); #23
   `GET engagement/messages/{message_id}/buyers`; #24 `GET statistics/subscriber-metrics` (computed by the reference);
   #25 `GET statistics/total-transactions` (no data shape in the yaml); #27 `DELETE chats/{chat_id}`; #28
   `POST chats/{chat_id}/typing`; #29 `POST messages/{queue_id}/attach-tags`; #30 `PUT, PATCH
@@ -389,6 +394,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
   `POST payouts/request-manual-withdrawal` (§9 Q6).
 - `?ref` (2): #4 `GET session`; #26 `GET workflows/account-performance/starting-revenues`.
 - **Totals:** 36 rows (37 ops): S 1, S·gate 3, L 7, `?` 25 rows (26 ops), 2 of them *ref*.
+- **After §3:** S 5 (#1, #17, #19, #22, #32), `?` 31 rows (32 ops): the list above plus #2, #5, #6, #7, #18, #21.
 
 ### content (`content.py`)
 
@@ -397,9 +403,9 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
 | 2 | POST | `posts` | c:`create_post` → `POST posts`. The CONFIRMED live post (`of_client.py:1920-1925`) carried text, mediaFiles, price and preview. | body text*, mediaFiles (vault ids), previews (→ OF `preview`). 422 when set: scheduledDate, expireDays, fundRaisingTargetAmount, fundRaisingTipsPresets, labelIds, rfTag, saveForLater, votingType, votingOptions, votingDue, votingCorrectIndex, blockBannedWords. The yaml has no price, so posts are free (`price` 0). | — | S |
-| 3 | GET | `posts/labels` | cand: c:`labels` → `labels` (its docstring says fan labels; P07 checks they are post labels). `request_json` with limit and offset when P07's paging passes, else bare `labels()`. | q limit, offset | offset (P07) | L |
+| 3 | GET | `posts/labels` | cand: c:`labels` → `labels` (its docstring says fan labels; P07 checks they are post labels). `request_json` with limit and offset when P07's paging passes, else bare `labels()`. | q limit, offset | offset (P07) | S (P07) |
 | 7 | DELETE | `posts/{post_id}` | c:`delete_post` (body-less, §1.2) | — | — | S |
-| 9 | GET | `posts/{post_id}/comments` | c:`post_comments` → `posts/{id}/comments` | q limit, offset, sort (desc → `publish_date_desc`; asc → `publish_date_asc` if P18 passes, else 422) | offset (P18) | S |
+| 9 | GET | `posts/{post_id}/comments` | c:`post_comments` → `posts/{id}/comments` | q limit, offset, sort (desc → `publish_date_desc`; asc → `publish_date_asc` if P18 passes, else 422) | none (P18) | S |
 
 - `?` (12 rows, 13 ops): #4 `POST posts/labels`; #6 `PUT, PATCH posts/{post_id}` (2 ops; c:`edit_post`'s `PUT` effect
   is unverified, §1.2); #8 `POST posts/{post_id}/archive`; #10 `POST posts/{post_id}/comments` (c:`comment_on_post`'s
@@ -413,9 +419,9 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
-| 9 | GET | `media/vault/lists` | c:`vault_lists(view="main", limit, offset)` | q limit (≤ P19's cap), offset; query and lightweight dropped | offset (P19) | S |
+| 9 | GET | `media/vault/lists` | c:`vault_lists(view="main", limit, offset)` | q limit (≤ 10, P19's cap), offset; query and lightweight dropped | offset (P19) | S |
 | 10 | POST | `media/vault/lists` | c:`create_vault_list` (CONFIRMED, `of_client.py:940-944`) | body name* | — | S |
-| 11 | GET | `media/vault/lists/{list_id}` | cand: `vault/lists/{id}`, the resource c:`rename_vault_list` and c:`delete_vault_list` write. P08. | — | none | L |
+| 11 | GET | `media/vault/lists/{list_id}` | cand: `vault/lists/{id}`, the resource c:`rename_vault_list` and c:`delete_vault_list` write. P08. | — | none | S (P08) |
 | 12 | PUT, PATCH | `media/vault/lists/{list_id}` | c:`rename_vault_list` → `PATCH vault/lists/{id}` (CONFIRMED, `:955-961`) | body name* | — | S (2 ops) |
 | 13 | DELETE | `media/vault/lists/{list_id}` | c:`delete_vault_list(clear_media=False)`: the media stay in the vault (CONFIRMED, `:963-970`) | — | — | S |
 | 14 | POST | `media/vault/lists/{list_id}/media` | c:`add_media_to_vault_list` (CONFIRMED, `:946-953`) | body mediaIds* (min 1) | — | S |
@@ -432,9 +438,9 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
 | 1 | GET | `stories` | c:`my_stories` → `users/me/stories` | — | none | S |
-| 3 | GET | `stories/archive` | c:`my_stories_archive(limit, offset)` → `stories/archive` | q limit; marker 422 when set (§2.3) | offset (P20) | S |
+| 3 | GET | `stories/archive` | c:`my_stories_archive(limit, offset)` → `stories/archive` | q limit; marker 422 when set (§2.3) | none (P20) | S |
 | 4 | GET | `stories/highlights` | c:`user_highlights(client.user_id)` → `users/{me}/stories/highlights` (the method takes no paging) | q limit dropped; offset 422 above 0 | none | S |
-| 11 | GET | `stories/{story_id}` | cand: `stories/{id}`, the resource c:`delete_story` deletes. P09. | — | none | L |
+| 11 | GET | `stories/{story_id}` | cand: `stories/{id}`, the resource c:`delete_story` deletes. P09. | — | none | S (P09) |
 | 12 | DELETE | `stories/{story_id}` | c:`delete_story` (body-less, §1.2) | — | — | S |
 
 - `?` (10 rows, 11 ops): #2 `POST stories`; #5 `POST stories/highlights`; #6 `GET stories/highlights/{highlight_id}`;
@@ -447,28 +453,29 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
-| 1 | GET | `saved-for-later/messages` | c:`schedules_later_chat(limit=…)` → `schedules/later/chat`; with P21 passing, `request_json` on the same path with limit and offset | q limit, offset | offset (P21) | S |
-| 2 | GET | `saved-for-later/messages/settings` | cand: c:`settings_chat` (`users/settings/chat`), reshaped (§2.1 #3). P10. | — | none | L |
+| 1 | GET | `saved-for-later/messages` | c:`schedules_later_chat(limit=…)` → `schedules/later/chat`; with P21 passing, `request_json` on the same path with limit and offset | q limit, offset | none (P21) | S |
+| 2 | GET | `saved-for-later/messages/settings` | cand: c:`settings_chat` (`users/settings/chat`), reshaped (§2.1 #3). P10. | — | none | S (P10) |
 | 5 | GET | `saved-for-later/posts` | c:`schedules_later_post(limit, offset)` → `schedules/later/post` (its docstring: offset pages) | q limit, offset | offset | S |
-| 6 | GET | `saved-for-later/posts/settings` | cand: c:`settings_post` (`users/settings/post`), reshaped (§2.1 #3). P11. | — | none | L |
+| 6 | GET | `saved-for-later/posts/settings` | cand: c:`settings_post` (`users/settings/post`), reshaped (§2.1 #3). P11. | — | none | S (P11) |
 
 - `?` (4): #3 `PATCH …/messages/settings/disable-automatic-messaging`; #4 `PATCH
   …/messages/settings/enable-or-update-automatic-messaging`; #7 `PATCH …/posts/settings/disable-automatic-posting`; #8
   `PATCH …/posts/settings/enable-or-update-automatic-posting`.
 - **Content totals:** 57 rows (60 ops): *have* 4, S 14 rows (15 ops), L 5, `?` 28 rows (30 ops), out 6.
+- **After §3:** all five L rows passed: S 19 rows (20 ops), L 0.
 
 ### promo (`promo.py`)
 
 | Group | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|---|
-| tracking-links | 1 | GET | `tracking-links` | c:`tracking_links()` → `campaigns` (also x:`campaigns`); with P22 passing, `request_json` on `campaigns` with limit and offset | q limit, offset; startDate, endDate, with_deleted, sortby, sort, pagination, synchronous dropped | offset (P22) | S |
+| tracking-links | 1 | GET | `tracking-links` | c:`tracking_links()` → `campaigns` (also x:`campaigns`); with P22 passing, `request_json` on `campaigns` with limit and offset | q limit, offset; startDate, endDate, with_deleted, sortby, sort, pagination, synchronous dropped | none (P22: bare array) | S |
 | tracking-links | 2 | POST | `tracking-links` | c:`create_tracking_link(name=…)` → `POST campaigns {name}` (VERIFIED LIVE, `of_client.py:1807-1817`) | body name*; tags 422 when set | — | S |
-| tracking-links | 3 | GET | `tracking-links/{tracking_link_id}` | cand: `campaigns/{id}`, the resource c:`delete_tracking_link` deletes. P12. | — | none | L |
+| tracking-links | 3 | GET | `tracking-links/{tracking_link_id}` | cand: `campaigns/{id}`, the resource c:`delete_tracking_link` deletes. P12. | — | none | `?` (P12) |
 | tracking-links | 4 | DELETE | `tracking-links/{tracking_link_id}` | c:`delete_tracking_link` (body-less) | — | — | S |
-| trial-links | 1 | GET | `trial-links` | c:`trial_links(offset, limit)` → `trials` (limit verified live) | q limit, offset; startDate, endDate, sort, field, synchronous dropped | offset (P22) | S |
-| trial-links | 3 | GET | `trial-links/{trial_link_id}` | cand: `trials/{id}`, the resource c:`delete_trial_link` deletes. P13. | — | none | L |
+| trial-links | 1 | GET | `trial-links` | c:`trial_links(offset, limit)` → `trials` (limit verified live) | q limit, offset; startDate, endDate, sort, field, synchronous dropped | none (P22: bare array) | S |
+| trial-links | 3 | GET | `trial-links/{trial_link_id}` | cand: `trials/{id}`, the resource c:`delete_trial_link` deletes. P13. | — | none | `?` (P13) |
 | trial-links | 4 | DELETE | `trial-links/{trial_link_id}` | c:`delete_trial_link` (body-less) | — | — | S |
-| promotions | 1 | GET | `promotions` | c:`promotions(offset, limit)` → `promotions` (hasMore unreliable: full-page rule) | q limit, offset | offset (P22) | S |
+| promotions | 1 | GET | `promotions` | c:`promotions(offset, limit)` → `promotions` (hasMore unreliable: full-page rule) | q limit, offset | adaptor (P22: `{hasMore, items}`) | S |
 | promotions | 3 | DELETE | `promotions/{promotion_id}` | c:`delete_promo` (body-less) | — | — | S |
 | bundles | 5 | GET | `bundles` | c:`subscription_bundles` → `subscriptions/bundles` | — | none | S |
 | bundles | 7 | DELETE | `bundles/{bundle_id}` | c:`delete_bundle` (body-less) | — | — | S |
@@ -486,18 +493,19 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
   trial-links; `GET, POST, DELETE shared-tracking-links/{id}/tags` and `shared-trial-links/{id}/tags` (6);
   `GET stored/shared-tracking-links`, `stored/shared-trial-links`, `stored/tracking-links`, `stored/trial-links` (4).
 - **Promo totals:** 43 rows (43 ops): S 9, L 2, `?` 32, 20 of them *ref*.
+- **After §3:** tracking-links #3 and trial-links #3 failed: S 9, L 0, `?` 34, 20 of them *ref*.
 
 ### settings (`settings.py`)
 
 | Group | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|---|
 | settings | 1 | GET | `settings` | c:`my_settings` → `users/me/settings` | — | none | S |
-| settings | 2 | GET | `settings/blocked-countries` | cand: the key `blockedCountries` of `users/me/settings` (§2.1 #4). P14. | — | none | L |
-| settings | 4 | GET | `settings/drm` | cand: the DRM boolean P14 names in `users/me/settings` (§2.1 #5). P14. | — | none | L |
+| settings | 2 | GET | `settings/blocked-countries` | cand: the key `blockedCountries` of `users/me/settings` (§2.1 #4). P14. | — | none | S (P14) |
+| settings | 4 | GET | `settings/drm` | cand: the DRM boolean P14 names in `users/me/settings` (§2.1 #5). P14. | — | none | S (P14) |
 | settings | 6 | POST | `settings/profile` | c:`update_profile(about=…)` → `PATCH users/me` (`about` verified live, `of_client.py:1861-1867`) | body about; name, location, website, wishlist ("likely" in the docstring), username, avatar, header: 422 when set; no `about` → 422 | — | S |
 | settings | 7 | GET | `settings/social-media-buttons` | c:`user_social_buttons(client.user_id)` → `users/{me}/social/buttons` (also x:) | — | none | S |
-| settings | 14 | GET | `settings/welcome-message` | c:`message_templates(template="reply_on_subscribe")` (§2.1 #6) | — | none | S·gate P23 |
-| release-forms | 6 | GET | `release-forms/taggable-users` | c:`tagged_friend_users` → `posts/tagged-friend-users` (captured live; the post and chat tag picker) | q limit, offset, name (→ OF `name` search); filter `all`, sort `date`, sortDirection `desc` (the captured call; other values 422) | adaptor (P24) | S |
+| settings | 14 | GET | `settings/welcome-message` | c:`message_templates(template="reply_on_subscribe")` (§2.1 #6) | — | none | `?` (P23) |
+| release-forms | 6 | GET | `release-forms/taggable-users` | c:`tagged_friend_users` → `posts/tagged-friend-users` (captured live; the post and chat tag picker) | q limit, offset, name (→ OF `name` search); filter `all`, sort `date`, sortDirection `desc` (the captured call; other values 422) | adaptor (P24 passed) | S |
 | notifications | 8 | GET | `notifications` | c:`notifications(limit, type)` → `users/notifications` | q limit, type: all → none, subscriptions → subscribed, tips → tipped, comments → commented, mentions → mentioned (verified live in the client); other values `422 unsupported_type`. skip_users dropped; from_id 422 when set. | none (never probed, §3) | S |
 | notifications | 9 | GET | `notifications/counts` | c:`notifications_count` → `users/notifications/count` | — | none | S |
 | notifications | 12 | GET | `notifications/tabs-order` | c:`notification_tabs_order` | — | none | S |
@@ -513,6 +521,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
   `PATCH …/toggle-show`; notifications #10 `POST notifications/mark-all-as-read`, #11 `GET notifications/search-users`
   (c:`search_users` is the global user search, not this), #13 `PUT notifications/tabs-order`.
 - **Settings totals:** 29 rows (30 ops): S 7, S·gate 1, L 2, `?` 19 rows (20 ops).
+- **After §3:** settings #2 and #4 passed, #14 failed: S 9, S·gate 0, L 0, `?` 20 rows (21 ops).
 
 ### Wave acceptance
 - Every S row and every passing probe-gated row is served; every failed one is `?` and listed in the inventory's
@@ -541,6 +550,18 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 | settings | 29 (30) | 0 | 7 (7) | 1 | 2 | 19 (20) | 0 | 0 |
 | **Total** | **165 (170)** | **4** | **31 (32)** | **4** | **16** | **104 (108)** | **22** | **6** |
 
+**After the §3 probes (2026-10-04):** 11 probe-gated operations pass (v5 #1, #17, #19, #22; posts #3, media #11,
+stories #11, saved-for-later #2, #6; settings #2, #4); 9 fail (v5 #2, #5, #6, #7, #18, #21; tracking-links #3,
+trial-links #3; settings #14), and P06 does not promote v5 #20.
+
+| Group | Rows (ops) | have | S rows (ops) | S·gate | L | `?` rows (ops) | of which *ref* | out |
+|---|---|---|---|---|---|---|---|---|
+| v5 open rows | 36 (37) | 0 | 5 (5) | 0 | 0 | 31 (32) | 2 | 0 |
+| content | 57 (60) | 4 | 19 (20) | 0 | 0 | 28 (30) | 0 | 6 |
+| promo | 43 (43) | 0 | 9 (9) | 0 | 0 | 34 (34) | 20 | 0 |
+| settings | 29 (30) | 0 | 9 (9) | 0 | 0 | 20 (21) | 0 | 0 |
+| **Total** | **165 (170)** | **4** | **42 (43)** | **0** | **0** | **113 (117)** | **22** | **6** |
+
 - **Ship now:** 32 operations (31 rows). **Probe-gated:** 20 operations (16 L + 4 S·gate), plus v5 #20 if P06
   promotes it.
 - **Writes that ship:** 15 operations (14 rows), all part of the 32: `DELETE fans/{fan_id}/notes`, `POST posts`,
@@ -554,9 +575,10 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 |---|---|---|
 | today | 73 | 73 |
 | after `v6/parity` | **105** | **125** (126 if P06 promotes v5 #20) |
+| after `v6/parity`, per the §3 results | **116** | **116** |
 
 Of 239 in-scope operations, 114–134 stay missing after v6 (113 with v5 #20): the 108 `?` operations, the 6 out
-rows and any failed probe-gated row.
+rows and any failed probe-gated row. Per the §3 results: **123** (117 `?` + 6 out).
 
 ## 5. Env additions
 
