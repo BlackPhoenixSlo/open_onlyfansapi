@@ -131,18 +131,14 @@ def _items(n, has_more):
     return {"hasMore": has_more, "items": [{"id": 1010 - i} for i in range(n)]}
 
 
-@pytest.mark.parametrize(("body", "header"), [
-    (_items(2, True), "/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=6"),
-    (_items(1, True), None),   # short page
-    (_items(2, False), None),  # OF says no more
-    ({"hasMore": True, "items": None}, None),
-])
-def test_overview_pages_its_items(client, of_fake, body, header):
+@pytest.mark.parametrize("body", [_items(2, True), _items(1, True), _items(2, False), {"hasMore": True, "items": None}])
+def test_overview_sets_no_next_page(client, of_fake, body):
+    """OF ignores `offset` here and always reports `hasMore`: a next page would re-read page 1 (plan-v6 §1.8.1)."""
     of_fake.respond(body)
     r = client.get("/of/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=4",
                    headers=H)
     assert r.json() == body  # OF's `{hasMore, items}` is the `data` value
-    assert r.headers.get("x-next-page") == header
+    assert "x-next-page" not in r.headers
 
 
 def test_mass_message_maps_the_body_to_of(client, of_fake):

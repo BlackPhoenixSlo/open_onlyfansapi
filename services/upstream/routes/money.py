@@ -86,14 +86,10 @@ def statistics_statements_earnings(client: Client, start_date: str, end_date: st
 
 @router.get("/engagement/messages/mass-messages", operation_id="engagement.messages.mass_messages.list")
 def engagement_mass_messages(
-    request: Request, response: Response, client: Client, startDate: str, endDate: str,
+    client: Client, startDate: str, endDate: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    """The reference's `query` is not supported: OF's mass-message stats call does not take it."""
-    page = client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
-    # OF's page here is `{hasMore, items}`, not `{list, hasMore}`.
-    if isinstance(page, dict):
-        next_page(request, response, {"list": page.get("items"), "hasMore": page.get("hasMore")}, limit,
-                  {"startDate": startDate, "endDate": endDate}, offset=offset + limit)
-    return page
+    """The reference's `query` is not supported: OF's mass-message stats call does not take it. No
+    `x-next-page`: OF ignores `offset` on this call and always reports `hasMore` (plan-v6 §1.8.1)."""
+    return client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)

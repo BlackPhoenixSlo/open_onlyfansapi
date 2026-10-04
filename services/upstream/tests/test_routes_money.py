@@ -79,17 +79,14 @@ def test_offset_lists_set_a_next_page(client, of_fake, path, items, has_more, he
     assert r.headers.get("x-next-page") == header
 
 
-@pytest.mark.parametrize(("items", "has_more", "header"), [
-    (2, True, f"/engagement/messages/mass-messages?startDate={D1}&endDate={D2}&limit=2&offset=6"),
-    (1, True, None),
-    (2, False, None),
-])
-def test_mass_messages_page_on_items(client, of_fake, items, has_more, header):
+@pytest.mark.parametrize(("items", "has_more"), [(2, True), (1, True), (2, False)])
+def test_mass_messages_set_no_next_page(client, of_fake, items, has_more):
+    """OF ignores `offset` here and always reports `hasMore`: a next page would re-read page 1 (plan-v6 §1.8.1)."""
     of_fake.respond(_page(items, has_more, key="items"))
     r = client.get(f"/of/engagement/messages/mass-messages?startDate={D1}&endDate={D2}&limit=2&offset=4",
                    headers=H)
     assert r.status_code == 200 and r.json() == _page(items, has_more, key="items")
-    assert r.headers.get("x-next-page") == header
+    assert "x-next-page" not in r.headers
 
 
 @pytest.mark.parametrize("path", [
