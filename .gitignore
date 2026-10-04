@@ -35,3 +35,7 @@ services/upstream/data/
 .idea/
 .vscode/
 *.log
+
+# OF session captures for connect.py (never commit)
+curl.txt
+*.curl.txt
