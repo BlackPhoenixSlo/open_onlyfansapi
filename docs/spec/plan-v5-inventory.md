@@ -74,6 +74,19 @@ passthrough mapping.
 `search`), `media/vault`, `user-lists`, `me`, and the §9 Q6 passthrough. Observed, not changed: a missing required
 query param surfaces as FastAPI's `{"detail":[…]}` 422, not the gateway error envelope.
 
+## v6 execution notes (2026-10-04, v6/parity)
+
+Plan-v6 is canonical for the v6 rows; these are the implementation decisions it leaves open.
+- `GET chargebacks`: the reference's `limit` is a `422 unsupported_field` when set, and `offset` above 0 is too.
+  P15 was inconclusive (no chargebacks on the account), so OF's page size and paging on `payouts/chargebacks` are
+  unverified. OF pages by its own `marker`: a non-null `marker` in `data` means more chargebacks exist.
+- `GET release-forms/taggable-users`: only the captured OF call is served: `filter=all`, `sort=date`,
+  `sortDirection=desc` (our defaults; any other value is a `422 unsupported_field`). The reference yaml gives no
+  defaults for these three. `limit` defaults to 20 and is clamped to 20 (`tagged_friend_users`' default page);
+  `name` is OF's name search.
+- Moved to `?` in the review: `GET notifications` (OF's list call may mark notifications read; never probed) and
+  `DELETE bundles/{bundle_id}` (changes pricing, plan-v6 §9 Q6).
+
 ## A. Per-account named routes
 
 Paths are relative: theirs to `api/{account}`, ours to `/v1/{account}`. Ours resolve via the gateway proxy to upstream `/of/<rest>`. Note column: Laravel route name (omitted when auto-generated), `client:` = an `OFClient` method in `services/upstream/of_client.py` that already wraps the matching OnlyFans call (route not exposed), "not in yaml" = route table only. No streams routes exist in either of their sources.

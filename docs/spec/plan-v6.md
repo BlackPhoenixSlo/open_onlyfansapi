@@ -9,7 +9,8 @@ and **no guessing**: a GET ships when its OF call is sourced or a derived candid
 write ships only under the rule in §1.2.
 
 **Size.** 32 operations ship on sources alone; 20 more ship only if their probe passes; 108 operations stay `?` (§4). After the §3
-probes: 43 operations ship and 117 stay `?` (§4).
+probes: 43 operations ship and 117 stay `?` (§4). After the implementation review: 41 ship and 119 stay `?`
+(`GET notifications` and `DELETE bundles/{bundle_id}` moved to `?`, §4).
 
 **Known gaps after v6** (a client written for the reference API hits these):
 - The 104 `?` rows (108 operations) below, plus any probe-gated row whose probe fails. They are reachable only
@@ -166,7 +167,9 @@ plan-v5 applies. §1.8.1 is the only change to a v5 route, a bug fix.
 ### 2.3 GET parameters and pagination
 - The v5 rules apply:
   - query parameters are plain typed values with defaults;
-  - reference **filter** parameters OF cannot take are accepted and dropped, and the docstring lists them;
+  - reference **filter** parameters OF cannot take: on v6 routes, narrowing ones (search, date window, sort,
+    deleted) are declared and answer `422 unsupported_field` when set; cosmetic ones (response size, sync mode,
+    `pagination`, `skip_users`) are accepted and ignored. The docstring lists both;
   - `x-next-page` follows the full-page rule via `routes.shape.next_page`.
 
   An OF page that is not `{list, hasMore}` goes through the v5 adaptor
@@ -176,13 +179,13 @@ plan-v5 applies. §1.8.1 is the only change to a v5 route, a bug fix.
 - **A cursor we cannot honour is a 422, never a silent page 1** (§1.8.2). The reference's own cursors (`from_id`,
   `marker`) are declared and answer `422 unsupported_field` when set. A row sends `offset` and emits `x-next-page`
   only when its probe shows that OF's first item at `offset=limit` differs from the one at `offset=0`; otherwise
-  the row's Pages is `none`, it emits no `x-next-page`, and `offset` answers 422 when it is above 0. The same holds
-  when OF's page is a bare array or carries no `hasMore`: `next_page` only reads `list` and `hasMore`
-  (`shape.py:12,25`), and the adaptor only maps `items`, so such a row is `none` whatever P12, P13 or P22 show about
-  offset. A declared
+  the row's Pages is `none`, it emits no `x-next-page`, and `offset` answers 422 when it is above 0. A bare array
+  whose probe proves offset paging (P12, P13) is paged through the adaptor `{"list": page, "hasMore": True}`, so the
+  full-page rule alone decides; any other page without `list`/`items` and `hasMore` stays `none`. A declared
   parameter with a value we cannot map (`sort=asc` without P18) is the same 422.
 - **Limit caps** (`le=`) never exceed what OF honours for that call, so a full page is reachable. Where the cap is
-  unknown, it comes from the probe (§3) or defaults to the `OFClient` method's default.
+  unknown, it comes from the probe (§3) or defaults to the `OFClient` method's default. On paging routes a larger
+  `limit` is clamped to the cap rather than refused, so a full page still yields `x-next-page`.
 
 ### 2.4 Routing
 - Within a module, literal paths come before parameter paths (plan-v5 §2.2):
@@ -374,9 +377,9 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 | 5 | GET | `users/blocked` | fans | cand: c:`list_users_in("<word>")`, the word P03 recorded. Declared before `users/{username}`. | q limit (≤20), offset; query dropped | offset (v5's `user-lists/{id}/users` call) | `?` (P03) |
 | 6 | GET | `users/restricted` | fans | as #5, the restricted list. P03. | as #5 | as #5 | `?` (P03) |
 | 7 | GET | `fans/{fan_id}/notes` | fans | cand: c:`get_user(fan_id)` → `{"notes": <notice>}` (§2.1 #2). **Assumption:** `notice` on `users/{id}` is the note c:`set_fan_note` writes on `subscriptions/{id}`; `of_client.py:1873-1876` calls fan notes a third-party feature. P04 only shows the key exists. | — | none | `?` (P04) |
-| 17 | GET | `chargebacks` | money | x:`payouts/chargebacks` | q start_date, end_date (empty = all; sent, P15), limit, offset | none (P15) | S (P15) |
+| 17 | GET | `chargebacks` | money | x:`payouts/chargebacks` | q start_date, end_date (empty = all; sent, P15); limit 422 when set (OF page size unverified); offset | none (P15) | S (P15) |
 | 18 | GET | `chargebacks/statistics` | money | cand: x:`payouts/chargebacks/chart`. P05. | q start_date, end_date | none | `?` (P05) |
-| 19 | GET | `engagement/messages/direct-messages` | money | x:`users/me/stats/messages/direct`, the direct twin of v5's `…/group` call | q startDate*, endDate*, limit, offset; query dropped | none (P16) | S (P16) |
+| 19 | GET | `engagement/messages/direct-messages` | money | x:`users/me/stats/messages/direct`, the direct twin of v5's `…/group` call | q startDate*, endDate*, limit, offset; query 422 when set | none (P16) | S (P16) |
 | 21 | GET | `engagement/messages/mass-messages/chart` | money | cand: x:`messages/queue/chart`. P06. | q startDate, endDate, withTotal | none | `?` (P06) |
 | 22 | GET | `engagement/messages/top-message` | money | x:`users/me/stats/top/message` | q startDate, endDate | none | S (P17) |
 | 32 | DELETE | `fans/{fan_id}/notes` | fans | c:`set_fan_note(fan_id, "")` → `PUT subscriptions/{fan_id} {"notice": ""}` (VERIFIED LIVE; an empty string clears) | — | — | S |
@@ -402,7 +405,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
-| 2 | POST | `posts` | c:`create_post` → `POST posts`. The CONFIRMED live post (`of_client.py:1920-1925`) carried text, mediaFiles, price and preview. | body text*, mediaFiles (vault ids), previews (→ OF `preview`). 422 when set: scheduledDate, expireDays, fundRaisingTargetAmount, fundRaisingTipsPresets, labelIds, rfTag, saveForLater, votingType, votingOptions, votingDue, votingCorrectIndex, blockBannedWords. The yaml has no price, so posts are free (`price` 0). | — | S |
+| 2 | POST | `posts` | c:`create_post` → `POST posts`. The CONFIRMED live post (`of_client.py:1920-1925`) carried text, mediaFiles, price and preview. | body text*, mediaFiles (vault ids). 422 when set (no-op check on the raw JSON value): previews (`preview` is confirmed on paid posts only), scheduledDate, expireDays, fundRaisingTargetAmount, fundRaisingTipsPresets, labelIds, rfTag, saveForLater, votingType, votingOptions, votingDue, votingCorrectIndex, blockBannedWords. The yaml has no price, so posts are free (`price` 0). | — | S |
 | 3 | GET | `posts/labels` | cand: c:`labels` → `labels` (its docstring says fan labels; P07 checks they are post labels). `request_json` with limit and offset when P07's paging passes, else bare `labels()`. | q limit, offset | offset (P07) | S (P07) |
 | 7 | DELETE | `posts/{post_id}` | c:`delete_post` (body-less, §1.2) | — | — | S |
 | 9 | GET | `posts/{post_id}/comments` | c:`post_comments` → `posts/{id}/comments` | q limit, offset, sort (desc → `publish_date_desc`; asc → `publish_date_asc` if P18 passes, else 422) | none (P18) | S |
@@ -419,7 +422,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|
-| 9 | GET | `media/vault/lists` | c:`vault_lists(view="main", limit, offset)` | q limit (≤ 10, P19's cap), offset; query and lightweight dropped | offset (P19) | S |
+| 9 | GET | `media/vault/lists` | c:`vault_lists(view="main", limit, offset)` | q limit (clamped to 10, P19's cap), offset; query 422 when set; lightweight dropped | offset (P19) | S |
 | 10 | POST | `media/vault/lists` | c:`create_vault_list` (CONFIRMED, `of_client.py:940-944`) | body name* | — | S |
 | 11 | GET | `media/vault/lists/{list_id}` | cand: `vault/lists/{id}`, the resource c:`rename_vault_list` and c:`delete_vault_list` write. P08. | — | none | S (P08) |
 | 12 | PUT, PATCH | `media/vault/lists/{list_id}` | c:`rename_vault_list` → `PATCH vault/lists/{id}` (CONFIRMED, `:955-961`) | body name* | — | S (2 ops) |
@@ -468,17 +471,17 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | Group | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|---|
-| tracking-links | 1 | GET | `tracking-links` | c:`tracking_links()` → `campaigns` (also x:`campaigns`); with P22 passing, `request_json` on `campaigns` with limit and offset | q limit, offset; startDate, endDate, with_deleted, sortby, sort, pagination, synchronous dropped | none (P22: bare array) | S |
+| tracking-links | 1 | GET | `tracking-links` | c:`tracking_links()` → `campaigns` (also x:`campaigns`); with P22 passing, `request_json` on `campaigns` with limit and offset | q limit, offset; startDate, endDate, with_deleted, sortby, sort 422 when set; pagination, synchronous dropped | adaptor (bare array; P12 offset passed) | S |
 | tracking-links | 2 | POST | `tracking-links` | c:`create_tracking_link(name=…)` → `POST campaigns {name}` (VERIFIED LIVE, `of_client.py:1807-1817`) | body name*; tags 422 when set | — | S |
 | tracking-links | 3 | GET | `tracking-links/{tracking_link_id}` | cand: `campaigns/{id}`, the resource c:`delete_tracking_link` deletes. P12. | — | none | `?` (P12) |
 | tracking-links | 4 | DELETE | `tracking-links/{tracking_link_id}` | c:`delete_tracking_link` (body-less) | — | — | S |
-| trial-links | 1 | GET | `trial-links` | c:`trial_links(offset, limit)` → `trials` (limit verified live) | q limit, offset; startDate, endDate, sort, field, synchronous dropped | none (P22: bare array) | S |
+| trial-links | 1 | GET | `trial-links` | c:`trial_links(offset, limit)` → `trials` (limit verified live) | q limit (≤ 100), offset; startDate, endDate, sort, field 422 when set; synchronous dropped | adaptor (bare array; P13 offset passed) | S |
 | trial-links | 3 | GET | `trial-links/{trial_link_id}` | cand: `trials/{id}`, the resource c:`delete_trial_link` deletes. P13. | — | none | `?` (P13) |
 | trial-links | 4 | DELETE | `trial-links/{trial_link_id}` | c:`delete_trial_link` (body-less) | — | — | S |
 | promotions | 1 | GET | `promotions` | c:`promotions(offset, limit)` → `promotions` (hasMore unreliable: full-page rule) | q limit, offset | adaptor (P22: `{hasMore, items}`) | S |
 | promotions | 3 | DELETE | `promotions/{promotion_id}` | c:`delete_promo` (body-less) | — | — | S |
 | bundles | 5 | GET | `bundles` | c:`subscription_bundles` → `subscriptions/bundles` | — | none | S |
-| bundles | 7 | DELETE | `bundles/{bundle_id}` | c:`delete_bundle` (body-less) | — | — | S |
+| bundles | 7 | DELETE | `bundles/{bundle_id}` | c:`delete_bundle` (body-less) | — | — | `?` (Q6: changes pricing) |
 
 - `?` (12): tracking-links #7 `GET …/{id}/stats` (x:`campaigns/chart` exists; whether it takes a link id is
   unknown), #8 `GET …/{id}/subscribers`; trial-links #2 `POST trial-links` (c:`create_trial_link`'s body is not
@@ -494,6 +497,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
   `GET stored/shared-tracking-links`, `stored/shared-trial-links`, `stored/tracking-links`, `stored/trial-links` (4).
 - **Promo totals:** 43 rows (43 ops): S 9, L 2, `?` 32, 20 of them *ref*.
 - **After §3:** tracking-links #3 and trial-links #3 failed: S 9, L 0, `?` 34, 20 of them *ref*.
+- **After the implementation review:** bundles #7 moved to `?` under §9 Q6: S 8, `?` 35, 20 of them *ref*.
 
 ### settings (`settings.py`)
 
@@ -506,7 +510,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 | settings | 7 | GET | `settings/social-media-buttons` | c:`user_social_buttons(client.user_id)` → `users/{me}/social/buttons` (also x:) | — | none | S |
 | settings | 14 | GET | `settings/welcome-message` | c:`message_templates(template="reply_on_subscribe")` (§2.1 #6) | — | none | `?` (P23) |
 | release-forms | 6 | GET | `release-forms/taggable-users` | c:`tagged_friend_users` → `posts/tagged-friend-users` (captured live; the post and chat tag picker) | q limit, offset, name (→ OF `name` search); filter `all`, sort `date`, sortDirection `desc` (the captured call; other values 422) | adaptor (P24 passed) | S |
-| notifications | 8 | GET | `notifications` | c:`notifications(limit, type)` → `users/notifications` | q limit, type: all → none, subscriptions → subscribed, tips → tipped, comments → commented, mentions → mentioned (verified live in the client); other values `422 unsupported_type`. skip_users dropped; from_id 422 when set. | none (never probed, §3) | S |
+| notifications | 8 | GET | `notifications` | c:`notifications(limit, type)` → `users/notifications` | q limit, type: all → none, subscriptions → subscribed, tips → tipped, comments → commented, mentions → mentioned (verified live in the client); other values `422 unsupported_type`. skip_users dropped; from_id 422 when set. | none (never probed, §3) | `?` (may mark read; never probed) |
 | notifications | 9 | GET | `notifications/counts` | c:`notifications_count` → `users/notifications/count` | — | none | S |
 | notifications | 12 | GET | `notifications/tabs-order` | c:`notification_tabs_order` | — | none | S |
 
@@ -522,6 +526,8 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
   (c:`search_users` is the global user search, not this), #13 `PUT notifications/tabs-order`.
 - **Settings totals:** 29 rows (30 ops): S 7, S·gate 1, L 2, `?` 19 rows (20 ops).
 - **After §3:** settings #2 and #4 passed, #14 failed: S 9, S·gate 0, L 0, `?` 20 rows (21 ops).
+- **After the implementation review:** notifications #8 moved to `?` (OF's list call may mark notifications read,
+  and it was never probed): S 8, `?` 21 rows (22 ops).
 
 ### Wave acceptance
 - Every S row and every passing probe-gated row is served; every failed one is `?` and listed in the inventory's
@@ -562,13 +568,16 @@ trial-links #3; settings #14), and P06 does not promote v5 #20.
 | settings | 29 (30) | 0 | 9 (9) | 0 | 0 | 20 (21) | 0 | 0 |
 | **Total** | **165 (170)** | **4** | **42 (43)** | **0** | **0** | **113 (117)** | **22** | **6** |
 
+**After the implementation review:** `DELETE bundles/{bundle_id}` (§9 Q6) and `GET notifications` (never probed)
+moved to `?`: promo S 8 (8), `?` 35 (35); settings S 8 (8), `?` 21 (22); **total S 40 (41), `?` 115 (119)**.
+
 - **Ship now:** 32 operations (31 rows). **Probe-gated:** 20 operations (16 L + 4 S·gate), plus v5 #20 if P06
   promotes it.
 - **Writes that ship:** 15 operations (14 rows), all part of the 32: `DELETE fans/{fan_id}/notes`, `POST posts`,
   `DELETE posts/{post_id}`, `POST media/vault/lists`, `PUT` and `PATCH media/vault/lists/{list_id}`,
   `DELETE media/vault/lists/{list_id}`, `POST media/vault/lists/{list_id}/media`, `DELETE stories/{story_id}`,
   `POST tracking-links`, `DELETE tracking-links/{id}`, `DELETE trial-links/{id}`, `DELETE promotions/{id}`,
-  `DELETE bundles/{id}`, `POST settings/profile`. Only `POST posts`, `POST tracking-links` (`tags`) and
+  `DELETE bundles/{id}` (moved to `?` after the implementation review, so 14 operations ship), `POST settings/profile`. Only `POST posts`, `POST tracking-links` (`tags`) and
   `POST settings/profile` carry 422 fields.
 
 | `baseline.txt` | every gate fails | every gate passes |
@@ -576,9 +585,10 @@ trial-links #3; settings #14), and P06 does not promote v5 #20.
 | today | 73 | 73 |
 | after `v6/parity` | **105** | **125** (126 if P06 promotes v5 #20) |
 | after `v6/parity`, per the §3 results | **116** | **116** |
+| after the `v6/parity` review fixes | **114** | **114** |
 
 Of 239 in-scope operations, 114–134 stay missing after v6 (113 with v5 #20): the 108 `?` operations, the 6 out
-rows and any failed probe-gated row. Per the §3 results: **123** (117 `?` + 6 out).
+rows and any failed probe-gated row. Per the §3 results: **123** (117 `?` + 6 out); after the review fixes: **125** (119 `?` + 6 out).
 
 ## 5. Env additions
 
@@ -629,7 +639,8 @@ None. No migration, no env var, no gateway code. `.env.example` is unchanged.
   v6 never runs `parity-audit.mjs extract`: it reads a mirror page and rewrites `reference-routes.txt`, so it cannot
   produce the baseline.
 - **Live check after the merge** (orchestrator, read-only, with the `v6-probe` key): every newly shipped GET through
-  `/v1/<account>/<tail>`, except `notifications` (§3). It reuses the §3 script with `p` pointed at `$GW/<tail>`
+  `/v1/<account>/<tail>` (`notifications` is not shipped, §3). It includes `stories/highlights`, whose single answer
+  is unprobed: record whether it carries `hasMore`. It reuses the §3 script with `p` pointed at `$GW/<tail>`
   instead of `$GW/_of/…`: at most 50 requests at least 1 s apart, the same stop rule, double-quoted calls, and ids for
   `{…}` tails chained from a list GET into shell variables (now under `.data`) and never echoed. Record the status,
   the wrapper keys (`data`, `_meta`, `_pagination`) and `data`'s top-level keys only. Then revoke the key and purge
