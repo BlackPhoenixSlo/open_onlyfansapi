@@ -1,16 +1,36 @@
-"""Posts and the media vault (the v4 routes; the rest of the group is plan-v6). Paths and parameter
-names are the reference product's; each handler maps them to OF's wire names."""
+"""Posts, the media vault, stories and saved-for-later (plan-v6, `content.py`). Paths and parameter names
+are the reference product's; each handler maps them to OF's wire names. Write bodies follow plan-v6 §1.2:
+a reference field with no verified OF mapping is declared and answers `422 unsupported_field` when set."""
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
 
-from deps import Client
+from deps import ApiError, Client
+from of_client import API_BASE
 from routes.shape import next_page
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
+
+def _unsupported(field: str, detail: str = "not supported on this route") -> ApiError:
+    return ApiError(422, "unsupported_field", f"{field}: {detail}")
+
+
+def _no_offset(offset: int) -> None:
+    """Rows whose OF call has no cursor we can honour: a later page is a 422, never page 1 again (plan-v6 §2.3)."""
+    if offset > 0:
+        raise _unsupported("offset", "this route returns one page only")
+
+
+def _is_noop(value: Any) -> bool:
+    """A create body's no-op values (plan-v6 §1.2): absent/null, "", [] and false (not 0)."""
+    return value is None or value is False or value == "" or value == []
+
+
+# ─── posts ─────────────────────────────────────────────────────────
 
 @router.get("/posts", operation_id="posts.list")
 def posts_list(
@@ -23,10 +43,76 @@ def posts_list(
     return page
 
 
+class CreatePost(BaseModel):
+    """The reference body. `text`, `mediaFiles` (vault ids) and `previews` are sent; posts are free (the
+    reference has no price). Every other field has no verified OF mapping (plan-v6 §1.2): it answers 422
+    when set, because dropping `scheduledDate` or `saveForLater` would publish the post now."""
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    mediaFiles: list[int] = []
+    previews: list[int] = []  # OF's `preview`
+    scheduledDate: str | None = None
+    expireDays: int | None = None
+    fundRaisingTargetAmount: int | None = None
+    fundRaisingTipsPresets: list[str] | None = None
+    labelIds: Any = None
+    rfTag: Any = None
+    saveForLater: bool | None = None
+    votingType: Literal["poll", "quiz"] | None = None
+    votingOptions: list[str] | None = None
+    votingDue: int | None = None
+    votingCorrectIndex: int | None = None
+    blockBannedWords: Literal["strict_ban", "risky", "replace_soften"] | None = None
+
+
+_POST_SENT = {"text", "mediaFiles", "previews"}
+
+
+@router.post("/posts", operation_id="posts.create")
+def posts_create(client: Client, body: CreatePost) -> Any:
+    for field, value in body:
+        if field not in _POST_SENT and not _is_noop(value):
+            raise _unsupported(field)
+    return client.create_post(body.text, media_files=body.mediaFiles, previews=body.previews)
+
+
+@router.get("/posts/labels", operation_id="posts.labels.list")
+def posts_labels(
+    request: Request, response: Response, client: Client,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    page = client.request_json("GET", f"{API_BASE}/labels", params={"limit": limit, "offset": offset})
+    next_page(request, response, page, limit, {}, offset=offset + limit)
+    return page
+
+
 @router.get("/posts/{post_id}", operation_id="posts.get")
 def posts_get(client: Client, post_id: int) -> Any:
     return client.get_post(post_id)
 
+
+@router.delete("/posts/{post_id}", operation_id="posts.delete")
+def posts_delete(client: Client, post_id: int) -> Any:
+    return client.delete_post(post_id)
+
+
+@router.get("/posts/{post_id}/comments", operation_id="posts.comments.list")
+def posts_comments(
+    client: Client, post_id: int,
+    limit: Annotated[int, Query(ge=1, le=20)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort: Literal["desc", "asc"] = "desc",
+) -> Any:
+    """One page, newest first: OF's paging and oldest-first order on this call are unverified."""
+    _no_offset(offset)
+    if sort == "asc":
+        raise _unsupported("sort", "only desc is supported")
+    return client.post_comments(post_id, limit=limit)
+
+
+# ─── media vault ───────────────────────────────────────────────────
 
 @router.get("/media/vault", operation_id="media.vault.list")
 def media_vault_list(
@@ -47,6 +133,129 @@ def media_vault_list(
     return page
 
 
+class VaultListName(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1)]
+
+
+class VaultListMedia(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mediaIds: Annotated[list[int], Field(min_length=1)]  # vault media ids
+
+
+@router.get("/media/vault/lists", operation_id="media.vault.lists.list")
+def media_vault_lists(
+    request: Request, response: Response, client: Client,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """The reference's `query` and `lightweight` are not supported: OF's folder list takes neither."""
+    page = client.vault_lists(view="main", limit=limit, offset=offset)
+    next_page(request, response, page, limit, {}, offset=offset + limit)
+    return page
+
+
+@router.post("/media/vault/lists", operation_id="media.vault.lists.create")
+def media_vault_lists_create(client: Client, body: VaultListName) -> Any:
+    return client.create_vault_list(body.name)
+
+
+@router.get("/media/vault/lists/{list_id}", operation_id="media.vault.lists.get")
+def media_vault_lists_get(client: Client, list_id: int) -> Any:
+    return client.request_json("GET", f"{API_BASE}/vault/lists/{list_id}")
+
+
+@router.put("/media/vault/lists/{list_id}", operation_id="media.vault.lists.update.put")
+@router.patch("/media/vault/lists/{list_id}", operation_id="media.vault.lists.update")
+def media_vault_lists_update(client: Client, list_id: int, body: VaultListName) -> Any:
+    return client.rename_vault_list(list_id, body.name)
+
+
+@router.delete("/media/vault/lists/{list_id}", operation_id="media.vault.lists.delete")
+def media_vault_lists_delete(client: Client, list_id: int) -> Any:
+    return client.delete_vault_list(list_id, clear_media=False)  # the media stay in the vault
+
+
+@router.post("/media/vault/lists/{list_id}/media", operation_id="media.vault.lists.media.add")
+def media_vault_lists_media_add(client: Client, list_id: int, body: VaultListMedia) -> Any:
+    return client.add_media_to_vault_list(list_id, body.mediaIds)
+
+
 @router.get("/media/vault/{media_id}", operation_id="media.vault.get")
 def media_vault_get(client: Client, media_id: int) -> Any:
     return client.vault_media_by_id(media_id)
+
+
+# ─── stories ───────────────────────────────────────────────────────
+
+@router.get("/stories", operation_id="stories.list")
+def stories_list(client: Client) -> Any:
+    return client.my_stories()
+
+
+@router.get("/stories/archive", operation_id="stories.archive.list")
+def stories_archive(
+    client: Client,
+    limit: Annotated[int, Query(ge=1, le=20)] = 20,
+    marker: str = "",
+) -> Any:
+    """One page: OF ignores `offset` here, and the reference's `marker` cursor is not supported."""
+    if marker:
+        raise _unsupported("marker", "this route returns one page only")
+    return client.my_stories_archive(limit=limit)
+
+
+@router.get("/stories/highlights", operation_id="stories.highlights.list")
+def stories_highlights(
+    client: Client,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """Every highlight in one answer: OF's call takes no paging, so the reference's `limit` is not supported."""
+    _no_offset(offset)
+    return client.user_highlights(client.user_id)
+
+
+@router.get("/stories/{story_id}", operation_id="stories.get")
+def stories_get(client: Client, story_id: int) -> Any:
+    return client.request_json("GET", f"{API_BASE}/stories/{story_id}")
+
+
+@router.delete("/stories/{story_id}", operation_id="stories.delete")
+def stories_delete(client: Client, story_id: int) -> Any:
+    return client.delete_story(story_id)
+
+
+# ─── saved for later ───────────────────────────────────────────────
+
+@router.get("/saved-for-later/messages", operation_id="saved_for_later.messages.list")
+def saved_for_later_messages(
+    client: Client,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """One page: OF's paging on this call is unverified."""
+    _no_offset(offset)
+    return client.schedules_later_chat(limit=limit)
+
+
+@router.get("/saved-for-later/messages/settings", operation_id="saved_for_later.messages.settings")
+def saved_for_later_messages_settings(client: Client) -> Any:
+    return client.settings_chat()
+
+
+@router.get("/saved-for-later/posts", operation_id="saved_for_later.posts.list")
+def saved_for_later_posts(
+    request: Request, response: Response, client: Client,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    page = client.schedules_later_post(limit=limit, offset=offset)
+    next_page(request, response, page, limit, {}, offset=offset + limit)
+    return page
+
+
+@router.get("/saved-for-later/posts/settings", operation_id="saved_for_later.posts.settings")
+def saved_for_later_posts_settings(client: Client) -> Any:
+    return client.settings_post()
