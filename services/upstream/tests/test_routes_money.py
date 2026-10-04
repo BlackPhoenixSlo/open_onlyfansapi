@@ -105,3 +105,50 @@ def test_of_4xx_passes_through(client, of_fake):
     of_fake.respond({"error": {"code": 0, "message": "Forbidden"}}, status=403)
     r = client.get("/of/payouts/balances", headers=H)
     assert (r.status_code, r.json()) == (403, {"error": {"code": "of_error", "status": 403}})
+
+
+# ─── plan-v6: chargebacks, direct messages, top message ────────────
+
+@pytest.mark.parametrize(("path", "of_url"), [
+    ("/chargebacks", "/payouts/chargebacks"),  # empty dates mean every chargeback: none are sent
+    (f"/chargebacks?start_date={D1}&end_date={D2}&limit=5", f"/payouts/chargebacks?startDate={D1}&endDate={D2}"),
+    (f"/chargebacks?start_date={D1}", f"/payouts/chargebacks?startDate={D1}"),
+    (f"/engagement/messages/direct-messages?startDate={D1}&endDate={D2}&query=x",
+     f"/users/me/stats/messages/direct?startDate={D1}&endDate={D2}&limit=50"),
+    (f"/engagement/messages/direct-messages?startDate={D1}&endDate={D2}&limit=2&offset=0",
+     f"/users/me/stats/messages/direct?startDate={D1}&endDate={D2}&limit=2"),
+    (f"/engagement/messages/top-message?startDate={D1}&endDate={D2}",
+     f"/users/me/stats/top/message?startDate={D1}&endDate={D2}"),
+])
+def test_v6_routes_reach_their_of_call(client, of_fake, path, of_url):
+    body = {"hasMore": True, "items": [{"id": 1010}, {"id": 1009}]}  # a full page: still no next page
+    of_fake.respond(body)
+    r = client.get(f"/of{path}", headers=H)
+    assert (r.status_code, r.json()) == (200, body)
+    assert of_fake.calls == [("GET", f"{OF}{of_url}", None)]
+    assert "x-next-page" not in r.headers
+
+
+def test_top_message_defaults_to_the_last_30_days(client, of_fake):
+    of_fake.respond({"purchases": []})
+    assert client.get("/of/engagement/messages/top-message", headers=H).json() == {"purchases": []}
+    [(_, url, _)] = of_fake.calls
+    assert url.startswith(f"{OF}/users/me/stats/top/message?startDate=") and "&endDate=" in url
+
+
+@pytest.mark.parametrize("path", [
+    "/chargebacks?offset=10", f"/engagement/messages/direct-messages?startDate={D1}&endDate={D2}&offset=50",
+])
+def test_one_page_routes_refuse_a_later_page(client, of_fake, path):
+    r = client.get(f"/of{path}", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (422, "unsupported_field")
+    assert of_fake.calls == []
+
+
+@pytest.mark.parametrize("path", [
+    f"/engagement/messages/direct-messages?startDate={D1}", f"/engagement/messages/direct-messages?endDate={D2}",
+    f"/engagement/messages/direct-messages?startDate={D1}&endDate={D2}&limit=101", "/chargebacks?offset=-1",
+])
+def test_v6_bad_parameters_are_422(client, of_fake, path):
+    assert client.get(f"/of{path}", headers=H).status_code == 422
+    assert of_fake.calls == []

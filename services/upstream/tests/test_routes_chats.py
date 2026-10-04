@@ -182,3 +182,38 @@ def test_of_errors_pass_through(client, of_fake):
     of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=404)
     r = client.post("/of/chats/1002/messages/1003/like", headers=H)
     assert (r.status_code, r.json()) == (404, {"error": {"code": "of_error", "status": 404}})
+
+
+# ─── one message (plan-v6) ─────────────────────────────────────────
+
+MESSAGE = ("GET", f"{OF}/chats/1002/messages?limit=1&order=desc&skip_users=all&id=1004", None)
+
+
+def test_one_message_is_the_newest_below_its_id_plus_one(client, of_fake):
+    of_fake.respond({"list": [{"id": 1003, "text": "hi"}], "hasMore": True})
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()) == (200, {"id": 1003, "text": "hi"})
+    assert of_fake.calls == [MESSAGE]
+    assert "x-next-page" not in r.headers
+
+
+@pytest.mark.parametrize("body", [
+    {"list": [{"id": 1001}], "hasMore": False},  # an older message: 1003 is not in this chat
+    {"list": [], "hasMore": False},
+    [{"id": 1003}],                              # not OF's page shape
+])
+def test_one_message_not_in_the_chat_is_404(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (404, "not_found")
+    assert of_fake.calls == [MESSAGE]
+
+
+@pytest.mark.parametrize(("path", "of_url"), [
+    ("/of/chats/1002/messages/pinned", f"{OF}/chats/1002/messages?limit=50&order=desc&skip_users=all&filter=pinned"),
+    ("/of/chats/1002/messages/search?query=hi", f"{OF}/chats/1002/messages/search?query=hi"),
+])
+def test_one_message_does_not_shadow_the_literal_routes(client, of_fake, path, of_url):
+    of_fake.respond({"list": [], "hasMore": False})
+    assert client.get(path, headers=H).status_code == 200
+    assert of_fake.calls == [("GET", of_url, None)]

@@ -123,6 +123,17 @@ def chats_messages_search(client: Client, chat_id: int, query: Annotated[str, Qu
     return client.search_chat(chat_id, query)  # matching message ids, newest first
 
 
+@router.get("/chats/{chat_id}/messages/{message_id}", operation_id="chats.messages.get")
+def chats_messages_get(client: Client, chat_id: int, message_id: int) -> Any:
+    # OF has no single-message GET: its `id` is an older-than bound, so the newest message below
+    # `message_id + 1` is the message itself when it is in this chat.
+    page = client.get_messages(chat_id, limit=1, order="desc", before_id=message_id + 1)
+    items = page_items(page) or []
+    if items and isinstance(items[0], dict) and items[0].get("id") == message_id:
+        return items[0]
+    raise ApiError(404, "not_found", "no such message in this chat")
+
+
 @router.delete("/chats/{chat_id}/messages/{message_id}", operation_id="chats.messages.unsend")
 def chats_messages_unsend(client: Client, chat_id: int, message_id: int) -> Any:
     return client.unsend_message(message_id, with_user_id=chat_id)

@@ -32,6 +32,7 @@ def _page(n, has_more, key="list", **extra):
      [("PUT", f"{OF}/subscriptions/1002", {"displayName": "fan_1"})]),
     ("put", "/of/fans/1002/notes", {"notes": "likes cats"},
      [("PUT", f"{OF}/subscriptions/1002", {"notice": "likes cats"})]),
+    ("delete", "/of/fans/1002/notes", None, [("PUT", f"{OF}/subscriptions/1002", {"notice": ""})]),
     ("get", "/of/users/list?ids=1002,1003", None, [("GET", f"{OF}/users/list?m%5B%5D=1002&m%5B%5D=1003", None)]),
     ("get", "/of/users/fan_1", None, [("GET", f"{OF}/users/fan_1", None)]),
     ("get", "/of/users/1002", None, [("GET", f"{OF}/users/1002", None)]),

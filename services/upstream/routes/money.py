@@ -7,10 +7,17 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
 
-from deps import Client
+from deps import ApiError, Client
+from of_client import API_BASE
 from routes.shape import next_page
 
 router = APIRouter(prefix="/of", tags=["of-api"])
+
+
+def _no_offset(offset: int) -> None:
+    """Rows whose OF call has no cursor we can honour: a later page is a 422, never page 1 again (plan-v6 §2.3)."""
+    if offset > 0:
+        raise ApiError(422, "unsupported_field", "offset: this route returns one page only")
 
 
 # ─── payouts ───────────────────────────────────────────────────────
@@ -57,6 +64,18 @@ def transactions_list(
 
 # ─── chargebacks, statistics ───────────────────────────────────────
 
+@router.get("/chargebacks", operation_id="chargebacks.list")
+def chargebacks_list(
+    client: Client, start_date: str = "", end_date: str = "",
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """One page. Empty dates mean every chargeback, so dates are sent only when given. The reference's
+    `limit` is not supported: OF's paging on this call is unverified (it pages by its own `marker`)."""
+    _no_offset(offset)
+    params = {k: v for k, v in {"startDate": start_date, "endDate": end_date}.items() if v}
+    return client.request_json("GET", f"{API_BASE}/payouts/chargebacks", params=params)
+
+
 @router.get("/chargebacks/ratio", operation_id="chargebacks.ratio.get")
 def chargebacks_ratio(client: Client, start_date: str = "", end_date: str = "") -> Any:
     return client.chargebacks_ratio(start=start_date, end=end_date)
@@ -93,3 +112,22 @@ def engagement_mass_messages(
     """The reference's `query` is not supported: OF's mass-message stats call does not take it. No
     `x-next-page`: OF ignores `offset` on this call and always reports `hasMore` (plan-v6 §1.8.1)."""
     return client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
+
+
+@router.get("/engagement/messages/direct-messages", operation_id="engagement.messages.direct_messages.list")
+def engagement_direct_messages(
+    client: Client, startDate: str, endDate: str,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """One page: OF ignores `offset` on this call. The reference's `query` is not supported: OF's
+    direct-message stats call does not take it."""
+    _no_offset(offset)
+    return client.request_json("GET", f"{API_BASE}/users/me/stats/messages/direct",
+                               params={"startDate": startDate, "endDate": endDate, "limit": limit})
+
+
+@router.get("/engagement/messages/top-message", operation_id="engagement.messages.top_message.get")
+def engagement_top_message(client: Client, startDate: str = "", endDate: str = "") -> Any:
+    return client.request_json("GET", f"{API_BASE}/users/me/stats/top/message",
+                               params=client.date_range_params(startDate or None, endDate or None))

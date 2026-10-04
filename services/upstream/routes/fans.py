@@ -106,6 +106,11 @@ def fans_notes(client: Client, fan_id: int, body: Notes) -> Any:
     return client.set_fan_note(fan_id, body.notes)
 
 
+@router.delete("/fans/{fan_id}/notes", operation_id="fans.notes.delete")
+def fans_notes_delete(client: Client, fan_id: int) -> Any:
+    return client.set_fan_note(fan_id, "")  # an empty note clears it
+
+
 # ─── following ─────────────────────────────────────────────────────
 
 
