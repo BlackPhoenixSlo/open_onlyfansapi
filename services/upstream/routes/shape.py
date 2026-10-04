@@ -36,6 +36,13 @@ def unsupported(field: str, detail: str = "not supported on this route") -> ApiE
     return ApiError(422, "unsupported_field", f"{field}: {detail}")
 
 
+def refuse(**filters: Any) -> None:
+    """Reference filters OF's call cannot take narrow the result, so they are 422s when set (plan-v6 §2.3)."""
+    for field, value in filters.items():
+        if value:
+            raise unsupported(field)
+
+
 def one_page(offset: int) -> None:
     """Rows whose OF call has no cursor we can honour: a later page is a 422, never page 1 again (plan-v6 §2.3)."""
     if offset > 0:

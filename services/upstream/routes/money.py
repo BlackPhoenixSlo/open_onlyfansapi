@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, Request, Response
 
 from deps import Client
 from of_client import API_BASE
-from routes.shape import next_page, one_page, unsupported
+from routes.shape import next_page, one_page, refuse, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
@@ -121,8 +121,7 @@ def engagement_direct_messages(
 ) -> Any:
     """One page: OF ignores `offset` on this call. The reference's `query` is a 422 when set: OF's
     direct-message stats call does not take it."""
-    if query:
-        raise unsupported("query")
+    refuse(query=query)
     one_page(offset)
     return client.request_json("GET", f"{API_BASE}/users/me/stats/messages/direct",
                                params={"startDate": startDate, "endDate": endDate, "limit": limit})

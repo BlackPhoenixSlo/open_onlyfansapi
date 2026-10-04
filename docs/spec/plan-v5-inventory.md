@@ -84,6 +84,8 @@ Plan-v6 is canonical for the v6 rows; these are the implementation decisions it 
   `sortDirection=desc` (our defaults; any other value is a `422 unsupported_field`). The reference yaml gives no
   defaults for these three. `limit` defaults to 20 and is clamped to 20 (`tagged_friend_users`' default page);
   `name` is OF's name search.
+- `GET tracking-links`: `limit` is clamped to 100, an unverified cap on OF's `campaigns` (trials are verified only
+  to 18, promotions to at least 100); the post-merge live check counts `limit=100`.
 - Moved to `?` in the review: `GET notifications` (OF's list call may mark notifications read; never probed) and
   `DELETE bundles/{bundle_id}` (changes pricing, plan-v6 §9 Q6).
 

@@ -112,7 +112,7 @@ plan-v5 applies. §1.8.1 is the only change to a v5 route, a bug fix.
       `of_client.py:765-768` already records this as verified (the 2026-07-04 incident). **Fix:** both handlers stop
       calling `next_page` (no `x-next-page`), unless P16's `group` check shows offset advancing, in which case
       nothing changes. `offset` stays declared, because removing it would change a v5 query (§7).
-   2. **Reference cursor parameters on this wave's new routes** (`from_id` on notifications, `marker` on
+   2. **Reference cursor parameters on this wave's new routes** (`from_id` on notifications (not shipped after the review), `marker` on
       stories/archive, `sort=asc` on post comments when P18 fails, and `offset` on any row whose probe shows OF
       ignores it) are declared and answer `422 unsupported_field` when set (§2.3), never silently dropped.
    3. **Found, not fixed:** the v5 routes `GET transactions` (reference `marker`) and `GET chats/{chat_id}/messages`
@@ -331,8 +331,8 @@ caps only; never ids or values).
 | P09 + P20 | 200 ×3 | archive `{list, hasMore, marker}`; offset 0 vs 1: same; `stories/{id}` `.id == S`: true | #11 pass: S. #3 Pages none (OF ignores offset; it pages by `marker`) |
 | P10 | 200 | `{currentCode, isEnabled, options}`; onekey: `top` | pass: saved-for-later #2 S, `data` is the whole object |
 | P11 | 200 | `{currentCode, isEnabled, options}`; onekey: `top` | pass: saved-for-later #6 S, `data` is the whole object |
-| P12 + P22 | 200, 200, 404 | `campaigns` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `campaigns/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0 |
-| P13 + P22 | 200, 200, 404 | `trials` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `trials/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0 |
+| P12 + P22 | 200, 200, 404 | `campaigns` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `campaigns/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0; superseded by the implementation review: adaptor paging, §2.3 |
+| P13 + P22 | 200, 200, 404 | `trials` is a bare array; limit 1 → len 1; offset 0 vs 1: different; `trials/{id}`: 404 `{error}` | #3 fail: `?`. #1: bare array → Pages none (§2.3); limit sent, offset 422 above 0; superseded by the implementation review: adaptor paging, §2.3 |
 | P22 promotions | 200 ×2 | `{hasMore, items}`, limit 1 → len 1; offset 0 vs 1: different | pass: promotions #1 Pages adaptor |
 | P14 | 200 | `has("blockedCountries")`: true; drmkey: `isDrmEnabled` | pass: settings #2, #4 S |
 | P15 | 200 ×3 | `{list, marker}` on all three; list len 0 (no chargebacks); paging: inconclusive; dates: 200 | gate pass: v5 #17 S; Pages none (P15 paging inconclusive); dates sent |
@@ -573,11 +573,11 @@ moved to `?`: promo S 8 (8), `?` 35 (35); settings S 8 (8), `?` 21 (22); **total
 
 - **Ship now:** 32 operations (31 rows). **Probe-gated:** 20 operations (16 L + 4 S·gate), plus v5 #20 if P06
   promotes it.
-- **Writes that ship:** 15 operations (14 rows), all part of the 32: `DELETE fans/{fan_id}/notes`, `POST posts`,
+- **Writes that ship:** 14 operations (13 rows), all part of the 32: `DELETE fans/{fan_id}/notes`, `POST posts`,
   `DELETE posts/{post_id}`, `POST media/vault/lists`, `PUT` and `PATCH media/vault/lists/{list_id}`,
   `DELETE media/vault/lists/{list_id}`, `POST media/vault/lists/{list_id}/media`, `DELETE stories/{story_id}`,
   `POST tracking-links`, `DELETE tracking-links/{id}`, `DELETE trial-links/{id}`, `DELETE promotions/{id}`,
-  `DELETE bundles/{id}` (moved to `?` after the implementation review, so 14 operations ship), `POST settings/profile`. Only `POST posts`, `POST tracking-links` (`tags`) and
+  `POST settings/profile` (`DELETE bundles/{id}` moved to `?` in the implementation review). Only `POST posts`, `POST tracking-links` (`tags`) and
   `POST settings/profile` carry 422 fields.
 
 | `baseline.txt` | every gate fails | every gate passes |
@@ -640,7 +640,8 @@ None. No migration, no env var, no gateway code. `.env.example` is unchanged.
   produce the baseline.
 - **Live check after the merge** (orchestrator, read-only, with the `v6-probe` key): every newly shipped GET through
   `/v1/<account>/<tail>` (`notifications` is not shipped, §3). It includes `stories/highlights`, whose single answer
-  is unprobed: record whether it carries `hasMore`. It reuses the §3 script with `p` pointed at `$GW/<tail>`
+  is unprobed: record whether it carries `hasMore`. Also count `tracking-links?limit=100` (`campaigns`; its cap of
+  100 is unverified): fewer than 100 with more links on the account means OF caps lower. It reuses the §3 script with `p` pointed at `$GW/<tail>`
   instead of `$GW/_of/…`: at most 50 requests at least 1 s apart, the same stop rule, double-quoted calls, and ids for
   `{…}` tails chained from a list GET into shell variables (now under `.data`) and never echoed. Record the status,
   the wrapper keys (`data`, `_meta`, `_pagination`) and `data`'s top-level keys only. Then revoke the key and purge

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from deps import Client
 from of_client import API_BASE
-from routes.shape import is_noop, next_page, one_page, unsupported
+from routes.shape import is_noop, next_page, one_page, refuse, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
@@ -143,8 +143,7 @@ def media_vault_lists(
 ) -> Any:
     """OF's folder list takes no search: the reference's `query` is a 422 when set. Its `lightweight`
     (response size only) is not supported and is ignored."""
-    if query:
-        raise unsupported("query")
+    refuse(query=query)
     limit = min(limit, VAULT_LISTS_CAP)
     page = client.vault_lists(view="main", limit=limit, offset=offset)
     next_page(request, response, page, limit, {}, offset=offset + limit)

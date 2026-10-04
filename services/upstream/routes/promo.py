@@ -10,18 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from deps import Client
 from of_client import API_BASE
-from routes.shape import is_noop, next_page, unsupported
+from routes.shape import is_noop, next_page, refuse, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
-TRIALS_CAP = PROMOTIONS_CAP = 100  # verified live in OFClient: `limit` honoured to 100
-
-
-def _refuse_filters(**filters: Any) -> None:
-    """Reference filters OF's call cannot take narrow the result, so they are 422s when set (plan-v6 §2.3)."""
-    for field, value in filters.items():
-        if value:
-            raise unsupported(field)
+# OFClient default; promotions verified to at least 100, trials only to 18. TRACKING_CAP is unverified.
+TRIALS_CAP = PROMOTIONS_CAP = TRACKING_CAP = 100
 
 
 def _page_bare_array(request: Request, response: Response, page: Any, limit: int, offset: int) -> None:
@@ -38,11 +32,12 @@ def tracking_links_list(
     request: Request, response: Response, client: Client,
     limit: Annotated[int, Query(ge=1)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
-    startDate: str = "", endDate: str = "", with_deleted: int = 0, sortby: str = "", sort: str = "",
+    startDate: str = "", endDate: str = "", with_deleted: bool = False, sortby: str = "", sort: str = "",
 ) -> Any:
     """`startDate`, `endDate`, `with_deleted`, `sortby` and `sort` are 422s when set: OF's call takes none of
     them. `pagination` and `synchronous` are not supported and are ignored."""
-    _refuse_filters(startDate=startDate, endDate=endDate, with_deleted=with_deleted, sortby=sortby, sort=sort)
+    refuse(startDate=startDate, endDate=endDate, with_deleted=with_deleted, sortby=sortby, sort=sort)
+    limit = min(limit, TRACKING_CAP)
     page = client.request_json("GET", f"{API_BASE}/campaigns", params={"limit": limit, "offset": offset})
     _page_bare_array(request, response, page, limit, offset)
     return page
@@ -79,7 +74,7 @@ def trial_links_list(
 ) -> Any:
     """`startDate`, `endDate`, `sort` and `field` are 422s when set: OF's call takes none of them.
     `synchronous` is not supported and is ignored."""
-    _refuse_filters(startDate=startDate, endDate=endDate, sort=sort, field=field)
+    refuse(startDate=startDate, endDate=endDate, sort=sort, field=field)
     limit = min(limit, TRIALS_CAP)
     page = client.trial_links(offset=offset, limit=limit)
     _page_bare_array(request, response, page, limit, offset)

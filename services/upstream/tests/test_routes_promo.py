@@ -50,6 +50,8 @@ def _items(n, has_more):
     ("/of/tracking-links", f"{OF}/campaigns?limit=10&offset=0", _array(10), "/tracking-links?limit=10&offset=10"),
     ("/of/tracking-links?limit=2&offset=4&pagination=1&synchronous=true", f"{OF}/campaigns?limit=2&offset=4",
      _array(2), "/tracking-links?limit=2&offset=6"),
+    ("/of/tracking-links?limit=500&with_deleted=false", f"{OF}/campaigns?limit=100&offset=0", _array(100),
+     "/tracking-links?limit=100&offset=100"),  # clamped to the (unverified) cap
     ("/of/tracking-links?limit=2", f"{OF}/campaigns?limit=2&offset=0", _array(1), None),
     ("/of/tracking-links?limit=2", f"{OF}/campaigns?limit=2&offset=0", {"error": "x"}, None),
     ("/of/trial-links", f"{OF}/trials?offset=0&limit=10", _array(10), "/trial-links?limit=10&offset=10"),
@@ -78,6 +80,7 @@ def test_paged_lists(client, of_fake, path, of_url, body, header):
     ("get", "/of/tracking-links?startDate=2026-10-01", None, "startDate"),
     ("get", "/of/tracking-links?endDate=2026-10-31", None, "endDate"),
     ("get", "/of/tracking-links?with_deleted=1", None, "with_deleted"),
+    ("get", "/of/tracking-links?with_deleted=true", None, "with_deleted"),
     ("get", "/of/tracking-links?sortby=claims", None, "sortby"),
     ("get", "/of/tracking-links?sort=asc", None, "sort"),
     ("get", "/of/trial-links?startDate=2026-10-01", None, "startDate"),
