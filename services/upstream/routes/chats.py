@@ -123,6 +123,19 @@ def chats_messages_search(client: Client, chat_id: int, query: Annotated[str, Qu
     return client.search_chat(chat_id, query)  # matching message ids, newest first
 
 
+@router.get("/chats/{chat_id}/messages/{message_id}", operation_id="chats.messages.get")
+def chats_messages_get(client: Client, chat_id: int, message_id: int) -> Any:
+    # OF has no single-message GET: its `id` is an older-than bound, so the newest message below
+    # `message_id + 1` is the message itself when it is in this chat.
+    page = client.get_messages(chat_id, limit=1, order="desc", before_id=message_id + 1)
+    items = page_items(page)
+    if items is None:
+        raise ApiError(502, "of_unexpected_response", "OF's message page had an unexpected shape")
+    if items and isinstance(items[0], dict) and str(items[0].get("id")) == str(message_id):
+        return items[0]
+    raise ApiError(404, "not_found", "no such message in this chat")
+
+
 @router.delete("/chats/{chat_id}/messages/{message_id}", operation_id="chats.messages.unsend")
 def chats_messages_unsend(client: Client, chat_id: int, message_id: int) -> Any:
     return client.unsend_message(message_id, with_user_id=chat_id)
@@ -194,18 +207,15 @@ def mass_messaging_create(client: Client, body: MassMessage) -> Any:
 
 @router.get("/mass-messaging/overview", operation_id="massMessaging.overview")
 def mass_messaging_overview(
-    request: Request, response: Response, client: Client,
+    client: Client,
     startDate: str,  # 'YYYY-MM-DD HH:MM:SS'
     endDate: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
     # yaml: takes startDate/endDate, returns {hasMore, items} with sentCount/viewedCount: OF's stats history.
-    page = client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
-    if isinstance(page, dict):  # OF's `{hasMore, items}` page, read as `{list, hasMore}`
-        next_page(request, response, {"list": page.get("items"), "hasMore": page.get("hasMore")}, limit,
-                  {"startDate": startDate, "endDate": endDate}, offset=offset + limit)
-    return page
+    # No `x-next-page`: OF ignores `offset` on this call and always reports `hasMore` (plan-v6 §1.8.1).
+    return client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
 
 
 @router.delete("/mass-messaging/{mass_messaging}", operation_id="massMessaging.delete")

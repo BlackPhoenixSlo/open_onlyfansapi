@@ -8,7 +8,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Request, Response
 
 from deps import Client
-from routes.shape import next_page
+from of_client import API_BASE
+from routes.shape import next_page, one_page, refuse, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
@@ -57,6 +58,22 @@ def transactions_list(
 
 # ─── chargebacks, statistics ───────────────────────────────────────
 
+@router.get("/chargebacks", operation_id="chargebacks.list")
+def chargebacks_list(
+    client: Client, start_date: str = "", end_date: str = "",
+    limit: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Any:
+    """One page, OF's own size. Empty dates mean every chargeback, so dates are sent only when given.
+    `limit` and `offset` are 422s when set: OF's paging on this call is unverified (it pages by its own
+    `marker`; a non-null `marker` in the answer means more chargebacks exist)."""
+    if limit:
+        raise unsupported("limit", "OF's page size on this call is unverified")
+    one_page(offset)
+    params = {k: v for k, v in {"startDate": start_date, "endDate": end_date}.items() if v}
+    return client.request_json("GET", f"{API_BASE}/payouts/chargebacks", params=params)
+
+
 @router.get("/chargebacks/ratio", operation_id="chargebacks.ratio.get")
 def chargebacks_ratio(client: Client, start_date: str = "", end_date: str = "") -> Any:
     return client.chargebacks_ratio(start=start_date, end=end_date)
@@ -86,14 +103,31 @@ def statistics_statements_earnings(client: Client, start_date: str, end_date: st
 
 @router.get("/engagement/messages/mass-messages", operation_id="engagement.messages.mass_messages.list")
 def engagement_mass_messages(
-    request: Request, response: Response, client: Client, startDate: str, endDate: str,
+    client: Client, startDate: str, endDate: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    """The reference's `query` is not supported: OF's mass-message stats call does not take it."""
-    page = client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
-    # OF's page here is `{hasMore, items}`, not `{list, hasMore}`.
-    if isinstance(page, dict):
-        next_page(request, response, {"list": page.get("items"), "hasMore": page.get("hasMore")}, limit,
-                  {"startDate": startDate, "endDate": endDate}, offset=offset + limit)
-    return page
+    """The reference's `query` is not supported: OF's mass-message stats call does not take it. No
+    `x-next-page`: OF ignores `offset` on this call and always reports `hasMore` (plan-v6 §1.8.1)."""
+    return client.mass_message_history(start_date=startDate, end_date=endDate, limit=limit, offset=offset)
+
+
+@router.get("/engagement/messages/direct-messages", operation_id="engagement.messages.direct_messages.list")
+def engagement_direct_messages(
+    client: Client, startDate: str, endDate: str,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    query: str = "",
+) -> Any:
+    """One page: OF ignores `offset` on this call. The reference's `query` is a 422 when set: OF's
+    direct-message stats call does not take it."""
+    refuse(query=query)
+    one_page(offset)
+    return client.request_json("GET", f"{API_BASE}/users/me/stats/messages/direct",
+                               params={"startDate": startDate, "endDate": endDate, "limit": limit})
+
+
+@router.get("/engagement/messages/top-message", operation_id="engagement.messages.top_message.get")
+def engagement_top_message(client: Client, startDate: str = "", endDate: str = "") -> Any:
+    return client.request_json("GET", f"{API_BASE}/users/me/stats/top/message",
+                               params=client.date_range_params(startDate or None, endDate or None))

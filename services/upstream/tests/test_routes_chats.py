@@ -131,18 +131,14 @@ def _items(n, has_more):
     return {"hasMore": has_more, "items": [{"id": 1010 - i} for i in range(n)]}
 
 
-@pytest.mark.parametrize(("body", "header"), [
-    (_items(2, True), "/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=6"),
-    (_items(1, True), None),   # short page
-    (_items(2, False), None),  # OF says no more
-    ({"hasMore": True, "items": None}, None),
-])
-def test_overview_pages_its_items(client, of_fake, body, header):
+@pytest.mark.parametrize("body", [_items(2, True), _items(1, True), _items(2, False), {"hasMore": True, "items": None}])
+def test_overview_sets_no_next_page(client, of_fake, body):
+    """OF ignores `offset` here and always reports `hasMore`: a next page would re-read page 1 (plan-v6 §1.8.1)."""
     of_fake.respond(body)
     r = client.get("/of/mass-messaging/overview?startDate=2026-10-01&endDate=2026-10-02&limit=2&offset=4",
                    headers=H)
     assert r.json() == body  # OF's `{hasMore, items}` is the `data` value
-    assert r.headers.get("x-next-page") == header
+    assert "x-next-page" not in r.headers
 
 
 def test_mass_message_maps_the_body_to_of(client, of_fake):
@@ -186,3 +182,49 @@ def test_of_errors_pass_through(client, of_fake):
     of_fake.respond({"error": {"code": 0, "message": "Not found"}}, status=404)
     r = client.post("/of/chats/1002/messages/1003/like", headers=H)
     assert (r.status_code, r.json()) == (404, {"error": {"code": "of_error", "status": 404}})
+
+
+# ─── one message (plan-v6) ─────────────────────────────────────────
+
+MESSAGE = ("GET", f"{OF}/chats/1002/messages?limit=1&order=desc&skip_users=all&id=1004", None)
+
+
+def test_one_message_is_the_newest_below_its_id_plus_one(client, of_fake):
+    of_fake.respond({"list": [{"id": 1003, "text": "hi"}], "hasMore": True})
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()) == (200, {"id": 1003, "text": "hi"})
+    assert of_fake.calls == [MESSAGE]
+    assert "x-next-page" not in r.headers
+
+
+def test_one_message_matches_a_string_id(client, of_fake):
+    of_fake.respond({"list": [{"id": "1003"}], "hasMore": False})
+    assert client.get("/of/chats/1002/messages/1003", headers=H).json() == {"id": "1003"}
+
+
+@pytest.mark.parametrize("body", [
+    {"list": [{"id": 1001}], "hasMore": False},  # an older message: 1003 is not in this chat
+    {"list": [], "hasMore": False},
+])
+def test_one_message_not_in_the_chat_is_404(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (404, "not_found")
+    assert of_fake.calls == [MESSAGE]
+
+
+@pytest.mark.parametrize("body", [[{"id": 1003}], {"hasMore": False}, None])
+def test_one_message_refuses_an_unexpected_page(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "of_unexpected_response")
+
+
+@pytest.mark.parametrize(("path", "of_url"), [
+    ("/of/chats/1002/messages/pinned", f"{OF}/chats/1002/messages?limit=50&order=desc&skip_users=all&filter=pinned"),
+    ("/of/chats/1002/messages/search?query=hi", f"{OF}/chats/1002/messages/search?query=hi"),
+])
+def test_one_message_does_not_shadow_the_literal_routes(client, of_fake, path, of_url):
+    of_fake.respond({"list": [], "hasMore": False})
+    assert client.get(path, headers=H).status_code == 200
+    assert of_fake.calls == [("GET", of_url, None)]
