@@ -590,6 +590,8 @@ moved to `?`: promo S 8 (8), `?` 35 (35); settings S 8 (8), `?` 21 (22); **total
 Of 239 in-scope operations, 114–134 stay missing after v6 (113 with v5 #20): the 108 `?` operations, the 6 out
 rows and any failed probe-gated row. Per the §3 results: **123** (117 `?` + 6 out); after the review fixes: **125** (119 `?` + 6 out).
 
+Actual after merge 6fb4a94: 41 operations, baseline 114.
+
 ## 5. Env additions
 
 None. No migration, no env var, no gateway code. `.env.example` is unchanged.

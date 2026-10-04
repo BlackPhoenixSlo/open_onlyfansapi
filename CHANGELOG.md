@@ -4,7 +4,80 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - Unreleased
+## [2.1.0] - Unreleased
+
+v2.1 adds 41 named per-account operations of the reference API: rows 2.0 left open, and the content, promo and
+settings groups. It is additive: the wrapper and `_pagination`, the webhook body, signature and event names, the
+passthrough, the database schema and the env are unchanged. The gateway and upstream images do not have to be
+upgraded together; a 2.0 gateway forwards the new routes through its catch-all. Every reference route not listed
+here stays reachable through `_of/{path}`, in OF's own paths and shapes, when OF has such a call.
+
+### Added
+
+Paths are relative to `/v1/{account}`.
+
+- **Rows left open in 2.0** (1): `DELETE fans/{fan_id}/notes` (clears the note).
+- **Content** (15): `POST posts`, `DELETE posts/{post_id}`, `GET posts/{post_id}/comments`; `GET` and
+  `POST media/vault/lists`, `PUT`, `PATCH` and `DELETE media/vault/lists/{list_id}`,
+  `POST media/vault/lists/{list_id}/media`; `GET stories`, `GET stories/archive`, `GET stories/highlights`,
+  `DELETE stories/{story_id}`; `GET saved-for-later/messages`, `GET saved-for-later/posts`.
+- **Promo** (8): `GET` and `POST tracking-links`, `DELETE tracking-links/{tracking_link_id}`; `GET trial-links`,
+  `DELETE trial-links/{trial_link_id}`; `GET promotions`, `DELETE promotions/{promotion_id}`; `GET bundles`.
+- **Settings** (6): `GET settings`, `POST settings/profile`, `GET settings/social-media-buttons`;
+  `GET release-forms/taggable-users`; `GET notifications/counts`, `GET notifications/tabs-order`.
+
+### Added (verified on one account)
+
+These 11 GETs call an OF path derived from a known one. A read-only probe on one connected account is their only
+evidence.
+
+- **Rows left open in 2.0** (4): `GET chats/{chat_id}/messages/{message_id}`, `GET chargebacks`,
+  `GET engagement/messages/direct-messages`, `GET engagement/messages/top-message`.
+- **Content** (5): `GET posts/labels`, `GET media/vault/lists/{list_id}`, `GET stories/{story_id}`,
+  `GET saved-for-later/messages/settings`, `GET saved-for-later/posts/settings`.
+- **Settings** (2): `GET settings/blocked-countries`, `GET settings/drm`.
+
+### Fixed
+
+- `GET engagement/messages/mass-messages` and `GET mass-messaging/overview` no longer emit a looping
+  `x-next-page`. OF ignores `offset` on the call behind them and always reports more, so a client following
+  `_pagination.next_page` re-read page 1 forever; it now stops after page 1. Only clients that follow
+  `_pagination.next_page` are fixed. A client that pages by hand with `offset` still gets page 1 for every offset
+  and must stop when a page repeats the previous one. Refusing `offset` there with a `422` would break 2.0
+  clients, so it waits for 3.0.0.
+
+### Changed
+
+- Every new route turns a `404`, `405` or `422` on its path into a success. Nothing else that 2.0 serves changes,
+  apart from the fix above.
+
+### Known gaps
+
+- **Every write is fixture-tested only, never executed against OF**: `DELETE fans/{fan_id}/notes`, `POST posts`,
+  `DELETE posts/{post_id}`, the five `media/vault/lists` writes, `DELETE stories/{story_id}`, `POST tracking-links`,
+  the `DELETE` of tracking links, trial links and promotions, and `POST settings/profile`.
+- **Write fields with no verified OF mapping answer `422 unsupported_field` when set**, rather than being dropped:
+  OF can ignore a field silently, so a dropped `scheduledDate` or `saveForLater` would publish a post now. On
+  `POST posts` only `text` and `mediaFiles` (vault ids) are sent; on `POST tracking-links`, `tags` is refused; on
+  `POST settings/profile` only `about` is sent, and an empty body is a `422`. On create bodies, absent, `null`,
+  `""`, `[]` and `false` count as unset.
+- **`POST posts` treats `0` as a value, not as unset**: `expireDays`, `fundRaisingTargetAmount`, `votingDue` or
+  `votingCorrectIndex` set to `0` is a `422`. Leave those fields out instead.
+- **Narrowing filters answer `422 unsupported_field`** where OF's call cannot take them, instead of returning an
+  unfiltered list: `query` on `media/vault/lists` and `engagement/messages/direct-messages`; `startDate`, `endDate`,
+  `with_deleted`, `sortby` and `sort` on `tracking-links`; `startDate`, `endDate`, `sort` and `field` on
+  `trial-links`; any `filter`, `sort` or `sortDirection` other than `all`, `date` and `desc` on
+  `release-forms/taggable-users`. Cosmetic options (`synchronous`, `pagination`, `lightweight`, `skip_users`) are
+  accepted and ignored. Routes that return one page answer `offset` above 0 with a `422`, and so do the reference's
+  own cursors (`marker` on `stories/archive`, `sort=asc` on post comments).
+- **`GET chargebacks`**: `limit` is refused with a `422` (OF's page size there is unverified), and so is `offset`
+  above 0. OF pages by its own marker: a non-null `data.marker` means the list is truncated and more chargebacks
+  exist.
+- **`GET tracking-links`** clamps `limit` to 100, an unverified cap on OF's call. If OF caps lower, a page comes
+  back short and carries no `next_page` although more links exist.
+- **`GET stories/highlights`** returns OF's single answer; whether it holds every highlight is unverified.
+
+## [2.0.0] - 2026-10-02
 
 v2 makes the gateway a drop-in for clients of the reference API: its webhook event names, body and signature, and
 its response shape on per-account routes. Every change below breaks 1.x clients; read
