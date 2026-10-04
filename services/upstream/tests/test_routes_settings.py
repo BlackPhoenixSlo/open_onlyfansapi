@@ -43,6 +43,14 @@ def test_settings_reshapes(client, of_fake, path, data):
     assert of_fake.calls == [("GET", f"{OF}/users/me/settings", None)]
 
 
+def test_settings_omit_streaming_key_fields(client, of_fake):
+    """Streaming credentials never reach a read-scope key: every top-level key matching /stream/i is dropped."""
+    of_fake.respond({"streamKey": "sk_1001", "streamUrl": "stream_url_1001", "isStreamingEnabled": True,
+                     "blockedCountries": ["XX"], "isDrmEnabled": True})
+    r = client.get("/of/settings", headers=H)
+    assert (r.status_code, r.json()) == (200, {"blockedCountries": ["XX"], "isDrmEnabled": True})
+
+
 @pytest.mark.parametrize("path", ["/of/settings/blocked-countries", "/of/settings/drm"])
 @pytest.mark.parametrize("body", [[SETTINGS], {"other": 1}])
 def test_settings_reshapes_refuse_an_unexpected_shape(client, of_fake, path, body):

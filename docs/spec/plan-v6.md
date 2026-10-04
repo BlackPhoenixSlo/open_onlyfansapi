@@ -503,7 +503,7 @@ Numbering is the v5 order: #1–#26 were `?`, #27–#36 were `deferred-write`.
 
 | Group | # | M | Tail | OF call (source) | Query / body | Pages | St |
 |---|---|---|---|---|---|---|---|
-| settings | 1 | GET | `settings` | c:`my_settings` → `users/me/settings` | — | none | S |
+| settings | 1 | GET | `settings` | c:`my_settings` → `users/me/settings`; top-level keys matching /stream/i (streaming credentials) are dropped (post-merge live check) | — | none | S |
 | settings | 2 | GET | `settings/blocked-countries` | cand: the key `blockedCountries` of `users/me/settings` (§2.1 #4). P14. | — | none | S (P14) |
 | settings | 4 | GET | `settings/drm` | cand: the DRM boolean P14 names in `users/me/settings` (§2.1 #5). P14. | — | none | S (P14) |
 | settings | 6 | POST | `settings/profile` | c:`update_profile(about=…)` → `PATCH users/me` (`about` verified live, `of_client.py:1861-1867`) | body about; name, location, website, wishlist ("likely" in the docstring), username, avatar, header: 422 when set; no `about` → 422 | — | S |
@@ -648,6 +648,54 @@ None. No migration, no env var, no gateway code. `.env.example` is unchanged.
   `{…}` tails chained from a list GET into shell variables (now under `.data`) and never echoed. Record the status,
   the wrapper keys (`data`, `_meta`, `_pagination`) and `data`'s top-level keys only. Then revoke the key and purge
   its log rows exactly as in §3 (pre-delete count ≥ `n`).
+
+### §6 post-merge live check (2026-10-04, master 6fb4a94)
+
+Read key `v6-probe`, GETs only, through `/v1/<account>/<tail>`: 36 requests at least 1 s apart, no stop. Proxy
+pre-check: `OF_REQUIRE_PROXY` `true` in the upstream container. Every one of the 27 shipped GETs answered 200; no
+write was sent. Rows below give the status, the wrapper keys and `data`'s top-level keys (or "array, len n") only.
+
+| Route (GET) | Status | Wrapper | `data` | Checks |
+|---|---|---|---|---|
+| `chats` (v5, chain) | 200 | data, _meta, _pagination | hasMore, list, nextOffset | — |
+| `chats/{id}/messages` (v5, chain) | 200 | data, _meta, _pagination | hasMore, list | — |
+| `chats/{chat_id}/messages/{message_id}` | 200 | data, _meta | the message object (`id`, `text`, `media`, …) | `data.id` is the chained id: true |
+| same, message from another chat | 404 | error | — | code `not_found`, as the fixture expects |
+| `chargebacks` | 200 | data, _meta | list, marker | `_pagination`: false |
+| `engagement/messages/direct-messages` (limit 1) | 200 | data, _meta | hasMore, items | items len 1 (full page), `_pagination`: false (Pages none) |
+| `engagement/messages/top-message` | 200 | data, _meta | purchases | — |
+| `engagement/messages/mass-messages` (limit 1, §1.8.1) | 200 | data, _meta | hasMore, items | items len 1 (full page), `_pagination`: false |
+| `mass-messaging/overview` (limit 1, §1.8.1) | 200 | data, _meta | hasMore, items | items len 1 (full page), `_pagination`: false |
+| `posts/labels` (limit 1) | 200 | data, _meta, _pagination | hasMore, hashSort, list, nextOffset, order, sort | `_pagination`: true |
+| `posts/labels` via `_pagination.next_page` | 200 | data, _meta, _pagination | as above | first item differs from page 1: true. The URL's origin is `APP_URL`'s, not `:4000` (v5 wrapper behaviour); followed on `:4000` with the same path and query |
+| `posts` (have, chain) | 200 | data, _meta | array, len 1 | — |
+| `posts/{post_id}/comments` | 200 | data, _meta | array, len 0 | `_pagination`: false |
+| `media/vault/lists` | 200 | data, _meta, _pagination | all, canCreateVaultLists, hasMore, list, order, sort | default limit 10 → 10 items, `_pagination`: true |
+| `media/vault/lists/{list_id}` | 200 | data, _meta | audiosCount, canDelete, canUpdate, gifsCount, hasMedia, id, medias, name, photosCount, type, videosCount | `data.id` is the chained id: true |
+| `stories` | 200 | data, _meta | array, len 0 | — |
+| `stories/archive` | 200 | data, _meta | hasMore, list, marker | `_pagination`: false (Pages none) |
+| `stories/archive?marker=…` | 422 | error | — | code `unsupported_field` (cursor) |
+| `stories/highlights` | 200 | data, _meta | hasMore, list | `hasMore` present: true; list len 5; `_pagination`: false |
+| `stories/{story_id}` | 200 | data, _meta | the story object (`id`, `media`, `viewers`, …) | `data.id` is the chained id: true |
+| `saved-for-later/messages` | 200 | data, _meta | hasMore, list, syncInProcess | `_pagination`: false |
+| `saved-for-later/messages/settings` | 200 | data, _meta | currentCode, isEnabled, options | — |
+| `saved-for-later/posts` | 200 | data, _meta | hasMore, list, syncInProcess | `_pagination`: false |
+| `saved-for-later/posts/settings` | 200 | data, _meta | currentCode, isEnabled, options | — |
+| `tracking-links?limit=100` | 200 | data, _meta | array, len 6 | count 6 < 100, `_pagination`: false. The account appears to have only 6 links, so the 100 cap stays unverified |
+| `tracking-links?sortby=x` | 422 | error | — | code `unsupported_field` (narrowing filter) |
+| `trial-links` | 200 | data, _meta, _pagination | array, len 10 | default limit 10 is a full page → `_pagination`: true (bare-array paging) |
+| `promotions` | 200 | data, _meta, _pagination | hasMore, items | `_pagination`: true (adaptor) |
+| `bundles` | 200 | data, _meta | array, len 0 | — |
+| `settings` | 200 | data, _meta | OF's settings object (keys as P14, incl. `blockedCountries`, `isDrmEnabled`) | — |
+| `settings/blocked-countries` | 200 | data, _meta | blockedCountries | — |
+| `settings/drm` | 200 | data, _meta | enabled | `enabled` is a boolean: true |
+| `settings/social-media-buttons` | 200 | data, _meta | array, len 0 | — |
+| `release-forms/taggable-users` | 200 | data, _meta | hasMore, items | `_pagination`: false |
+| `notifications/counts` | 200 | data, _meta | all, commented, deactivated_media, favorited, mentioned, message, purchases, subscribed, system, tags, tip | — |
+| `notifications/tabs-order` | 200 | data, _meta | array, len 10 | — |
+| Log purge | psql | — | — | pre-delete count 37 (≥ n = 36); bodies on status < 400: 0; bodies on status ≥ 400: 3 (the 404 and the two 422s); deleted 37; final 0 |
+
+The key is not revoked yet (§6 says revoke, then purge again).
 
 ## 7. Tests and release
 

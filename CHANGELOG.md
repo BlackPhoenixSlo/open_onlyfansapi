@@ -48,6 +48,8 @@ evidence.
 
 ### Changed
 
+- `GET settings` omits streaming-key fields: every top-level key of OF's settings whose name contains "stream"
+  (any case) is dropped, because it can hold streaming credentials that any read-scope key could see.
 - Every new route turns a `404`, `405` or `422` on its path into a success. Nothing else that 2.0 serves changes,
   apart from the fix above.
 

@@ -2,6 +2,7 @@
 reference product's; each handler maps them to OF's wire names."""
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
@@ -17,9 +18,17 @@ TAGGABLE_CAP = 20  # `tagged_friend_users`' default page
 
 # ─── settings ──────────────────────────────────────────────────────
 
+_STREAM_KEY = re.compile("stream", re.IGNORECASE)
+
+
 @router.get("/settings", operation_id="settings.get")
 def settings_get(client: Client) -> Any:
-    return client.my_settings()
+    """OF's settings as is, minus every top-level key naming a stream: those hold streaming credentials,
+    which a read-scope key must not see."""
+    settings = client.my_settings()
+    if isinstance(settings, dict):
+        return {k: v for k, v in settings.items() if not _STREAM_KEY.search(k)}
+    return settings
 
 
 def _setting(client: Client, key: str) -> Any:
