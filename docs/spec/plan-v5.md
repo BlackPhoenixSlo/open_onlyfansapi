@@ -582,5 +582,6 @@ personal data and API key previews.
 6. **Passthrough mapping.** Their docs do not say what `_of/{path}` maps to on OnlyFans (inventory G). *Default:
    `https://onlyfans.com/api2/v2/{path}`, documented as an assumption that may diverge from theirs (§2.1). Revisit
    if a passthrough call that works on theirs fails on ours.*
+   *Live-checked 2026-10-04 on a real account: `GET _of/users/me` returns OF's raw user object (200).*
 7. **Fan data in payloads** (carried from v4 Q5, now wider). Their payloads carry full OF message and user objects
    (text, names, avatars) to every endpoint in every linked workspace. Is that OK? *Default: yes, as in v4.*

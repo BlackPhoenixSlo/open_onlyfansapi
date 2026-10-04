@@ -66,6 +66,14 @@ Shipped by the waves: P2 chats 22 new (25 with v4), P3 fans 33 operations, P4 mo
 `GET statistics/statements/earnings`, P4 date formats (`YYYY-MM-DD` vs `YYYY-MM-DD HH:MM:SS`), and the §9 Q6
 passthrough mapping.
 
+**Live-check result (2026-10-04, real account via local compose, proxy on):** all of the above return 200 through
+`/v1/{account}/…` with the `{data,_meta,_pagination?}` wrapper: `fans/latest` (offset paging works), `fans/top`,
+`subscribers/statistics`, `users/{id}/posts`, `statistics/reach/profile-visitors` and `statistics/statements/earnings`
+(both with `start_date`/`end_date` as `YYYY-MM-DD`), `engagement/messages/mass-messages` (`startDate`/`endDate`),
+`payouts/earning-statistics`, `payouts/balances`, `payouts/transactions`, `chats`, `chats/{id}/messages` (+ `pinned`,
+`search`), `media/vault`, `user-lists`, `me`, and the §9 Q6 passthrough. Observed, not changed: a missing required
+query param surfaces as FastAPI's `{"detail":[…]}` 422, not the gateway error envelope.
+
 ## A. Per-account named routes
 
 Paths are relative: theirs to `api/{account}`, ours to `/v1/{account}`. Ours resolve via the gateway proxy to upstream `/of/<rest>`. Note column: Laravel route name (omitted when auto-generated), `client:` = an `OFClient` method in `services/upstream/of_client.py` that already wraps the matching OnlyFans call (route not exposed), "not in yaml" = route table only. No streams routes exist in either of their sources.

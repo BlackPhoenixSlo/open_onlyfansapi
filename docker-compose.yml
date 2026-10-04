@@ -24,6 +24,7 @@ services:
     environment:
       UPSTREAM_TOKEN: ${UPSTREAM_TOKEN:-dev-upstream-token}
       STATIC_PARAM: ${STATIC_PARAM:-}
+      OF_REQUIRE_PROXY: ${OF_REQUIRE_PROXY:-true}   # false = local test without a proxy (OF sees your own IP)
     ports:
       - "127.0.0.1:3001:8000"
     volumes:

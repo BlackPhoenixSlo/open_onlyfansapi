@@ -106,6 +106,7 @@ async def _of_transport(_req: Request, e: Exception) -> JSONResponse:
     """curl_cffi transport failures: timeout 504, anything else (proxy, DNS, TLS) 502."""
     if isinstance(e, curl_errors.Timeout):
         return _error(504, "of_timeout")
+    log.warning("of_transport %s: %s", type(e).__name__, str(e)[:300])
     return _error(502, "proxy_error" if isinstance(e, curl_errors.ProxyError) else "of_unreachable")
 
 
