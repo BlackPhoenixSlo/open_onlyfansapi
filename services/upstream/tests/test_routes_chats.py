@@ -197,16 +197,27 @@ def test_one_message_is_the_newest_below_its_id_plus_one(client, of_fake):
     assert "x-next-page" not in r.headers
 
 
+def test_one_message_matches_a_string_id(client, of_fake):
+    of_fake.respond({"list": [{"id": "1003"}], "hasMore": False})
+    assert client.get("/of/chats/1002/messages/1003", headers=H).json() == {"id": "1003"}
+
+
 @pytest.mark.parametrize("body", [
     {"list": [{"id": 1001}], "hasMore": False},  # an older message: 1003 is not in this chat
     {"list": [], "hasMore": False},
-    [{"id": 1003}],                              # not OF's page shape
 ])
 def test_one_message_not_in_the_chat_is_404(client, of_fake, body):
     of_fake.respond(body)
     r = client.get("/of/chats/1002/messages/1003", headers=H)
     assert (r.status_code, r.json()["error"]["code"]) == (404, "not_found")
     assert of_fake.calls == [MESSAGE]
+
+
+@pytest.mark.parametrize("body", [[{"id": 1003}], {"hasMore": False}, None])
+def test_one_message_refuses_an_unexpected_page(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/chats/1002/messages/1003", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "of_unexpected_response")
 
 
 @pytest.mark.parametrize(("path", "of_url"), [

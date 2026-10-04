@@ -1,5 +1,6 @@
 """Tracking links, trial links, promotions and bundles (plan-v6, `promo.py`). Paths and parameter names are
-the reference product's; each handler maps them to OF's wire names."""
+the reference product's; each handler maps them to OF's wire names. Deleting a bundle is passthrough-only:
+it changes subscription pricing (plan-v6 §9 Q6)."""
 from __future__ import annotations
 
 from typing import Annotated, Any
@@ -7,45 +8,58 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from deps import ApiError, Client
+from deps import Client
 from of_client import API_BASE
-from routes.shape import next_page
+from routes.shape import is_noop, next_page, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
+TRIALS_CAP = PROMOTIONS_CAP = 100  # verified live in OFClient: `limit` honoured to 100
 
-def _no_offset(offset: int) -> None:
-    """Rows whose OF call has no cursor we can honour: a later page is a 422, never page 1 again (plan-v6 §2.3)."""
-    if offset > 0:
-        raise ApiError(422, "unsupported_field", "offset: this route returns one page only")
+
+def _refuse_filters(**filters: Any) -> None:
+    """Reference filters OF's call cannot take narrow the result, so they are 422s when set (plan-v6 §2.3)."""
+    for field, value in filters.items():
+        if value:
+            raise unsupported(field)
+
+
+def _page_bare_array(request: Request, response: Response, page: Any, limit: int, offset: int) -> None:
+    """OF answers these lists as a bare array with no `hasMore`, but `offset` pages them (probes P12, P13):
+    the full-page rule alone decides the next page."""
+    if isinstance(page, list):
+        next_page(request, response, {"list": page, "hasMore": True}, limit, {}, offset=offset + limit)
 
 
 # ─── tracking links ────────────────────────────────────────────────
 
 @router.get("/tracking-links", operation_id="tracking_links.list")
 def tracking_links_list(
-    client: Client,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    request: Request, response: Response, client: Client,
+    limit: Annotated[int, Query(ge=1)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
+    startDate: str = "", endDate: str = "", with_deleted: int = 0, sortby: str = "", sort: str = "",
 ) -> Any:
-    """One page (OF answers a bare array). The reference's `startDate`, `endDate`, `with_deleted`, `sortby`,
-    `sort`, `pagination` and `synchronous` are not supported: OF's call takes none of them."""
-    _no_offset(offset)
-    return client.request_json("GET", f"{API_BASE}/campaigns", params={"limit": limit})
+    """`startDate`, `endDate`, `with_deleted`, `sortby` and `sort` are 422s when set: OF's call takes none of
+    them. `pagination` and `synchronous` are not supported and are ignored."""
+    _refuse_filters(startDate=startDate, endDate=endDate, with_deleted=with_deleted, sortby=sortby, sort=sort)
+    page = client.request_json("GET", f"{API_BASE}/campaigns", params={"limit": limit, "offset": offset})
+    _page_bare_array(request, response, page, limit, offset)
+    return page
 
 
 class CreateTrackingLink(BaseModel):
-    """`name` is sent; the reference's `tags` has no OF field and answers 422 when set (plan-v6 §1.2)."""
+    """`name` is sent; the reference's `tags` has no OF field and answers 422 unless empty (plan-v6 §1.2)."""
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str, Field(min_length=1)]
-    tags: list[str] | None = None
+    tags: Any = None
 
 
 @router.post("/tracking-links", operation_id="tracking_links.create")
 def tracking_links_create(client: Client, body: CreateTrackingLink) -> Any:
-    if body.tags:
-        raise ApiError(422, "unsupported_field", "tags: not supported on this route")
+    if not is_noop(body.tags):
+        raise unsupported("tags")
     return client.create_tracking_link(name=body.name)
 
 
@@ -58,14 +72,18 @@ def tracking_links_delete(client: Client, tracking_link_id: int) -> Any:
 
 @router.get("/trial-links", operation_id="trial_links.list")
 def trial_links_list(
-    client: Client,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    request: Request, response: Response, client: Client,
+    limit: Annotated[int, Query(ge=1)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
+    startDate: str = "", endDate: str = "", sort: str = "", field: str = "",
 ) -> Any:
-    """One page (OF answers a bare array). The reference's `startDate`, `endDate`, `sort`, `field` and
-    `synchronous` are not supported: OF's call takes none of them."""
-    _no_offset(offset)
-    return client.trial_links(limit=limit)
+    """`startDate`, `endDate`, `sort` and `field` are 422s when set: OF's call takes none of them.
+    `synchronous` is not supported and is ignored."""
+    _refuse_filters(startDate=startDate, endDate=endDate, sort=sort, field=field)
+    limit = min(limit, TRIALS_CAP)
+    page = client.trial_links(offset=offset, limit=limit)
+    _page_bare_array(request, response, page, limit, offset)
+    return page
 
 
 @router.delete("/trial-links/{trial_link_id}", operation_id="trial_links.delete")
@@ -78,9 +96,10 @@ def trial_links_delete(client: Client, trial_link_id: int) -> Any:
 @router.get("/promotions", operation_id="promotions.list")
 def promotions_list(
     request: Request, response: Response, client: Client,
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    limit: Annotated[int, Query(ge=1)] = 10,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
+    limit = min(limit, PROMOTIONS_CAP)
     page = client.promotions(offset=offset, limit=limit)
     if isinstance(page, dict):  # OF's `{hasMore, items}` page, read as `{list, hasMore}`
         next_page(request, response, {"list": page.get("items"), "hasMore": page.get("hasMore")}, limit, {},
@@ -98,8 +117,3 @@ def promotions_delete(client: Client, promotion_id: int) -> Any:
 @router.get("/bundles", operation_id="bundles.list")
 def bundles_list(client: Client) -> Any:
     return client.subscription_bundles()
-
-
-@router.delete("/bundles/{bundle_id}", operation_id="bundles.delete")
-def bundles_delete(client: Client, bundle_id: int) -> Any:
-    return client.delete_bundle(bundle_id)

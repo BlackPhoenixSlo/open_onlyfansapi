@@ -7,17 +7,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
 
-from deps import ApiError, Client
+from deps import Client
 from of_client import API_BASE
-from routes.shape import next_page
+from routes.shape import next_page, one_page, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
-
-
-def _no_offset(offset: int) -> None:
-    """Rows whose OF call has no cursor we can honour: a later page is a 422, never page 1 again (plan-v6 §2.3)."""
-    if offset > 0:
-        raise ApiError(422, "unsupported_field", "offset: this route returns one page only")
 
 
 # ─── payouts ───────────────────────────────────────────────────────
@@ -67,11 +61,15 @@ def transactions_list(
 @router.get("/chargebacks", operation_id="chargebacks.list")
 def chargebacks_list(
     client: Client, start_date: str = "", end_date: str = "",
+    limit: Annotated[int, Query(ge=0)] = 0,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Any:
-    """One page. Empty dates mean every chargeback, so dates are sent only when given. The reference's
-    `limit` is not supported: OF's paging on this call is unverified (it pages by its own `marker`)."""
-    _no_offset(offset)
+    """One page, OF's own size. Empty dates mean every chargeback, so dates are sent only when given.
+    `limit` and `offset` are 422s when set: OF's paging on this call is unverified (it pages by its own
+    `marker`; a non-null `marker` in the answer means more chargebacks exist)."""
+    if limit:
+        raise unsupported("limit", "OF's page size on this call is unverified")
+    one_page(offset)
     params = {k: v for k, v in {"startDate": start_date, "endDate": end_date}.items() if v}
     return client.request_json("GET", f"{API_BASE}/payouts/chargebacks", params=params)
 
@@ -119,10 +117,13 @@ def engagement_direct_messages(
     client: Client, startDate: str, endDate: str,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    query: str = "",
 ) -> Any:
-    """One page: OF ignores `offset` on this call. The reference's `query` is not supported: OF's
+    """One page: OF ignores `offset` on this call. The reference's `query` is a 422 when set: OF's
     direct-message stats call does not take it."""
-    _no_offset(offset)
+    if query:
+        raise unsupported("query")
+    one_page(offset)
     return client.request_json("GET", f"{API_BASE}/users/me/stats/messages/direct",
                                params={"startDate": startDate, "endDate": endDate, "limit": limit})
 

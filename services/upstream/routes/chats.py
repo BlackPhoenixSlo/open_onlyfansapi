@@ -128,8 +128,10 @@ def chats_messages_get(client: Client, chat_id: int, message_id: int) -> Any:
     # OF has no single-message GET: its `id` is an older-than bound, so the newest message below
     # `message_id + 1` is the message itself when it is in this chat.
     page = client.get_messages(chat_id, limit=1, order="desc", before_id=message_id + 1)
-    items = page_items(page) or []
-    if items and isinstance(items[0], dict) and items[0].get("id") == message_id:
+    items = page_items(page)
+    if items is None:
+        raise ApiError(502, "of_unexpected_response", "OF's message page had an unexpected shape")
+    if items and isinstance(items[0], dict) and str(items[0].get("id")) == str(message_id):
         return items[0]
     raise ApiError(404, "not_found", "no such message in this chat")
 
