@@ -39,3 +39,7 @@ services/upstream/data/
 # OF session captures for connect.py (never commit)
 curl.txt
 *.curl.txt
+
+# owner OF devtools captures (docs/spec/plan-v6-capture-kit.md; never commit)
+of-captures/
+*.capture.md
