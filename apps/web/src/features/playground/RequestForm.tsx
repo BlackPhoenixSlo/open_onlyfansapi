@@ -15,6 +15,8 @@ import { type Op, type Param, pathParams } from './spec';
 export type Row = { key: string; value: string };
 /** The request being edited. `path` is a template: `{name}` placeholders are filled from `params` (and the account picker). */
 export type Draft = { method: string; path: string; params: Record<string, string>; query: Row[]; body: string };
+/** The required parameters still empty, by name (`account` included in `path`). */
+export type Missing = { path: string[]; query: string[] };
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
@@ -27,6 +29,7 @@ export function RequestForm({
   account,
   onAccountChange,
   snippet,
+  missing,
   problem,
   sending,
   onSend,
@@ -41,6 +44,8 @@ export function RequestForm({
   account: string;
   onAccountChange: (id: string) => void;
   snippet: string;
+  /** Marks these parameters invalid. */
+  missing: Missing;
   /** Why the request can't be sent yet, if anything. */
   problem: string | null;
   sending: boolean;
@@ -116,7 +121,7 @@ export function RequestForm({
                     name={n}
                     meta={pathMeta(n)}
                     required
-                    invalid={!draft.params[n]}
+                    invalid={missing.path.includes(n)}
                     value={draft.params[n] ?? ''}
                     onChange={(v) => set({ params: { ...draft.params, [n]: v } })}
                   />
@@ -134,7 +139,7 @@ export function RequestForm({
                   name={p.name}
                   meta={p}
                   required={p.required}
-                  invalid={p.required && !draft.query[i]!.value}
+                  invalid={missing.query.includes(p.name)}
                   value={draft.query[i]!.value}
                   onChange={(value) => setRow(i, { value })}
                 />

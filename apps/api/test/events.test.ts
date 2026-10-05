@@ -125,7 +125,7 @@ describe('upstream event source', () => {
     expect(rows[0].id).toMatch(/^evt_/);
 
     expect(seen).toEqual([
-      { id: rows[0].id, type: 'messages.received', accountId: 1001, data: frame().payload },
+      { id: rows[0].id, type: 'messages.received', accountId: 1001, ts: frame().ts, data: frame().payload },
     ]);
     const queued = await deliveries();
     expect(queued.map((d) => d.team_id).sort()).toEqual([teams.a, teams.b].sort());

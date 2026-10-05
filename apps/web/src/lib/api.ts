@@ -11,8 +11,7 @@ import type {
   UsageGroupBy,
   WebhookDeliveryList,
   WebhookEndpoint,
-  WebhookEventStatus,
-  WebhookEventType,
+  WebhookEventInfo,
   Whoami,
 } from '@api/contracts';
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
@@ -141,7 +140,7 @@ export const webhookQuery = (id: string) =>
 
 export const webhookEventsQuery = queryOptions({
   queryKey: ['webhooks', 'events'],
-  queryFn: () => api<{ items: { type: WebhookEventType; description: string; status: WebhookEventStatus }[] }>('/v1/webhooks/events'),
+  queryFn: () => api<{ items: WebhookEventInfo[] }>('/v1/webhooks/events'),
   staleTime: Infinity,
 });
 

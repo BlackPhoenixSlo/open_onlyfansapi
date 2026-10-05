@@ -19,7 +19,7 @@ import realtimeRoutes from './modules/realtime/routes.js';
 import statsRoutes from './modules/stats/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import webhooksRoutes from './modules/webhooks/routes.js';
-import webhookStreamRoutes from './modules/webhooks/stream.js';
+import webhookStreamRoutes, { type StreamOptions } from './modules/webhooks/stream.js';
 import whoamiRoutes from './modules/whoami/routes.js';
 import { authenticate } from './plugins/actor.js';
 import sessionPlugin from './plugins/session.js';
@@ -31,7 +31,7 @@ declare module 'fastify' {
   }
 }
 
-export type AppOptions = { upstreamUrl?: string; logger?: boolean };
+export type AppOptions = { upstreamUrl?: string; logger?: boolean; stream?: StreamOptions };
 
 export async function buildApp(opts: AppOptions = {}) {
   const app = Fastify({
@@ -74,7 +74,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(logsRoutes, { prefix: '/api/logs' });
   await app.register(accountsConnectRoutes, { prefix: '/api/accounts' });
   await app.register(usageRoutes, { prefix: '/api' });
-  await app.register(webhookStreamRoutes, { prefix: '/api' });
+  await app.register(webhookStreamRoutes, { ...opts.stream, prefix: '/api' });
 
   await app.register(
     async (v1) => {

@@ -93,7 +93,7 @@ const protocols = (secret: string) => ({ 'sec-websocket-protocol': `bearer, bear
 let seq = 0;
 const event = (accountId: number | null) => {
   const id = `evt_test${++seq}`;
-  return { id, type: 'messages.received', accountId, data: { text: 'hi', ref: id } };
+  return { id, type: 'messages.received', accountId, ts: new Date().toISOString(), data: { text: 'hi', ref: id } };
 };
 const wsLogs = (keyId: string) =>
   pool.query('SELECT * FROM request_log WHERE api_key_id = $1 AND endpoint = $2', [keyId, 'GET /v1/ws']);

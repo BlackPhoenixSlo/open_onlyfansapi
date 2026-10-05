@@ -162,9 +162,11 @@ def classify(account_id: int, frame: dict, *, now: datetime | None = None) -> li
             post_id = _int(value)
             ev = (event("post.expired", account_id, post_id, iso(now), {"postId": post_id})
                   if post_id is not None else None)
-        elif key == "chat_message_delete" and _int(value) is not None:
+        elif key == "chat_message_delete":
+            # Unlike post_expire (dropped), an unparsable id passes through: the delete frame is a single sample.
             message_id = _int(value)
-            ev = event("message.deleted", account_id, message_id, iso(now), {"id": str(message_id)})
+            ev = (event("message.deleted", account_id, message_id, iso(now), {"id": str(message_id)})
+                  if message_id is not None else event(f"upstream.{key}", account_id, None, iso(now), value))
         else:
             ev = event(f"upstream.{key}", account_id, None, iso(now), value)
         if ev is not None:

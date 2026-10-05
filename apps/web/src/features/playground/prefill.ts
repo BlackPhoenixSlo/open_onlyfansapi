@@ -33,18 +33,50 @@ export function defaultDraft(op: Op, now = new Date()): Draft {
   };
 }
 
+/**
+ * `base` with `rows` on top: each row takes the place of the first base row with its key not taken yet; the others
+ * are appended in order.
+ */
+export function overlayRows(base: Row[], rows: Row[]): Row[] {
+  const out = [...base];
+  const taken = new Set<number>();
+  for (const row of rows) {
+    const i = base.findIndex((r, j) => r.key === row.key && !taken.has(j));
+    if (i < 0) out.push(row);
+    else {
+      taken.add(i);
+      out[i] = row;
+    }
+  }
+  return out;
+}
+
 /** What is remembered per operation: only what differs from the defaults, so date ranges stay fresh. */
 type Saved = { params: Record<string, string>; query: Row[]; body?: string };
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
+const isRow = (v: unknown): v is Row => isObject(v) && isString(v.key) && isString(v.value);
+const isSaved = (v: unknown): v is Saved =>
+  isObject(v) &&
+  isObject(v.params) &&
+  Object.values(v.params).every(isString) &&
+  Array.isArray(v.query) &&
+  v.query.every(isRow) &&
+  (v.body === undefined || isString(v.body));
 
 const opKey = (id: string) => `gateway.playground.op.${id}`;
 const RECENT_KEY = 'gateway.playground.recent';
 const ACCOUNT_KEY = 'gateway.playground.account';
 const RECENT_MAX = 8;
 
-function read<T>(key: string): T | null {
+/** The stored value, or null when it is missing, unreadable or not of the expected shape. */
+function read<T>(key: string, is: (v: unknown) => v is T): T | null {
   try {
     const raw = localStorage.getItem(key);
-    return raw === null ? null : (JSON.parse(raw) as T);
+    const value: unknown = raw === null ? null : JSON.parse(raw);
+    return is(value) ? value : null;
   } catch {
     return null;
   }
@@ -62,33 +94,18 @@ function write(key: string, value: unknown) {
 /** `op`'s defaults with the values last sent for it on top. */
 export function initialDraft(op: Op): Draft {
   const draft = defaultDraft(op);
-  const saved = read<Saved>(opKey(op.id));
+  const saved = read(opKey(op.id), isSaved);
   if (!saved) return draft;
-  const query = [...draft.query];
-  const used = new Set<number>();
-  for (const row of saved.query ?? []) {
-    const i = draft.query.findIndex((r, j) => r.key === row.key && !used.has(j));
-    if (i < 0) query.push(row);
-    else {
-      used.add(i);
-      query[i] = row;
-    }
-  }
-  return { ...draft, params: saved.params ?? {}, query, body: saved.body ?? draft.body };
+  return { ...draft, params: saved.params, query: overlayRows(draft.query, saved.query), body: saved.body ?? draft.body };
 }
 
 /** Remembers the values `draft` sends for `op` that differ from its defaults. */
 export function rememberDraft(op: Op, draft: Draft) {
   const defaults = defaultDraft(op);
   const params = Object.fromEntries(Object.entries(draft.params).filter(([, v]) => v));
-  const used = new Set<number>();
-  const query = draft.query.filter((row) => {
-    if (!row.key) return false;
-    const i = defaults.query.findIndex((d, j) => d.key === row.key && !used.has(j));
-    if (i < 0) return true;
-    used.add(i);
-    return defaults.query[i]!.value !== row.value;
-  });
+  // Each row lands on the default it overrides (same index) or past the defaults; only changed ones are kept.
+  const rows = overlayRows(defaults.query, draft.query.filter((row) => row.key));
+  const query = rows.filter((row, i) => row.value !== defaults.query[i]?.value);
   const body = draft.body !== defaults.body ? draft.body : undefined;
   const empty = Object.keys(params).length === 0 && query.length === 0 && body === undefined;
   write(opKey(op.id), empty ? null : { params, query, body });
@@ -100,8 +117,7 @@ export function forgetDraft(op: Op) {
 
 /** The last used operation ids, most recent first. */
 export function recentOps(): string[] {
-  const ids = read<unknown>(RECENT_KEY);
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  return read(RECENT_KEY, isStrings) ?? [];
 }
 
 export function pushRecent(id: string): string[] {
@@ -111,8 +127,7 @@ export function pushRecent(id: string): string[] {
 }
 
 export function lastAccount(): string {
-  const id = read<unknown>(ACCOUNT_KEY);
-  return typeof id === 'string' ? id : '';
+  return read(ACCOUNT_KEY, isString) ?? '';
 }
 
 export function rememberAccount(id: string) {

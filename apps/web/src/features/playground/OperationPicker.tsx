@@ -35,7 +35,7 @@ export function OperationPicker({
   });
   const recentOps = recent.flatMap((id) => visible.filter((op) => op.id === id));
   const groups = groupOps(visible);
-  if (recentOps.length > 0) groups.unshift(['Recent', recentOps]);
+  if (recentOps.length > 0) groups.unshift({ label: 'Recent', ops: recentOps, collapsed: false });
   const toggle = (group: string) =>
     setToggled((prev) => {
       const next = new Set(prev);
@@ -48,21 +48,20 @@ export function OperationPicker({
       <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search operations…" aria-label="Search operations" />
       <div className="max-h-[70vh] overflow-y-auto rounded-md border">
         {visible.length === 0 && <p className="p-3 text-sm text-muted-foreground">No operations match.</p>}
-        {groups.map(([group, list]) => {
+        {groups.map(({ label, ops: list, collapsed }) => {
           // A search shows every match, collapsed groups included.
-          const collapsedByDefault = group.startsWith('platform / ');
-          const open = terms.length > 0 || (collapsedByDefault ? toggled.has(group) : !toggled.has(group));
+          const open = terms.length > 0 || (collapsed ? toggled.has(label) : !toggled.has(label));
           return (
-            <section key={group}>
+            <section key={label}>
               <h2 className="sticky top-0 z-10 border-b bg-background">
                 <button
                   type="button"
                   aria-expanded={open}
-                  onClick={() => toggle(group)}
+                  onClick={() => toggle(label)}
                   className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
                 >
                   {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-                  {group} <span className="font-normal">({list.length})</span>
+                  {label} <span className="font-normal">({list.length})</span>
                 </button>
               </h2>
               {open && (

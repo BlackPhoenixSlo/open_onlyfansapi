@@ -7,7 +7,6 @@ import { event, teamBackend } from '../../db/schema.js';
 import { publish } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
 import { emit } from '../webhooks/service.js';
-import { notifyEvent } from '../webhooks/stream.js';
 
 /** Frames waiting for ingest; more are dropped. */
 const QUEUE_MAX = 1000;
@@ -60,7 +59,7 @@ const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Er
 
 /**
  * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then a webhook
- * `emit()` per linked workspace (and a frame to those workspaces' dashboard streams). Its `evt_` id is the ledger id, the bus id and the deliveries' idempotency key.
+ * `emit()` per linked workspace. Its `evt_` id is the ledger id, the bus id and the deliveries' idempotency key.
  * A failed ledger insert is logged; the event is still published but not emitted.
  */
 export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Promise<void> {
@@ -78,16 +77,12 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
       if (rows.length === 0) return; // duplicate
     } catch (err) {
       log.error({ err: cause(err), type, accountId }, 'event ledger insert failed; published, not emitted');
-      publish({ id, type, accountId, data });
+      publish({ id, type, accountId, ts: frame.ts, data });
       return;
     }
   }
-  publish({ id, type, accountId, data });
+  publish({ id, type, accountId, ts: frame.ts, data });
   const teams = await db.select({ teamId: teamBackend.teamId }).from(teamBackend);
-  notifyEvent(
-    teams.map((t) => t.teamId),
-    { id, type, accountId, ts: frame.ts, payload: data },
-  );
   await Promise.all(
     teams.map((t) =>
       emit(t.teamId, id, type, accountId, data).catch((err) =>
