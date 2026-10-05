@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import { ensureWorkspace, ORG_WRITE_REFUSED } from '../src/auth.js';
 import { db, pool } from '../src/db/index.js';
 import { member, organization, user } from '../src/db/schema.js';
-import { ORIGIN, resetDb, signUp } from './helpers.js';
+import { cookieOf, ORIGIN, outbox, resetDb, signUp, verificationPath } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 let u: Awaited<ReturnType<typeof signUp>>;
@@ -17,6 +17,14 @@ afterAll(async () => {
   await app.close();
   await pool.end();
 });
+
+const authPost = (path: string, payload: object) =>
+  app.inject({
+    method: 'POST',
+    url: `/api/auth/${path}`,
+    headers: { origin: ORIGIN, 'content-type': 'application/json' },
+    payload,
+  });
 
 const orgPost = (path: string, payload: object) =>
   app.inject({
@@ -117,5 +125,55 @@ describe('workspace creation on first session load', () => {
     expect(a.organizationId).toBe(b.organizationId);
     expect(await membershipsOf(fresh.id)).toHaveLength(1);
     expect(await countOrgs()).toBe(before + 1);
+  });
+});
+
+describe('email verification', () => {
+  const email = 'verify@example.test';
+  const credentials = { email, password: 'pw-12345678' };
+
+  it('sign-up sends a verification mail and starts no session', async () => {
+    const res = await authPost('sign-up/email', { ...credentials, name: 'verify' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().token).toBeNull();
+    expect(cookieOf(res)).not.toContain('session_token');
+    const mail = outbox.findLast((m) => m.to === email);
+    expect(mail?.subject).toBe('Verify your email address');
+    expect(mail?.html).toContain('/api/auth/verify-email?token=');
+  });
+
+  it('refuses sign-in until the email is verified', async () => {
+    const res = await authPost('sign-in/email', credentials);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('EMAIL_NOT_VERIFIED');
+  });
+
+  it('resends the verification mail', async () => {
+    const before = outbox.length;
+    const res = await authPost('send-verification-email', { email });
+    expect(res.statusCode).toBe(200);
+    expect(outbox.slice(before).map((m) => m.to)).toEqual([email]);
+  });
+
+  it('the link verifies the email, signs the user in and redirects to the dashboard login (which forwards to /)', async () => {
+    const res = await app.inject({ method: 'GET', url: verificationPath(email) });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(`${ORIGIN}/login`);
+    const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie: cookieOf(res) } });
+    expect(session.json().user).toMatchObject({ email, emailVerified: true });
+    expect(session.json().session.activeOrganizationId).toEqual(expect.any(String));
+  });
+
+  it('an invalid link redirects to /login with the error, for the resend prompt', async () => {
+    const callbackURL = encodeURIComponent(`${ORIGIN}/login`);
+    const res = await app.inject({ method: 'GET', url: `/api/auth/verify-email?token=bogus&callbackURL=${callbackURL}` });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(`${ORIGIN}/login?error=INVALID_TOKEN`);
+  });
+
+  it('allows sign-in once verified', async () => {
+    const res = await authPost('sign-in/email', credentials);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().token).toEqual(expect.any(String));
   });
 });

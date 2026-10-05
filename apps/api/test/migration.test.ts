@@ -1,4 +1,5 @@
-// The 2.0 data migration (drizzle/0006, plan-v5 §2.4) on v4-named rows, in a scratch database.
+// The data migrations on pre-existing rows, in a scratch database: drizzle/0006 (2.0 event names, plan-v5 §2.4) on
+// v4-named rows, and drizzle/0007 (email verification) on users who signed up before it.
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,6 +72,7 @@ describe('migration 0006 (v2.0 event names)', () => {
         ('whd_3', 'team_1', 'whe_2', 'message.received', 1001, '{}', 'succeeded'),
         ('whd_4', 'team_1', 'whe_2', 'webhook.test', null, '{}', 'pending'),
         ('whd_5', 'team_1', 'whe_2', 'upstream.chat_typing', 1001, '{}', 'pending')`);
+    await pool.query(`INSERT INTO "user" (id, name, email) VALUES ('usr_1', 'Old', 'old@example.test')`);
 
     await migrate(drizzle(pool), { migrationsFolder: migrations });
 
@@ -101,5 +103,7 @@ describe('migration 0006 (v2.0 event names)', () => {
     );
     expect(column.rows).toEqual([{ is_nullable: 'NO' }]);
     expect((await pool.query(`SELECT to_regclass('v5_event_name') AS t`)).rows).toEqual([{ t: null }]);
+    // 0007: users from before email verification are not locked out.
+    expect((await pool.query(`SELECT email_verified FROM "user" WHERE id = 'usr_1'`)).rows).toEqual([{ email_verified: true }]);
   });
 });

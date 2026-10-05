@@ -7,7 +7,8 @@ Durations assume narration at about 150 words a minute.
 ## How to record
 
 Record with QuickTime (File → New Screen Recording) or OBS at 1440x900, the size of the generated media. Run
-`pnpm media` first, against a running stack with a linked workspace (`BASE_URL`, default `http://localhost`): it
+`pnpm media` first, against a running stack with a linked workspace (`BASE_URL`, default `http://localhost`; set
+`DATABASE_URL` to the gateway database so a fresh account is marked verified): it
 writes the PNGs and `docs/media/overview.webm`, the b-roll for section (b). Use a light terminal theme at 20 pt or
 larger and clear it between shots. Keep real secrets off screen: show `.env` only with placeholder values, use
 `gw.example.com` for the domain, and cut away from the dialog that shows a new API key. Record the narration
@@ -46,7 +47,7 @@ Terminal in the repo root, browser on the right.
 | C2 | `cp .env.example .env`; `openssl rand -base64 32`; the editor with `BETTER_AUTH_SECRET` set and `UPSTREAM_TOKEN=dev-upstream-token` | Copy the example env file. Set an auth secret, and use dev-upstream-token as the upstream token for the fake upstream. | 0:08 |
 | C3 | `pnpm db:migrate`, then `pnpm dev`: API on `http://localhost:4000`, dashboard on `http://localhost:5173` | Run the migrations, then pnpm dev. The API listens on port 4000, the dashboard on 5173. | 0:07 |
 | C4 | Second terminal: `UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts` prints `fake upstream listening on …:3001` | No upstream yet? In a second terminal, start the fake one the tests use. It serves one account with id 1. | 0:08 |
-| C5 | Browser: http://localhost:5173, Create one, register; then Settings, copy the slug | Register at localhost 5173. That creates your workspace. Copy its slug from Settings. | 0:07 |
+| C5 | Browser: http://localhost:5173, Create one, register; open the verification link from the API log; then Settings, copy the slug | Register at localhost 5173 and open the verification link. That creates your workspace. Copy its slug from Settings. | 0:07 |
 | C6 | `pnpm --filter @gateway/api link-team <workspace-slug>` prints `linked workspace …`; reload Accounts, the Demo row appears | Linking is the operator's approval step. Run link-team with the slug, reload Accounts, and the demo account appears. | 0:08 |
 | C7 | API keys → Create key (cut the secret dialog); terminal: `export API_KEY=gk_...`, `export ACCOUNT_ID=123` (type `1`, the fake upstream's account), `curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/$ACCOUNT_ID/me` returns `{"echo":true,…}` | Create a key; the secret is shown once. Export it, then call slash v1, account one, me. The fake upstream echoes it back. | 0:10 |
 
@@ -63,7 +64,7 @@ SSH session on a Docker VPS (`ssh root@<vps-ip>`), browser on the right. This is
 | D4 | Close-up of `.env`: `UPSTREAM_URL=http://upstream:8000` and `UPSTREAM_TOKEN` | The upstream token needs at least 16 characters, from `openssl rand -hex 32`. The bundled upstream's URL is already filled in. | 0:08 |
 | D5 | `docker compose up -d --build --wait`: build output (jump cut), then the containers report healthy | Start it with docker compose up, build, wait. The first build takes a few minutes; migrations run on every start. | 0:09 |
 | D6 | `curl -fsS https://gw.example.com/healthz` prints `{"ok":true}`; browser padlock on `https://gw.example.com` | Check healthz over HTTPS; Caddy already holds the certificate. If it fails, PUBLIC_URL must be the bare origin, no trailing slash. | 0:09 |
-| D7 | Browser: sign up on `https://gw.example.com`, then Settings, copy the slug | Open your domain and sign up. Sign-up is open, but a new workspace reaches nothing until you approve it. Copy the slug. | 0:09 |
+| D7 | Browser: sign up on `https://gw.example.com`, open the verification link from the email, then Settings, copy the slug | Open your domain, sign up and open the verification link. Sign-up is open, but a new workspace reaches nothing until you approve it. Copy the slug. | 0:09 |
 | D8 | `docker compose exec gateway node dist/db/link-team.js <slug>` prints `linked workspace …`; reload Accounts | Approve it from the VPS shell with link-team. A typo prints no workspace with slug; copy it again from Settings. Reload Accounts. | 0:09 |
 
 ## (e) Close (0:15)

@@ -1,4 +1,4 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router';
+import { Link, createFileRoute } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -11,16 +11,18 @@ import { PRODUCT_NAME } from '@/lib/brand';
 export const Route = createFileRoute('/register')({ component: Register });
 
 function Register() {
-  const navigate = useNavigate();
   const [pending, setPending] = useState(false);
+  /** Set once signed up: the address the verification link went to. */
+  const [sentTo, setSentTo] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    const email = String(form.get('email'));
     setPending(true);
     const { error } = await authClient.signUp.email({
       name: String(form.get('name')),
-      email: String(form.get('email')),
+      email,
       password: String(form.get('password')),
     });
     setPending(false);
@@ -28,7 +30,28 @@ function Register() {
       toast.error(error.message ?? 'Sign up failed');
       return;
     }
-    await navigate({ to: '/' });
+    setSentTo(email);
+  }
+
+  if (sentTo) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Check your email</CardTitle>
+            <CardDescription>
+              Check your email for a verification link. We sent it to {sentTo}; open it to finish signing up. If
+              nothing arrives, go to Sign in and use Resend verification email.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link to="/login" className="text-sm underline">
+              Back to sign in
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

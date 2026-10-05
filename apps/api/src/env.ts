@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
+/** Unset or empty = undefined. */
+const optionalString = z.string().optional().transform((v) => v || undefined);
 
 /**
  * Fastify `trustProxy`: `false`, a hop count (`1` = one reverse proxy in front), or comma-separated proxy IPs/CIDRs.
@@ -65,7 +67,22 @@ export const envSchema = z.object({
   WEBHOOK_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
   /** Days the event ledger (`/v1/stats`) keeps. */
   EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+  /** Outgoing mail (sign-up verification links). Unset or empty = no mail is sent; the link is logged instead. */
+  SMTP_HOST: optionalString,
+  /** 465 = implicit TLS; anything else (587) must upgrade with STARTTLS. */
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: optionalString,
+  SMTP_PASSWORD: optionalString,
+  /** Sender address; defaults to SMTP_USER. */
+  SMTP_FROM_EMAIL: optionalString,
+  SMTP_FROM_NAME: optionalString,
 }).superRefine((e, ctx) => {
+  if (e.SMTP_HOST && !e.SMTP_FROM_EMAIL && !e.SMTP_USER) {
+    ctx.addIssue({ code: 'custom', path: ['SMTP_FROM_EMAIL'], message: 'SMTP_HOST is set: set SMTP_FROM_EMAIL or SMTP_USER (the sender address)' });
+  }
+  if (e.SMTP_USER && !e.SMTP_PASSWORD) {
+    ctx.addIssue({ code: 'custom', path: ['SMTP_PASSWORD'], message: 'SMTP_USER is set: set SMTP_PASSWORD too' });
+  }
   if (e.NODE_ENV !== 'production') return;
   for (const key of ['APP_URL', 'BETTER_AUTH_URL'] as const) {
     if (isUnencrypted(e[key], LOCAL_HOSTS)) {
@@ -90,6 +107,9 @@ if (isUnencrypted(env.UPSTREAM_URL, UPSTREAM_PLAIN_HOSTS)) {
 }
 if (env.UPSTREAM_WS_URL && isUnencrypted(env.UPSTREAM_WS_URL, UPSTREAM_PLAIN_HOSTS)) {
   console.warn('UPSTREAM_WS_URL is plain ws:// to a remote host: UPSTREAM_TOKEN and events travel unencrypted.');
+}
+if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
+  console.warn('SMTP_HOST is not set: email verification links, which sign the user in, are printed to this log instead of being emailed.');
 }
 /** Every variable the API reads (`.env.example` must list them all). */
 export const ENV_KEYS = Object.keys(envSchema.shape);

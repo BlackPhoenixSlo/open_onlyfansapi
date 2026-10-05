@@ -37,6 +37,14 @@ Set these values in `.env`:
 `DATABASE_URL` points at the Postgres from step 1. The API exits on start with a list of problems if a
 required value is missing or invalid.
 
+### Email verification
+
+New accounts must confirm their email address before they can sign in. Email verification requires `SMTP_*`
+(`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`; e.g.
+`mail.privateemail.com`, port `587` for STARTTLS or `465` for TLS). Without `SMTP_HOST` no mail is sent and the
+link is printed in the API logs instead, which is enough for local use. Accounts created before this existed
+are marked verified by the migration.
+
 ## 3. Install, migrate, run
 
 ```sh
@@ -98,7 +106,8 @@ Left empty, there is no event source and `/v1/ws` answers 503.
 
 ## 4. Sign up and link your workspace
 
-Open http://localhost:5173 and register. A workspace is created for you.
+Open http://localhost:5173 and register, then open the verification link (from your inbox, or the API log
+without SMTP). It signs you in. A workspace is created for you.
 
 The workspace must be linked before it may reach the upstream; the link is the operator's approval step.
 Until then, calls that would reach the upstream fail with `409 team_not_linked`. Find your workspace slug on

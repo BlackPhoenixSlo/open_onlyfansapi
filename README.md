@@ -106,8 +106,9 @@ docker compose up -d --build --wait
 curl -fsS https://gw.example.com/healthz
 ```
 
-Open `https://gw.example.com` and sign up; that creates a workspace. Copy its slug from **Settings**, then
-approve it from the VPS shell:
+Open `https://gw.example.com`, sign up and open the verification link from your email (without SMTP it is in
+`docker compose logs gateway`); that creates a workspace. Copy its slug from **Settings**, then approve it from the
+VPS shell:
 
 ```sh
 docker compose exec gateway node dist/db/link-team.js <slug>
@@ -143,7 +144,8 @@ default `UPSTREAM_URL`, and serves one account with id `1`.
 UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts
 ```
 
-Register at http://localhost:5173, copy the workspace slug from **Settings**, and link it:
+Register at http://localhost:5173, open the verification link (printed in the API log without SMTP), copy the
+workspace slug from **Settings**, and link it:
 
 ```sh
 pnpm --filter @gateway/api link-team <workspace-slug>

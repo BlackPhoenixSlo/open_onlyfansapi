@@ -123,7 +123,8 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
 ## 6. First user
 
-1. Open `https://gw.example.com` in a browser and **sign up**. The first account creates a workspace.
+1. Open `https://gw.example.com` in a browser and **sign up**, then open the verification link from your email
+   (without `SMTP_HOST` it is in `docker compose logs gateway`). The first account creates a workspace.
 2. Go to **Settings** and copy the workspace **slug**.
 3. Approve that workspace from the VPS shell (sign-up is open, so this link is the approval step):
 

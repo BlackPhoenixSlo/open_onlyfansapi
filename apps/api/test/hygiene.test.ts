@@ -60,6 +60,25 @@ describe('hygiene', () => {
     expect(ws().data?.EVENT_RETENTION_DAYS).toBe(365);
   });
 
+  it('SMTP: a host needs a sender address, a user needs a password', () => {
+    const base = {
+      DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',
+      APP_URL: 'http://localhost:5173',
+      BETTER_AUTH_URL: 'http://localhost:4000',
+      BETTER_AUTH_SECRET: 'x'.repeat(16),
+      UPSTREAM_URL: 'http://upstream:8000',
+      UPSTREAM_TOKEN: 'x'.repeat(16),
+    };
+    const smtp = (vars: Record<string, string>) =>
+      envSchema.safeParse({ ...base, ...vars }).error?.issues.map((i) => i.path[0]) ?? [];
+    expect(smtp({})).toEqual([]);
+    expect(smtp({ SMTP_HOST: '', SMTP_USER: '' })).toEqual([]);
+    expect(smtp({ SMTP_HOST: 'mail.example.test' })).toEqual(['SMTP_FROM_EMAIL']);
+    expect(smtp({ SMTP_HOST: 'mail.example.test', SMTP_USER: 'u@example.test' })).toEqual(['SMTP_PASSWORD']);
+    expect(smtp({ SMTP_HOST: 'mail.example.test', SMTP_USER: 'u@example.test', SMTP_PASSWORD: 'p' })).toEqual([]);
+    expect(smtp({ SMTP_HOST: 'mail.example.test', SMTP_FROM_EMAIL: 'noreply@example.test' })).toEqual([]);
+  });
+
   it('UPSTREAM_TOKEN: subprotocol-safe characters only', () => {
     const base = {
       DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',

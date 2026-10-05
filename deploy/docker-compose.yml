@@ -40,6 +40,13 @@ services:
       # Empty = no event source: no webhooks from upstream events, and /v1/ws answers 503.
       UPSTREAM_WS_URL: ${UPSTREAM_WS_URL:-}
       EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-365}
+      # Sign-up verification mail. Empty SMTP_HOST = the link is printed in this service's log instead.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
     depends_on:
       postgres:
         condition: service_healthy

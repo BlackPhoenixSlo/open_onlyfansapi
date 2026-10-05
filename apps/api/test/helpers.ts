@@ -2,16 +2,38 @@ import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db, pool } from '../src/db/index.js';
 import { organization, teamBackend } from '../src/db/schema.js';
+import { setMailTransport, type Mail } from '../src/lib/mailer.js';
 
 export const ORIGIN = 'http://localhost:5173';
 /** Headers the dashboard sends on cookie-authenticated writes. */
 export const dashboard = (cookie: string) => ({ cookie, origin: ORIGIN, 'x-dashboard': '1' });
 
+/** Mail the API sent during this test file (nothing leaves the process). */
+export const outbox: Mail[] = [];
+setMailTransport(async (mail) => {
+  outbox.push(mail);
+});
+
+/** The verification link in the latest mail to `email`, as a path for app.inject. */
+export function verificationPath(email: string) {
+  const mail = outbox.findLast((m) => m.to === email);
+  const link = mail && /https?:\/\/\S+/.exec(mail.text)?.[0];
+  if (!link) throw new Error(`no verification mail to ${email}`);
+  const url = new URL(link);
+  return url.pathname + url.search;
+}
+
+/** Session cookies from a response's Set-Cookie headers, as one Cookie header. */
+export function cookieOf(res: { headers: Record<string, unknown> }) {
+  const setCookie = res.headers['set-cookie'] as string | string[] | undefined;
+  return (Array.isArray(setCookie) ? setCookie : [setCookie ?? '']).map((c) => c.split(';')[0]).join('; ');
+}
+
 export async function resetDb() {
   await pool.query('TRUNCATE "user", organization, verification CASCADE');
 }
 
-/** Signs up a user; returns the session cookie and the auto-created workspace. */
+/** Signs up a user and follows the emailed verification link; returns the session cookie and the auto-created workspace. */
 export async function signUp(app: FastifyInstance, email: string) {
   const res = await app.inject({
     method: 'POST',
@@ -20,10 +42,9 @@ export async function signUp(app: FastifyInstance, email: string) {
     payload: { email, password: 'pw-12345678', name: email.split('@')[0] },
   });
   if (res.statusCode !== 200) throw new Error(`sign-up failed: ${res.statusCode} ${res.body}`);
-  const setCookie = res.headers['set-cookie'];
-  const cookie = (Array.isArray(setCookie) ? setCookie : [setCookie ?? ''])
-    .map((c) => c.split(';')[0])
-    .join('; ');
+  const verified = await app.inject({ method: 'GET', url: verificationPath(email) });
+  if (verified.statusCode !== 302) throw new Error(`verification failed: ${verified.statusCode} ${verified.body}`);
+  const cookie = cookieOf(verified);
   const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie } });
   const teamId = session.json().session.activeOrganizationId as string;
   const [team] = await db.select().from(organization).where(eq(organization.id, teamId));

@@ -1,7 +1,9 @@
 // Captures dashboard screenshots and a walkthrough video of a running Gateway into docs/media/.
 // Usage: pnpm media   (env: BASE_URL, EMAIL, PASSWORD; the workspace must be linked, see the hint it prints)
+// A fresh account must verify its email: with DATABASE_URL set to the gateway's database the script marks it verified.
 // First run on a linked workspace seeds a `demo-read` API key and a few proxied calls (the secret is never printed).
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,17 +30,43 @@ async function ok(res, what) {
   return res.status() === 204 ? null : res.json();
 }
 
-/** Signs up (an existing account answers 4xx, which is fine) and signs in; the context keeps the cookies. */
+/** Marks EMAIL verified in the DATABASE_URL database (pg comes from apps/api); false when unset or no such user. */
+async function markVerified() {
+  if (!process.env.DATABASE_URL) return false;
+  const pg = createRequire(new URL('../apps/api/package.json', import.meta.url))('pg');
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  try {
+    const { rowCount } = await db.query('UPDATE "user" SET email_verified = true WHERE lower(email) = lower($1)', [EMAIL]);
+    return rowCount > 0;
+  } finally {
+    await db.end();
+  }
+}
+
+/**
+ * Signs up (an existing account answers 4xx, which is fine) and signs in; the context keeps the cookies.
+ * A not-yet-verified account is verified through DATABASE_URL, or the script stops with a hint.
+ */
 async function signIn(api) {
   const signUp = await api.post(`${BASE_URL}/api/auth/sign-up/email`, {
     headers: { origin: BASE_URL },
     data: { email: EMAIL, password: PASSWORD, name: 'Gateway Demo' },
   });
   if (signUp.status() >= 500) throw new Error(`sign-up: HTTP ${signUp.status()}`);
-  await ok(
-    await api.post(`${BASE_URL}/api/auth/sign-in/email`, { headers: { origin: BASE_URL }, data: { email: EMAIL, password: PASSWORD } }),
-    'sign-in',
-  );
+  const post = () =>
+    api.post(`${BASE_URL}/api/auth/sign-in/email`, { headers: { origin: BASE_URL }, data: { email: EMAIL, password: PASSWORD } });
+  let res = await post();
+  if (res.status() === 403 && (await res.json()).code === 'EMAIL_NOT_VERIFIED') {
+    if (!(await markVerified())) {
+      throw new Error(
+        `${EMAIL} is not verified. Open the verification link (its inbox, or the API log when SMTP is unset), ` +
+          'or set DATABASE_URL to the gateway database, then run this script again.',
+      );
+    }
+    res = await post();
+  }
+  await ok(res, 'sign-in');
 }
 
 function printLinkHint(slug) {

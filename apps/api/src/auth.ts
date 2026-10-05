@@ -8,6 +8,7 @@ import { db } from './db/index.js';
 import * as schema from './db/schema.js';
 import { appOrigin, env } from './env.js';
 import { randomBase62 } from './lib/ids.js';
+import { sendMail } from './lib/mailer.js';
 
 /** Header the Fastify bridge sets to the resolved client IP; client-sent values are dropped. */
 export const CLIENT_IP_HEADER = 'x-gateway-client-ip';
@@ -69,13 +70,41 @@ const blockOrganizationWrites = createAuthMiddleware(async (ctx) => {
   throw new APIError('FORBIDDEN', { message: ORG_WRITE_REFUSED });
 });
 
+/**
+ * better-auth serves the verification link from BETTER_AUTH_URL and redirects to its callbackURL, `/` when the
+ * client sent none. Point that default at the dashboard's /login (on APP_URL, so it also works when the API and the
+ * dashboard are on different origins in dev): after verification the user is signed in and /login forwards to `/`;
+ * an expired or invalid link arrives as `/login?error=TOKEN_EXPIRED|INVALID_TOKEN|USER_NOT_FOUND`, where the page
+ * offers a resend.
+ */
+function verificationLink(url: string) {
+  const link = new URL(url);
+  const callback = link.searchParams.get('callbackURL');
+  link.searchParams.set('callbackURL', new URL(!callback || callback === '/' ? '/login' : callback, env.APP_URL).toString());
+  return link.toString();
+}
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/api/auth',
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: [appOrigin],
   database: drizzleAdapter(db, { provider: 'pg', schema }),
-  emailAndPassword: { enabled: true },
+  emailAndPassword: { enabled: true, requireEmailVerification: true },
+  emailVerification: {
+    // Sent on sign-up because requireEmailVerification is on.
+    autoSignInAfterVerification: true,
+    expiresIn: 3600,
+    sendVerificationEmail: async ({ user, url }) => {
+      const link = verificationLink(url);
+      await sendMail({
+        to: user.email,
+        subject: 'Verify your email address',
+        text: `Confirm your email address to finish signing up:\n\n${link}\n\nThe link expires in 1 hour. If you did not sign up, ignore this email.`,
+        html: `<p>Confirm your email address to finish signing up:</p><p><a href="${link.replaceAll('&', '&amp;')}">Verify email</a></p><p>The link expires in 1 hour. If you did not sign up, ignore this email.</p>`,
+      });
+    },
+  },
   advanced: {
     // better-auth skips its Origin check under NODE_ENV=test by default; keep it on everywhere so tests cover it.
     disableOriginCheck: false,
