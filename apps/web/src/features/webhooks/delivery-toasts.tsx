@@ -1,4 +1,4 @@
-import type { DeliveryNotice } from '@api/contracts';
+import type { AttemptStatus, DeliveryNotice } from '@api/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { subscribe } from '@/lib/dashboard-stream';
 
 /** Each attempt outcome's wording and toast. A retry is not final: only delivered and failed reach the desktop. */
-const OUTCOME: Record<DeliveryNotice['status'], { word: string; show: typeof toast.success; final: boolean }> = {
+const OUTCOME: Record<AttemptStatus, { word: string; show: typeof toast.success; final: boolean }> = {
   succeeded: { word: 'delivered', show: toast.success, final: true },
   pending: { word: 'retrying', show: toast.warning, final: false },
   failed: { word: 'failed', show: toast.error, final: true },

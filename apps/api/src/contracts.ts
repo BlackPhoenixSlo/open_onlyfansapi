@@ -321,6 +321,9 @@ export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;
 export type GatewayEvent = { id: string; type: string; accountId: number | null; ts: string; data: unknown };
 
 /** One finished delivery attempt, as `GET /api/webhooks/stream` sends it to the dashboard (`event: delivery`). */
+/** A finished delivery attempt: sent (2xx), will be retried, or out of attempts. */
+export type AttemptStatus = Exclude<DeliveryStatus, 'dropped'>;
+
 export type DeliveryNotice = {
   deliveryId: string;
   endpointId: string;
@@ -328,7 +331,7 @@ export type DeliveryNotice = {
   url: string;
   description: string | null;
   /** After this attempt: sent (2xx), will be retried, or out of attempts. */
-  status: Exclude<DeliveryStatus, 'dropped'>;
+  status: AttemptStatus;
   statusCode: number | null;
   error: string | null;
 };
