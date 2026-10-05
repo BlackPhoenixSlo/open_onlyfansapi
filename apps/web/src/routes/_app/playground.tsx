@@ -5,6 +5,17 @@ import { type ReactNode, useState } from 'react';
 import { OperationPicker } from '@/features/playground/OperationPicker';
 import { type Draft, RequestForm } from '@/features/playground/RequestForm';
 import { type Result, ResponsePanel } from '@/features/playground/ResponsePanel';
+import {
+  defaultDraft,
+  forgetDraft,
+  initialDraft,
+  lastAccount,
+  pickAccount,
+  pushRecent,
+  recentOps,
+  rememberAccount,
+  rememberDraft,
+} from '@/features/playground/prefill';
 import { curlSnippet } from '@/features/playground/snippet';
 import { type Op, fillPath, matchPath, pathParams, specQuery, urlProblem } from '@/features/playground/spec';
 import { accountsQuery, logQuery } from '@/lib/api';
@@ -20,8 +31,7 @@ export const Route = createFileRoute('/_app/playground')({
 type Initial = { draft: Draft; account: string };
 
 function fromOp(op: Op | undefined): Draft {
-  if (!op) return { method: 'GET', path: '/v1/whoami', params: {}, query: [], body: '' };
-  return { method: op.method, path: op.path, params: {}, query: op.query.map((key) => ({ key, value: '' })), body: op.body ?? '' };
+  return op ? initialDraft(op) : { method: 'GET', path: '/v1/whoami', params: {}, query: [], body: '' };
 }
 
 /** Prefill from a logged request: its operation template (or the raw path), path params, query and stored body. */
@@ -29,13 +39,16 @@ function fromLog(log: LogDetail, ops: Op[]): Initial {
   const match = matchPath(ops, log.method, log.path);
   const proxied = /^\/v1\/(\d+)(\/.*)$/.exec(log.path);
   const { account, ...params } = match?.params ?? {};
+  const logged = [...new URLSearchParams(log.query ?? '')].map(([key, value]) => ({ key, value }));
+  // The operation's other declared parameters as empty rows (not sent), so the replay shows their help text.
+  const declared = (match?.op.params ?? []).filter((p) => p.in === 'query' && !logged.some((r) => r.key === p.name));
   return {
     account: account ?? proxied?.[1] ?? '',
     draft: {
       method: log.method,
       path: match?.op.path ?? (proxied ? `/v1/{account}${proxied[2]}` : log.path),
       params,
-      query: [...new URLSearchParams(log.query ?? '')].map(([key, value]) => ({ key, value })),
+      query: [...logged, ...declared.map((p) => ({ key: p.name, value: '' }))],
       body: log.reqBody ?? match?.op.body ?? '',
     },
   };
@@ -54,7 +67,10 @@ function Playground() {
     );
   }
   const ops = spec.data?.ops ?? [];
-  const initial = log.data ? fromLog(log.data, ops) : { draft: fromOp(ops[0]), account: '' };
+  const recent = recentOps();
+  const initial = log.data
+    ? fromLog(log.data, ops)
+    : { draft: fromOp(ops.find((o) => o.id === recent[0]) ?? ops[0]), account: '' };
   return (
     <Page>
       {spec.isError && <p className="text-sm text-destructive">{spec.error.message}</p>}
@@ -106,18 +122,25 @@ function jsonProblem(body: string): string | null {
 function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
   const [draft, setDraft] = useState(initial.draft);
   const [account, setAccount] = useState(initial.account);
+  const [recent, setRecent] = useState(recentOps);
   const accounts = useQuery(accountsQuery);
   const queryClient = useQueryClient();
 
-  const accountId = account || String(accounts.data?.items[0]?.id ?? '');
+  const op = ops.find((o) => o.method === draft.method && o.path === draft.path);
+  const accountId = account || pickAccount((accounts.data?.items ?? []).map((a) => String(a.id)), lastAccount());
   const path = fillPath(draft.path, { ...draft.params, account: accountId });
   const query = new URLSearchParams(draft.query.filter((r) => r.key && r.value).map((r) => [r.key, r.value])).toString();
   const url = query ? `${path}?${query}` : path;
   const body = draft.method !== 'GET' && draft.body.trim() ? draft.body : undefined;
-  const missing = pathParams(draft.path).filter((n) => !(n === 'account' ? accountId : draft.params[n]));
+  const missingPath = pathParams(draft.path).filter((n) => !(n === 'account' ? accountId : draft.params[n]));
+  const missingQuery = (op?.params ?? [])
+    .filter((p) => p.in === 'query' && p.required && !draft.query.some((r) => r.key === p.name && r.value))
+    .map((p) => p.name);
+  const missing = [...missingPath, ...missingQuery];
+  const kind = missingQuery.length === 0 ? 'path ' : missingPath.length === 0 ? 'query ' : '';
   const problem =
     missing.length > 0
-      ? `Fill in: ${missing.join(', ')}.`
+      ? `Fill in the required ${kind}${missing.length === 1 ? 'parameter' : 'parameters'}: ${missing.join(', ')}.`
       : (urlProblem(url, window.location.origin) ?? (body !== undefined ? jsonProblem(body) : null));
 
   const send = useMutation({
@@ -129,20 +152,42 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
     <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
       <OperationPicker
         ops={ops}
-        selected={ops.find((o) => o.method === draft.method && o.path === draft.path)?.id}
-        onSelect={(op) => setDraft(fromOp(op))}
+        recent={recent}
+        selected={op?.id}
+        onSelect={(o) => {
+          setDraft(fromOp(o));
+          send.reset();
+        }}
       />
       <div className="min-w-0 space-y-4">
         <RequestForm
+          op={op}
           draft={draft}
           onChange={setDraft}
+          onReset={
+            op &&
+            (() => {
+              forgetDraft(op);
+              setDraft(defaultDraft(op));
+            })
+          }
           accounts={accounts}
           account={accountId}
-          onAccountChange={setAccount}
+          onAccountChange={(id) => {
+            setAccount(id);
+            rememberAccount(id);
+          }}
           snippet={curlSnippet({ method: draft.method, url: `${window.location.origin}${url}`, body })}
           problem={problem}
           sending={send.isPending}
-          onSend={() => send.mutate()}
+          onSend={() => {
+            if (op) {
+              rememberDraft(op, draft);
+              setRecent(pushRecent(op.id));
+            }
+            if (pathParams(draft.path).includes('account')) rememberAccount(accountId);
+            send.mutate();
+          }}
         />
         <ResponsePanel result={send.data} error={send.error} pending={send.isPending} />
       </div>

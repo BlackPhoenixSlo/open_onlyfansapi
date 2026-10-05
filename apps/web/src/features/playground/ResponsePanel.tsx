@@ -1,7 +1,12 @@
 import { Link } from '@tanstack/react-router';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { StatusBadge } from '@/components/status-badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { prettyJson } from '@/lib/utils';
+import { type ResponseTable, responseTable } from './table';
 
 export type Result = { status: number; ms: number; headers: [string, string][]; body: string; requestId: string | null };
 
@@ -40,10 +45,85 @@ export function ResponsePanel({ result, error, pending }: { result: Result | und
                 ))}
               </dl>
             </details>
-            <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted p-3 text-xs">{result.body ? prettyJson(result.body) : '(empty body)'}</pre>
+            <Body key={result.requestId ?? result.body} body={result.body} />
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function Body({ body }: { body: string }) {
+  const table = responseTable(body);
+  const [view, setView] = useState<'json' | 'table'>('json');
+  if (!body) return <pre className="rounded-md bg-muted p-3 text-xs">(empty body)</pre>;
+  const pretty = prettyJson(body);
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        {table && (
+          <div className="flex gap-1" role="group" aria-label="Response view">
+            <Button size="sm" variant={view === 'json' ? 'secondary' : 'ghost'} aria-pressed={view === 'json'} onClick={() => setView('json')}>
+              JSON
+            </Button>
+            <Button size="sm" variant={view === 'table' ? 'secondary' : 'ghost'} aria-pressed={view === 'table'} onClick={() => setView('table')}>
+              Table
+            </Button>
+          </div>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="ml-auto"
+          onClick={() =>
+            navigator.clipboard.writeText(pretty).then(
+              () => toast.success('Copied response body'),
+              () => toast.error('Copy failed'),
+            )
+          }
+        >
+          Copy
+        </Button>
+      </div>
+      {table && view === 'table' ? (
+        <RowsTable table={table} />
+      ) : (
+        <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted p-3 text-xs">{pretty}</pre>
+      )}
+    </div>
+  );
+}
+
+function RowsTable({ table }: { table: ResponseTable }) {
+  return (
+    <div className="space-y-1">
+      <div className="max-h-[32rem] overflow-auto rounded-md border">
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow>
+              {table.columns.map((c) => (
+                <TableHead key={c} className="font-mono">
+                  {c}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {table.rows.map((row, i) => (
+              <TableRow key={i}>
+                {table.columns.map((c) => (
+                  <TableCell key={c} className="font-mono">
+                    {row[c] === undefined || row[c] === null ? '' : String(row[c])}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        <code>{table.key}</code>: {table.total > table.rows.length ? `first ${table.rows.length} of ${table.total} rows` : `${table.total} rows`}
+      </p>
+    </div>
   );
 }

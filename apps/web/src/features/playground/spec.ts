@@ -1,7 +1,22 @@
 import { queryOptions } from '@tanstack/react-query';
 
-type Schema = { example?: unknown; examples?: unknown[] };
-type Parameter = { name: string; in: string };
+type Schema = {
+  $ref?: string;
+  type?: string;
+  format?: string;
+  pattern?: string;
+  enum?: unknown[];
+  default?: unknown;
+  example?: unknown;
+  examples?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  description?: string;
+  items?: Schema;
+  properties?: Record<string, Schema>;
+  required?: string[];
+};
+type Parameter = { name: string; in: string; required?: boolean; description?: string; example?: unknown; schema?: Schema };
 type Operation = {
   tags?: string[];
   summary?: string;
@@ -9,7 +24,22 @@ type Operation = {
   parameters?: Parameter[];
   requestBody?: { content?: Record<string, { schema?: Schema; example?: unknown }> };
 };
-type Document = { paths?: Record<string, Record<string, Operation>> };
+type Document = { paths?: Record<string, Record<string, Operation>>; components?: { schemas?: Record<string, Schema> } };
+
+/** A declared path or query parameter, or a JSON body property, as the form shows it. */
+export type Param = {
+  name: string;
+  in: 'path' | 'query' | 'body';
+  required: boolean;
+  /** Short type hint: `integer 1–50`, `recent | old`, `string date`. */
+  type: string;
+  description: string | undefined;
+  /** The spec's example or default, as text; undefined when it has neither (or the default is empty). */
+  placeholder: string | undefined;
+  /** `date` for ISO dates (`format: date` or a `YYYY-MM-DD` pattern), `date-time` for timestamps. */
+  format: 'date' | 'date-time' | undefined;
+  maximum: number | undefined;
+};
 
 export type Op = {
   /** `GET /v1/{account}/me` */
@@ -19,9 +49,12 @@ export type Op = {
   path: string;
   tag: string;
   summary: string | undefined;
-  /** Declared query parameter names. */
-  query: string[];
-  /** JSON body seed: the spec's example, `{}` without one, null when the operation takes no body. */
+  operationId: string | undefined;
+  /** Declared path and query parameters (not `account`): path ones first, then required, then optional query ones. */
+  params: Param[];
+  /** JSON body properties, required first; empty without a body schema. */
+  fields: Param[];
+  /** JSON body seed: the spec's example, else a skeleton of the required properties; null when the operation takes no body. */
   body: string | null;
 };
 
@@ -42,32 +75,118 @@ export const specQuery = queryOptions({
   staleTime: 10 * 60_000,
 });
 
-function bodySeed(op: Operation): string | null {
-  const json = op.requestBody?.content?.['application/json'];
-  if (!json) return null;
-  const example = json.example ?? json.schema?.example ?? json.schema?.examples?.[0];
-  return example === undefined ? '{}' : JSON.stringify(example, null, 2);
+/** Follows `$ref`s into `components.schemas`. */
+function deref(schema: Schema | undefined, schemas: Record<string, Schema>, depth = 0): Schema {
+  if (!schema) return {};
+  const name = schema.$ref?.replace('#/components/schemas/', '');
+  if (name === undefined || depth > 8) return schema;
+  return deref(schemas[name], schemas, depth + 1);
 }
 
-function operations(doc: Document): Op[] {
+function text(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+const ISO_DATE = String.raw`^\d{4}-\d{2}-\d{2}$`;
+
+function typeHint(schema: Schema): string {
+  if (schema.enum) return schema.enum.map(String).join(' | ');
+  if (schema.type === 'array') return `array of ${schema.items?.type ?? 'any'}`;
+  const max = schema.maximum !== undefined && schema.maximum < Number.MAX_SAFE_INTEGER ? schema.maximum : undefined;
+  const range = max === undefined ? '' : schema.minimum !== undefined ? ` ${schema.minimum}–${max}` : ` ≤ ${max}`;
+  const format = schema.format ?? dateFormat(schema);
+  return `${schema.type ?? 'any'}${format ? ` ${format}` : ''}${range}`;
+}
+
+function dateFormat(schema: Schema): Param['format'] {
+  if (schema.format === 'date-time') return 'date-time';
+  if (schema.format === 'date' || schema.pattern === ISO_DATE) return 'date';
+  return undefined;
+}
+
+function param(name: string, where: Param['in'], required: boolean, schema: Schema, description?: string, example?: unknown): Param {
+  return {
+    name,
+    in: where,
+    required,
+    type: typeHint(schema),
+    description: description ?? schema.description,
+    placeholder: text(example ?? schema.example ?? schema.examples?.[0] ?? schema.default),
+    format: dateFormat(schema),
+    maximum: schema.maximum,
+  };
+}
+
+function zero(schema: Schema): unknown {
+  if (schema.default !== undefined) return schema.default;
+  switch (schema.type) {
+    case 'integer':
+    case 'number':
+      return 0;
+    case 'boolean':
+      return false;
+    case 'array':
+      return [];
+    case 'object':
+      return {};
+    default:
+      return '';
+  }
+}
+
+function bodySeed(json: { schema?: Schema; example?: unknown } | undefined, schema: Schema): string | null {
+  if (!json) return null;
+  const example = json.example ?? schema.example ?? schema.examples?.[0];
+  if (example !== undefined) return JSON.stringify(example, null, 2);
+  const props = schema.properties ?? {};
+  const skeleton = Object.fromEntries((schema.required ?? []).filter((n) => props[n]).map((n) => [n, zero(props[n]!)]));
+  return JSON.stringify(skeleton, null, 2);
+}
+
+const RANK = (p: Param) => (p.in === 'path' ? 0 : p.required ? 1 : 2);
+
+export function operations(doc: Document): Op[] {
+  const schemas = doc.components?.schemas ?? {};
   return Object.entries(doc.paths ?? {}).flatMap(([path, item]) =>
     Object.entries(item)
       .filter(([method]) => METHODS.has(method))
-      .map(([method, op]) => ({
-        id: `${method.toUpperCase()} ${path}`,
-        method: method.toUpperCase(),
-        path,
-        tag: op.tags?.[0] ?? 'other',
-        summary: op.summary ?? op.operationId,
-        query: (op.parameters ?? []).filter((p) => p.in === 'query').map((p) => p.name),
-        body: bodySeed(op),
-      })),
+      .map(([method, op]) => {
+        const json = op.requestBody?.content?.['application/json'];
+        const bodySchema = deref(json?.schema, schemas);
+        const required = new Set(bodySchema.required ?? []);
+        return {
+          id: `${method.toUpperCase()} ${path}`,
+          method: method.toUpperCase(),
+          path,
+          tag: op.tags?.[0] ?? 'other',
+          summary: op.summary,
+          operationId: op.operationId,
+          params: (op.parameters ?? [])
+            .filter((p) => (p.in === 'path' || p.in === 'query') && p.name !== 'account')
+            .map((p) =>
+              param(p.name, p.in as 'path' | 'query', p.in === 'path' || p.required === true, deref(p.schema, schemas), p.description, p.example),
+            )
+            .sort((a, b) => RANK(a) - RANK(b)),
+          fields: Object.entries(bodySchema.properties ?? {})
+            .map(([name, s]) => param(name, 'body', required.has(name), deref(s, schemas)))
+            .sort((a, b) => Number(b.required) - Number(a.required)),
+          body: bodySeed(json, bodySchema),
+        };
+      }),
   );
 }
 
-export function groupByTag(ops: Op[]): [string, Op[]][] {
+/** The sidebar group: the tag, with platform operations split by first path segment (`platform / chats`). */
+export function groupOf(op: Op): string {
+  if (op.tag !== 'platform') return op.tag;
+  return `platform / ${op.path.split('/')[3] ?? ''}`;
+}
+
+/** Operations by `groupOf`, in first-seen order. */
+export function groupOps(ops: Op[]): [string, Op[]][] {
   const groups = new Map<string, Op[]>();
-  for (const op of ops) groups.set(op.tag, [...(groups.get(op.tag) ?? []), op]);
+  for (const op of ops) groups.set(groupOf(op), [...(groups.get(groupOf(op)) ?? []), op]);
   return [...groups];
 }
 
