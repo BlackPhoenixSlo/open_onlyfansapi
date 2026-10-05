@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from deps import ApiError, Client
-from routes.shape import next_page, unsupported
+from routes.shape import next_page, page_items, unsupported
 
 router = APIRouter(prefix="/of", tags=["of-api"])
 
@@ -47,6 +47,20 @@ def settings_blocked_countries(client: Client) -> Any:
 @router.get("/settings/drm", operation_id="settings.drm.get")
 def settings_drm(client: Client) -> Any:
     return {"enabled": _setting(client, "isDrmEnabled")}
+
+
+WELCOME = "reply_on_subscribe"
+
+
+@router.get("/settings/welcome-message", operation_id="settings.welcome_message.get")
+def settings_welcome_message(client: Client) -> Any:
+    """The welcome message (plan-v6 §2.1 #6): the first `reply_on_subscribe` item of OF's template list (a bare
+    array or a `{list}` page), or null. Unverified live: P23 saw a bare empty array."""
+    page = client.message_templates(template=WELCOME)
+    items = page if isinstance(page, list) else page_items(page)
+    if items is None:
+        raise ApiError(502, "of_unexpected_response", "OF's template list had an unexpected shape")
+    return next((t for t in items if isinstance(t, dict) and t.get("template") == WELCOME), None)
 
 
 class UpdateProfile(BaseModel):

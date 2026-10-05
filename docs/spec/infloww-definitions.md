@@ -20,7 +20,7 @@ Sources: [Employee Reports](https://help.infloww.com/en/articles/262078-employee
 Known (high): it is a **mean**, not a median. **Unreplied messages are excluded**, not capped. Only DMs count; mass
 and automated messages are excluded. Employee variants are limited to shift or clocked time.
 
-Unknown: whether the timer starts at the first or the last unanswered fan message; any cap or outlier rule; whether
+Unknown: any cap or outlier rule (turn start: see §8); whether
 a PPV counts as a reply.
 
 Diff rule: compute our per-turn median (spec §2) and also a mean over replied turns only, DMs only, with both
@@ -127,3 +127,22 @@ there is on our side.
 | Chatter per message | Yes, from the Message Dashboard export |
 | Sales per fan | Yes, from Sales Records CSV |
 | Reply-time cap, converter window, export columns | Unknown |
+
+## 8. Local evidence (added 2026-10-05)
+
+Found on this machine after the sections above were written; it narrows two unknowns.
+
+- **Infloww desktop client 5.7.14** (`/Applications/Infloww.app`, minified preload bundle). Reply time is recorded
+  **once per fan turn**: the first chatter send after a fan message gets `replyTime`; later sends in the same turn
+  get none. The clock starts at the oldest message of the fan's trailing unanswered run, moved later if the chat
+  was marked read. Mass (`/my/chats/send`) and scheduled (`v2/messages/queue`) sends carry no reply time and do not
+  close the turn. Script sends are identified by `scriptId` at send time, not by text match. No cap in the client;
+  server-side aggregation not visible. Confidence: medium (reading of minified code).
+- **A real Message Dashboard export** (`PRESH Message Dashboard Report 20250129.xlsx`, one sheet, one row per
+  reply): `Sender | Creator | Fans Message | Creator Message | Sent time | Sent date | Replay time | Price |
+  Purchased | Status | Sent to`. Formats: `23:20:54`, `Aug 21, 2024`, `1m 49s`, `0`, `no`, `Sent`; "Sent to" is
+  the fan's username. No message id, no gross/net, no type or script column, so §6's "visible fields" are not all
+  exported. Confidence: high for this file; column set may differ by version.
+
+Diff consequence: join by `Sent date + Sent time` (agency timezone) ± 60 s and price against our outbound DMs;
+compare our per-turn wait against "Replay time" directly, since both are per turn.

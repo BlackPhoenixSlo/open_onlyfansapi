@@ -67,6 +67,12 @@ export const envSchema = z.object({
   WEBHOOK_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
   /** Days the event ledger (`/v1/stats`) keeps. */
   EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+  /** Analytics backfill (spec 6.1): upstream requests per account per hour, a guess at OF's tolerance. */
+  ANALYTICS_REQUESTS_PER_HOUR: z.coerce.number().int().positive().default(600),
+  /** Analytics backfill: delay between upstream pages, as `of_client.iter_messages`. */
+  ANALYTICS_PAGE_DELAY_MS: z.coerce.number().int().nonnegative().default(300),
+  /** Analytics backfill: the longest wait after a 429 (Retry-After or exponential backoff). */
+  ANALYTICS_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(300_000),
   /** Outgoing mail (sign-up verification links). Unset or empty = no mail is sent; the link is logged instead. */
   SMTP_HOST: optionalString,
   /** 465 = implicit TLS; anything else (587) must upgrade with STARTTLS. */

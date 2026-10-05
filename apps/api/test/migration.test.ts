@@ -1,5 +1,6 @@
 // The data migrations on pre-existing rows, in a scratch database: drizzle/0006 (2.0 event names, plan-v5 §2.4) on
-// v4-named rows, and drizzle/0007 (email verification) on users who signed up before it.
+// v4-named rows, and drizzle/0007 (email verification) on users who signed up before it. Then 0008 (the
+// analytics tables) on a fresh database.
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,5 +106,24 @@ describe('migration 0006 (v2.0 event names)', () => {
     expect((await pool.query(`SELECT to_regclass('v5_event_name') AS t`)).rows).toEqual([{ t: null }]);
     // 0007: users from before email verification are not locked out.
     expect((await pool.query(`SELECT email_verified FROM "user" WHERE id = 'usr_1'`)).rows).toEqual([{ email_verified: true }]);
+  });
+});
+
+describe('migration 0008 (analytics)', () => {
+  it('creates the analytics tables with their upsert keys on a fresh database', async () => {
+    await migrate(drizzle(pool), { migrationsFolder: migrations });
+    const keys = await pool.query(`
+      SELECT tc.table_name AS t, string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position) AS pk
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_name IN ('account_workspace', 'message_fact', 'chat_coverage', 'purchase_fact')
+      GROUP BY tc.table_name ORDER BY tc.table_name`);
+    expect(keys.rows).toEqual([
+      { t: 'account_workspace', pk: 'account_id' },
+      { t: 'chat_coverage', pk: 'account_id,chat_id' },
+      { t: 'message_fact', pk: 'account_id,message_id' },
+      { t: 'purchase_fact', pk: 'account_id,tx_id' },
+    ]);
   });
 });

@@ -1,6 +1,8 @@
 # Client story: account and shift performance stats
 
-Status: design sketch, not scheduled. Written 2026-10-02, revised the same day after three reviews. Feeds the
+Status (2026-10-05): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
+built (`apps/api/src/modules/analytics`, the `analytics:claim`, `analytics:backfill` and `analytics:diff` CLIs,
+[docs/analytics-backfill.md](../analytics-backfill.md)); the Infloww diff awaits the client's export. Feeds the
 user-designable statistics page in [FUTURE.md](FUTURE.md) and [handoff Phase 3](docs/spec/handoff-of-serving.md).
 
 ## 1. The ask

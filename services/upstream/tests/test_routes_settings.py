@@ -60,6 +60,33 @@ def test_settings_reshapes_refuse_an_unexpected_shape(client, of_fake, path, bod
     assert (r.status_code, r.json()["error"]["code"]) == (502, "of_unexpected_response")
 
 
+# ─── GET settings/welcome-message ──────────────────────────────────
+
+WELCOME_URL = f"{OF}/messages/templates?template=reply_on_subscribe"
+WELCOME = {"id": "7001", "template": "reply_on_subscribe", "text": "<p>welcome_1</p>", "media": [{"id": 9001}]}
+SAVED = {"id": "7002", "template": "", "text": "saved_reply_1"}
+
+
+@pytest.mark.parametrize(("body", "data"), [
+    ([SAVED, WELCOME], WELCOME),  # a bare array; a saved reply is skipped
+    ({"list": [WELCOME], "hasMore": False}, WELCOME),
+    ([], None),  # no welcome message set
+    ([SAVED], None),
+])
+def test_welcome_message_is_the_reply_on_subscribe_template(client, of_fake, body, data):
+    of_fake.respond(body)
+    r = client.get("/of/settings/welcome-message", headers=H)
+    assert (r.status_code, r.json()) == (200, data)
+    assert of_fake.calls == [("GET", WELCOME_URL, None)]
+
+
+@pytest.mark.parametrize("body", [{"other": 1}, "text"])
+def test_welcome_message_refuses_an_unexpected_shape(client, of_fake, body):
+    of_fake.respond(body)
+    r = client.get("/of/settings/welcome-message", headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "of_unexpected_response")
+
+
 # ─── POST settings/profile ─────────────────────────────────────────
 
 @pytest.mark.parametrize(("body", "sent"), [

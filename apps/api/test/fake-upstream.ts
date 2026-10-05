@@ -94,6 +94,54 @@ export const eventFrame = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+type Raw = Record<string, unknown>;
+
+/**
+ * OF data for the analytics backfill, served on the upstream's named routes when `state.of` is set (else those
+ * paths echo like any `/of/*`). Lists are newest first. Like OF: message pages hold at most `pageCap` messages
+ * however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
+ * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set).
+ */
+export type FakeOf = {
+  chats: { withUser: { id: number; username?: string }; lastMessage: { id: number; createdAt: string } }[];
+  messages: Record<number, Raw[]>;
+  mass: (Raw & { id: number; date: string })[];
+  transactions: (Raw & { createdAt: string })[];
+  welcome: Raw | null;
+  pageCap?: number;
+  stuckChats?: number[];
+  rateLimit?: number;
+  retryAfter?: string;
+};
+
+/** `YYYY-MM-DD HH:MM:SS` (UTC) → epoch ms. */
+const ofTime = (v: string | undefined) => Date.parse(`${String(v).replace(' ', 'T')}Z`);
+
+function serveOf(of: FakeOf, path: string, q: Record<string, string | undefined>): unknown {
+  const limit = Number(q.limit ?? 10);
+  const offset = Number(q.offset ?? 0);
+  const page = (list: unknown[], start: number, size: number) => ({ list: list.slice(start, start + size), hasMore: start + size < list.length });
+  if (path === '/of/chats') return page(of.chats, offset, limit);
+  const chat = /^\/of\/chats\/(\d+)\/messages$/.exec(path);
+  if (chat) {
+    const id = Number(chat[1]);
+    const all = of.messages[id] ?? [];
+    const older = q.first_id && !of.stuckChats?.includes(id) ? all.filter((m) => Number(m.id) < Number(q.first_id)) : all;
+    return page(older, 0, Math.min(limit, of.pageCap ?? limit));
+  }
+  if (path === '/of/mass-messaging/overview') {
+    const [start, end] = [ofTime(q.startDate), ofTime(q.endDate)];
+    const items = of.mass.filter((m) => Date.parse(m.date) >= start && Date.parse(m.date) <= end).slice(0, limit);
+    return { hasMore: true, items };
+  }
+  if (path === '/of/payouts/transactions') {
+    const start = q.startDate ? ofTime(q.startDate) : -Infinity;
+    return page(of.transactions.filter((t) => Date.parse(t.createdAt) >= start), offset, limit);
+  }
+  if (path === '/of/settings/welcome-message') return of.welcome;
+  return undefined;
+}
+
 /** The subprotocols a `/ws` client offered (`Sec-WebSocket-Protocol`). */
 const offered = (header: string | string[] | undefined) => String(header ?? '').split(',').map((p) => p.trim());
 
@@ -107,8 +155,8 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
  */
 export async function startFakeUpstream(token: string, accounts: FakeAccount[] = [], opts: { port?: number; host?: string } = {}) {
   const requests: Recorded[] = [];
-  /** Test switches: make `/docs/json` answer 500; make `/ws` sockets accepted from now on never answer a close. */
-  const state = { specFails: false, ignoreClose: false };
+  /** Test switches: make `/docs/json` answer 500; make `/ws` sockets accepted from now on never answer a close; serve OF data. */
+  const state: { specFails: boolean; ignoreClose: boolean; of: FakeOf | null } = { specFails: false, ignoreClose: false, of: null };
   /** Open `/ws` sockets, and how many were ever accepted. */
   const sockets = new Set<WebSocket>();
   const ws = { connections: 0, maxOpen: 0 };
@@ -154,6 +202,15 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
   app.all('/of/*', async (request, reply) => {
     reply.header('x-of-cache', 'MISS').header('x-ratelimit-limit', '300').header('x-ratelimit-remaining', '299');
     if (request.url.startsWith('/of/rate-limited')) return reply.status(429).header('retry-after', '42').send({ error: 'RATE_LIMITED' });
+    if (state.of && request.method === 'GET') {
+      if (state.of.rateLimit) {
+        state.of.rateLimit--;
+        if (state.of.retryAfter !== undefined) reply.header('retry-after', state.of.retryAfter);
+        return reply.status(429).send({ error: 'RATE_LIMITED' });
+      }
+      const data = serveOf(state.of, request.url.split('?')[0]!, request.query as Record<string, string | undefined>);
+      if (data !== undefined) return reply.type('application/json').send(JSON.stringify(data));
+    }
     // Headers, then a body that stalls past the gateway's timeout (UPSTREAM_TIMEOUT_MS=2000 in tests).
     if (request.url.startsWith('/of/slow-body')) {
       reply.hijack();

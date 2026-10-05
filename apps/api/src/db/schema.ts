@@ -1,5 +1,5 @@
 import { desc, sql } from 'drizzle-orm';
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { organization, user } from './auth-schema.js';
 
 export * from './auth-schema.js';
@@ -140,5 +140,91 @@ export const event = pgTable(
   (t) => [
     index('event_created_idx').on(t.createdAt),
     uniqueIndex('event_dedup_idx').on(t.dedupKey).where(sql`${t.dedupKey} is not null`),
+  ],
+);
+
+// Analytics store (docs/spec/future-client-story-ask.md §4.3), filled by the backfill only. Every row carries the
+// workspace that owns its account, and every query filters on it. OF ids are bigint: message ids pass int4.
+
+const analyticsTeamId = () =>
+  text('team_id')
+    .notNull()
+    .references(() => organization.id, { onDelete: 'cascade' });
+const analyticsAt = (name: string) => timestamp(name, { withTimezone: true, precision: 3 });
+
+/** Which workspace an account belongs to (§4.1); one workspace per account. */
+export const accountWorkspace = pgTable('account_workspace', {
+  accountId: integer('account_id').primaryKey(),
+  teamId: analyticsTeamId(),
+});
+
+/** One OF chat message as fetched, with columns derived from `raw` (§2): rebuilt from `raw`, never re-scraped. */
+export const messageFact = pgTable(
+  'message_fact',
+  {
+    teamId: analyticsTeamId(),
+    accountId: integer('account_id').notNull(),
+    messageId: bigint('message_id', { mode: 'number' }).notNull(),
+    /** The fan's user id (OF's chat id). */
+    chatId: bigint('chat_id', { mode: 'number' }).notNull(),
+    direction: text('direction', { enum: ['inbound', 'outbound'] }).notNull(),
+    createdAt: analyticsAt('created_at').notNull(),
+    isMass: boolean('is_mass').notNull(),
+    queueId: bigint('queue_id', { mode: 'number' }),
+    isAutomated: boolean('is_automated').notNull(),
+    automatedReason: text('automated_reason', { enum: ['welcome', 'automation'] }),
+    priceCents: integer('price_cents').notNull(),
+    isTip: boolean('is_tip').notNull(),
+    mediaCount: integer('media_count').notNull(),
+    /** Sorted media ids, comma-joined; null = no media. */
+    mediaKey: text('media_key'),
+    /** Outbound only (§4.4); null for inbound or empty text. */
+    textHash: text('text_hash'),
+    raw: jsonb('raw').$type<Record<string, unknown>>().notNull(),
+    fetchedAt: analyticsAt('fetched_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.messageId] }),
+    index('message_fact_team_account_chat_idx').on(t.teamId, t.accountId, t.chatId, t.createdAt),
+  ],
+);
+
+/** How far back a chat's message walk reached; `reached_start` = it hit the chat's first message. */
+export const chatCoverage = pgTable(
+  'chat_coverage',
+  {
+    teamId: analyticsTeamId(),
+    accountId: integer('account_id').notNull(),
+    chatId: bigint('chat_id', { mode: 'number' }).notNull(),
+    /** The fan's username as the chat list or a message names it; null = not seen. */
+    fanUsername: text('fan_username'),
+    oldestMessageId: bigint('oldest_message_id', { mode: 'number' }),
+    oldestAt: analyticsAt('oldest_at'),
+    reachedStart: boolean('reached_start').notNull(),
+    walkedAt: analyticsAt('walked_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.chatId] })],
+);
+
+/** One OF transaction: the only source of money and purchase time. */
+export const purchaseFact = pgTable(
+  'purchase_fact',
+  {
+    teamId: analyticsTeamId(),
+    accountId: integer('account_id').notNull(),
+    txId: text('tx_id').notNull(),
+    fanId: bigint('fan_id', { mode: 'number' }),
+    /** `field` = the transaction's `user.id`; `description` = parsed from its description link; null = unknown. */
+    fanIdSource: text('fan_id_source', { enum: ['field', 'description'] }),
+    kind: text('kind'),
+    grossCents: integer('gross_cents'),
+    netCents: integer('net_cents'),
+    currency: text('currency'),
+    createdAt: analyticsAt('created_at').notNull(),
+    raw: jsonb('raw').$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.txId] }),
+    index('purchase_fact_team_account_created_idx').on(t.teamId, t.accountId, t.createdAt),
   ],
 );

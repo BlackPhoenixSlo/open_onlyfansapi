@@ -57,6 +57,13 @@
       "when": 1791232020873,
       "tag": "0007_verify_existing_users",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791235069668,
+      "tag": "0008_analytics",
+      "breakpoints": true
     }
   ]
 }

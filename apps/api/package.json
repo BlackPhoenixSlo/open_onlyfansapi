@@ -13,7 +13,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "auth:generate": "better-auth generate --config src/auth.ts --output src/db/auth-schema.ts -y",
-    "link-team": "tsx --env-file-if-exists=../../.env src/db/link-team.ts"
+    "link-team": "tsx --env-file-if-exists=../../.env src/db/link-team.ts",
+    "analytics:claim": "tsx --env-file-if-exists=../../.env src/cli/analytics-claim.ts",
+    "analytics:backfill": "tsx --env-file-if-exists=../../.env src/cli/analytics-backfill.ts",
+    "analytics:diff": "tsx src/cli/analytics-diff.ts"
   },
   "dependencies": {
     "@fastify/rate-limit": "^11.2.0",
