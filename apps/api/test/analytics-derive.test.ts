@@ -97,17 +97,25 @@ describe('analytics fan turns', () => {
       ],
       { asOf: new Date(t0 + 100 * H) },
     );
-    expect(turns).toEqual([
-      { chatId: 1, inboundAt: new Date(t0), dmAt: new Date(t0 + 4 * H), waitSeconds: 4 * 3600, status: 'in_cap', isAutomated: true },
-      { chatId: 1, inboundAt: new Date(t0 + 6 * H), dmAt: new Date(t0 + 20 * H), waitSeconds: 14 * 3600, status: 'late', isAutomated: false },
+    expect(turns).toMatchObject([
+      { chatId: 1, inboundAt: new Date(t0), lastInboundAt: new Date(t0 + H), dmAt: new Date(t0 + 4 * H), waitSeconds: 4 * 3600, status: 'in_cap', isAutomated: true },
+      { chatId: 1, inboundAt: new Date(t0 + 6 * H), lastInboundAt: new Date(t0 + 6 * H), dmAt: new Date(t0 + 20 * H), waitSeconds: 14 * 3600, status: 'late', isAutomated: false },
     ]);
+    expect(turns).toHaveLength(2);
+  });
+
+  it('takes the reply cap from the options; a DM shorter than minReplyChars does not end a substantive turn', () => {
+    const msgs = [m(3, 0, 'inbound'), m(3, 1, 'outbound', { textChars: 7 }), m(3, 3, 'outbound', { textChars: 30 })];
+    const asOf = new Date(t0 + 100 * H);
+    expect(fanTurns(msgs, { asOf, replyCapMs: 2 * H }).map((t) => [t.waitSeconds, t.status])).toEqual([[3600, 'in_cap']]);
+    expect(fanTurns(msgs, { asOf, replyCapMs: 2 * H, minReplyChars: 15 }).map((t) => [t.waitSeconds, t.status])).toEqual([[3 * 3600, 'late']]);
   });
 
   it('orders by (createdAt, id) and leaves an open turn pending until the cap elapses', () => {
     const a = m(2, 1, 'outbound');
     const b = m(2, 1, 'inbound'); // same time, larger id: after the DM
     const turns = fanTurns([b, a], { asOf: new Date(t0 + H + REPLY_CAP_MS) });
-    expect(turns).toEqual([{ chatId: 2, inboundAt: new Date(t0 + H), dmAt: null, waitSeconds: null, status: 'pending', isAutomated: false }]);
+    expect(turns).toMatchObject([{ chatId: 2, inboundAt: new Date(t0 + H), dmAt: null, dmMessageId: null, waitSeconds: null, status: 'pending', isAutomated: false }]);
     expect(fanTurns([b, a], { asOf: new Date(t0 + H + REPLY_CAP_MS + 1) })[0]!.status).toBe('breached');
   });
 });

@@ -365,3 +365,126 @@ export const stats = z.object({
   ),
 });
 export type Stats = z.infer<typeof stats>;
+
+// Stats metrics (docs/spec/future-client-story-ask.md §4.6): fan-turn reply time and reply SLA from the analytics store.
+export const statsGroupBy = z.enum(['day', 'hour', 'account']);
+export type StatsGroupBy = z.infer<typeof statsGroupBy>;
+
+/** A stats window or the timezone (§4.5). Windows are seconds. */
+const windowSeconds = z.number().int().min(1).max(90 * 86_400);
+
+export const statsConfig = z.object({
+  /** Bumped on every change; results cite it. */
+  version: z.number().int(),
+  replyCapSeconds: z.number().int(),
+  slaSeconds: z.number().int(),
+  minReplyChars: z.number().int(),
+  openGapSeconds: z.number().int(),
+  openReplySeconds: z.number().int(),
+  convertSeconds: z.number().int(),
+  /** IANA name; day and hour buckets and `from`/`to` days are in it. */
+  timezone: z.string(),
+  updatedAt: z.string(),
+});
+export type StatsConfig = z.infer<typeof statsConfig>;
+export const statsConfigResponse = z.object({ config: statsConfig });
+
+/** `PUT /v1/stats/config`: only the given fields change. */
+export const putStatsConfigBody = z.object({
+  replyCapSeconds: windowSeconds.optional(),
+  slaSeconds: windowSeconds.optional(),
+  minReplyChars: z.number().int().min(0).max(10_000).optional(),
+  openGapSeconds: windowSeconds.optional(),
+  openReplySeconds: windowSeconds.optional(),
+  convertSeconds: windowSeconds.optional(),
+  timezone: z.string().min(1).max(64).optional(),
+});
+export type PutStatsConfigBody = z.input<typeof putStatsConfigBody>;
+
+export const statsMetric = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** The formula in words. */
+  description: z.string(),
+  unit: z.enum(['seconds', 'percent']),
+  groupings: z.array(statsGroupBy),
+  /** The config windows it reads. */
+  windows: z.array(z.string()),
+  /** Checked by hand against OF and the Infloww diff (spec §6 step 0). */
+  verified: z.boolean(),
+});
+export type StatsMetric = z.infer<typeof statsMetric>;
+export const statsMetricList = z.object({ items: z.array(statsMetric) });
+
+/** `from`/`to` are days in the config timezone, `to` inclusive; default the last 30 days. */
+export const statsMetricQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  groupBy: statsGroupBy.default('day'),
+  format: z.enum(['json', 'csv']).default('json'),
+});
+export type StatsMetricQuery = z.input<typeof statsMetricQuery>;
+
+export const statsMetricRow = z.object({
+  /** `YYYY-MM-DD` (day), `00`–`23` (hour of day of the turn start) or the account id. */
+  group: z.string(),
+  /** null when no turn qualifies. */
+  value: z.number().nullable(),
+  /** Turns behind `value`. */
+  n: z.number().int(),
+  /** Fan turns starting in the group, by status. */
+  turns: z.number().int(),
+  inCap: z.number().int(),
+  late: z.number().int(),
+  breached: z.number().int(),
+  pending: z.number().int(),
+  /** Turns replied within `sla`. */
+  slaMet: z.number().int(),
+});
+export type StatsMetricRow = z.infer<typeof statsMetricRow>;
+
+const statsResultMeta = {
+  metric: z.string(),
+  timezone: z.string(),
+  configVersion: z.number().int(),
+  asOf: z.string(),
+};
+
+export const statsMetricSeries = z.object({
+  ...statsResultMeta,
+  groupBy: statsGroupBy,
+  from: z.string(),
+  to: z.string(),
+  /** Sparse: groups with at least one turn. */
+  rows: z.array(statsMetricRow),
+});
+export type StatsMetricSeries = z.infer<typeof statsMetricSeries>;
+
+export const statsSamplesQuery = statsMetricQuery.omit({ format: true }).extend({
+  /** Only turns in this group of `groupBy` (a row's `group`). */
+  group: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(20).default(20),
+});
+export type StatsSamplesQuery = z.input<typeof statsSamplesQuery>;
+
+/** One fan turn behind a number; `chatId` is the fan's user id, so the chat opens in OF. */
+export const statsSample = z.object({
+  accountId: z.number().int(),
+  chatId: z.number().int(),
+  fanMessageId: z.number().int(),
+  fanAt: z.string(),
+  lastFanMessageId: z.number().int(),
+  lastFanAt: z.string(),
+  replyMessageId: z.number().int().nullable(),
+  replyAt: z.string().nullable(),
+  /** From the first fan message; null while open. */
+  waitSeconds: z.number().nullable(),
+  /** From the last fan message before the reply; null while open. */
+  waitFromLastSeconds: z.number().nullable(),
+  status: z.enum(['in_cap', 'late', 'breached', 'pending']),
+  slaMet: z.boolean(),
+});
+export type StatsSample = z.infer<typeof statsSample>;
+export const statsSamples = z.object({ ...statsResultMeta, items: z.array(statsSample) });
+export type StatsSamples = z.infer<typeof statsSamples>;

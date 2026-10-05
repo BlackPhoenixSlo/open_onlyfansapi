@@ -267,14 +267,15 @@ describe('analytics backfill', () => {
     await backfill(opts());
     const turns = await replyTimes(teamA, ACCOUNT, FROM, TO, new Date('2026-09-02T21:00:00.000Z'));
     const d = (s: string) => new Date(`2026-${s}:00.000Z`);
+    const ids = (inbound: number, last: number, dm: number | null) => ({ inboundMessageId: inbound, lastInboundMessageId: last, dmMessageId: dm });
     expect(turns).toEqual([
       // The welcome went out during the turn; the mass did not end it.
-      { chatId: 2001, inboundAt: d('09-01T09:00'), dmAt: d('09-02T12:00'), waitSeconds: 27 * 3600, status: 'late', isAutomated: true },
-      { chatId: 2002, inboundAt: d('09-01T14:00'), dmAt: d('09-01T14:30'), waitSeconds: 1800, status: 'in_cap', isAutomated: false },
-      { chatId: 2002, inboundAt: d('09-01T15:00'), dmAt: null, waitSeconds: null, status: 'breached', isAutomated: false },
+      { chatId: 2001, inboundAt: d('09-01T09:00'), lastInboundAt: d('09-02T10:00'), ...ids(106, 109, 110), dmAt: d('09-02T12:00'), waitSeconds: 27 * 3600, status: 'late', isAutomated: true },
+      { chatId: 2002, inboundAt: d('09-01T14:00'), lastInboundAt: d('09-01T14:00'), ...ids(202, 202, 203), dmAt: d('09-01T14:30'), waitSeconds: 1800, status: 'in_cap', isAutomated: false },
+      { chatId: 2002, inboundAt: d('09-01T15:00'), lastInboundAt: d('09-01T15:00'), ...ids(204, 204, null), dmAt: null, waitSeconds: null, status: 'breached', isAutomated: false },
       // The queued 1:1 send (302) is a DM: it ends the turn.
-      { chatId: 2003, inboundAt: d('09-02T08:00'), dmAt: d('09-02T09:00'), waitSeconds: 3600, status: 'in_cap', isAutomated: false },
-      { chatId: 2003, inboundAt: d('09-02T20:00'), dmAt: null, waitSeconds: null, status: 'pending', isAutomated: false },
+      { chatId: 2003, inboundAt: d('09-02T08:00'), lastInboundAt: d('09-02T08:00'), ...ids(301, 301, 302), dmAt: d('09-02T09:00'), waitSeconds: 3600, status: 'in_cap', isAutomated: false },
+      { chatId: 2003, inboundAt: d('09-02T20:00'), lastInboundAt: d('09-02T20:00'), ...ids(303, 303, null), dmAt: null, waitSeconds: null, status: 'pending', isAutomated: false },
     ]);
   });
 

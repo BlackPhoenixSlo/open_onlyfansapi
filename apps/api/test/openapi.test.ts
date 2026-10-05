@@ -24,6 +24,7 @@ const freePort = () =>
   });
 
 type Param = { name: string; in: string; required?: boolean; schema?: unknown };
+const STATS_PATHS = ['/v1/stats', '/v1/stats/config', '/v1/stats/metrics', '/v1/stats/metrics/{id}', '/v1/stats/metrics/{id}/samples'];
 const WEBHOOK_PATHS = [
   '/v1/webhooks',
   '/v1/webhooks/events',
@@ -43,7 +44,7 @@ describe('openapi', () => {
     // `/of-accounts` (not under `/of/`), dashboard routes and the proxy wildcard are not published.
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/v1/accounts',
-      '/v1/stats',
+      ...STATS_PATHS,
       ...WEBHOOK_PATHS,
       '/v1/whoami',
       '/v1/{account}/_of/{path}',
@@ -156,7 +157,7 @@ describe('openapi', () => {
       const res = await down.inject({ method: 'GET', url: '/openapi.json' });
       expect(res.statusCode).toBe(200);
       expect(res.headers['x-upstream-spec']).toBe('unavailable');
-      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', '/v1/stats', ...WEBHOOK_PATHS, '/v1/whoami']);
+      expect(Object.keys(res.json().paths).sort()).toEqual(['/v1/accounts', ...STATS_PATHS, ...WEBHOOK_PATHS, '/v1/whoami']);
     } finally {
       await down.close();
     }

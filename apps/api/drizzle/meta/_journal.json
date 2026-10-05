@@ -64,6 +64,13 @@
       "when": 1791235069668,
       "tag": "0008_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791240751057,
+      "tag": "0009_stats_config",
+      "breakpoints": true
     }
   ]
 }

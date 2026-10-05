@@ -228,3 +228,22 @@ export const purchaseFact = pgTable(
     index('purchase_fact_team_account_created_idx').on(t.teamId, t.accountId, t.createdAt),
   ],
 );
+
+/**
+ * A workspace's stats windows (§4.5), in seconds, and the timezone of day and hour buckets. One row per workspace,
+ * made with the defaults on first read; every change bumps `version`, which results cite.
+ */
+export const statsConfig = pgTable('stats_config', {
+  teamId: text('team_id')
+    .primaryKey()
+    .references(() => organization.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull().default(1),
+  replyCapSeconds: integer('reply_cap_seconds').notNull().default(12 * 3600),
+  slaSeconds: integer('sla_seconds').notNull().default(15 * 60),
+  minReplyChars: integer('min_reply_chars').notNull().default(15),
+  openGapSeconds: integer('open_gap_seconds').notNull().default(7 * 86400),
+  openReplySeconds: integer('open_reply_seconds').notNull().default(24 * 3600),
+  convertSeconds: integer('convert_seconds').notNull().default(72 * 3600),
+  timezone: text('timezone').notNull().default('UTC'),
+  updatedAt: analyticsAt('updated_at').defaultNow().notNull(),
+});
