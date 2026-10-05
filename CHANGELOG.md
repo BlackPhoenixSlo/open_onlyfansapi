@@ -4,11 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.0] - Unreleased
+## [2.1.0] - 2026-10-05
 
 v2.1 adds 41 named per-account operations of the reference API: rows 2.0 left open, and the content, promo and
 settings groups. It is additive: the wrapper and `_pagination`, the webhook body, signature and event names, the
-passthrough, the database schema and the env are unchanged. The gateway and upstream images do not have to be
+passthrough and the database schema are unchanged. The only env change is optional: compose now passes
+`OF_REQUIRE_PROXY` through to the upstream (default `true`, same as before). The gateway and upstream images do not have to be
 upgraded together; a 2.0 gateway forwards the new routes through its catch-all. Every reference route not listed
 here stays reachable through `_of/{path}`, in OF's own paths and shapes, when OF has such a call.
 
