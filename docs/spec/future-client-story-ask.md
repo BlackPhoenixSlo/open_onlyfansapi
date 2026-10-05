@@ -5,8 +5,10 @@ built (`apps/api/src/modules/analytics`, the `analytics:claim`, `analytics:backf
 [docs/analytics-backfill.md](../analytics-backfill.md)); a live last-7-days run on one account after the chat-list
 fixes took 92 requests (13 chat-list pages) in 268 s and listed 63 chats (all 62 known active plus one mass-only
 chat) with every fan username filled, 490 messages (463 inbound, 5 DM, 22 mass) and 0 transactions; the Infloww diff
-awaits the client's export. Feeds the
-user-designable statistics page in [FUTURE.md](FUTURE.md) and [handoff Phase 3](docs/spec/handoff-of-serving.md).
+awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers and scripts unverified;
+[docs/analytics.md](../analytics.md)); 30-day live run 2026-09-06..2026-10-06: 259 requests, 12 min, 87 chats, 9150
+messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
+Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
 
@@ -166,8 +168,9 @@ see the first's data). Events and REST keep the operator-wide model in [realtime
   this: it keeps response bodies only on errors by default (`LOG_BODIES`, `logs/capture.ts`). Chatter = the key's
   name, so each chatter needs their own key.
 - `account_workspace`: as in 4.1.
-- `script`: `(team_id, hash)` pk, `label`, `tag`, `origin` (`auto` or `registered`), `first_seen`,
-  `normaliser_version`. Exact variants and their counts are read from `message_fact`.
+- `script`: `(team_id, hash)` pk, `origin` (`auto`; `registered` once registration is built), `normaliser_version`.
+  Exact variants, their counts and the first and last send are read from `message_fact`. `label` and `tag` come with
+  registration (`POST`/`PATCH /v1/stats/scripts`, not built).
 - `stats_config`: per workspace, the windows, timezone, automation list and filler list. Every change is a new
   version; results cite it.
 - `fan_turns`, `chat_opens`, `script_sends`: SQL views over `message_fact`. Materialise one only when a query is slow.

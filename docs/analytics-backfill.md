@@ -2,8 +2,9 @@
 
 Step 0 of the [client stats ask](spec/future-client-story-ask.md#6-first-slice-account-and-shift-performance): read one
 account's past week from OnlyFans through the upstream, store it, write it to CSV, and diff it against the client's
-Infloww export. There are no routes or dashboard pages yet; it runs from the command line only. Every row
-belongs to one workspace, and a workspace's key never sees another workspace's rows.
+Infloww export. The backfill runs from the command line only; the stats routes over what it stores (reply time,
+openers, scripts) are in [analytics.md](analytics.md). Every row belongs to one workspace, and a workspace's key never
+sees another workspace's rows.
 
 Three commands, all run from the repo root:
 
@@ -24,7 +25,8 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
 ## Before the first run
 
 1. **Migrate.** `pnpm db:migrate` applies `0008_analytics` (tables `account_workspace`, `message_fact`,
-   `chat_coverage`, `purchase_fact`).
+   `chat_coverage`, `purchase_fact`), and `0009` to `0011` for the stats routes
+   ([analytics.md](analytics.md#deploy)).
 2. **Upgrade the upstream.** The backfill reads the welcome message from `GET /of/settings/welcome-message`, which is
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
 3. **Link the workspace** if it is not linked yet: `pnpm --filter @gateway/api link-team <workspace-slug>`. It prints
@@ -69,7 +71,8 @@ It prints the request count and whether it was stopped, then two checks:
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
   messages before that time are missing.
 
-Then the row count of each file. Rows upsert, so a re-run never double counts, but it does request everything
+Then the row count of each file. Last, stopped or not, it records the account's script candidates
+([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
 again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
 `reached_start` an earlier run reached.
 
@@ -106,7 +109,7 @@ in the database.
 
 | File | One row per | Columns |
 |---|---|---|
-| `messages.csv` | message in the range | `message_id`, `chat_id` (the fan's user id), `created_at`, `direction` (`inbound`/`outbound`), `is_mass`, `queue_id`, `is_automated`, `automated_reason` (`welcome`/`automation`), `price_cents`, `is_tip`, `media_count`, `text_hash` (outbound only) |
+| `messages.csv` | message in the range | `message_id`, `chat_id` (the fan's user id), `created_at`, `direction` (`inbound`/`outbound`), `is_mass`, `queue_id`, `is_automated`, `automated_reason` (`welcome`/`automation`), `price_cents`, `is_tip`, `media_count`, `text_hash` (the script hash, [analytics.md](analytics.md#scripts); outbound only, empty when the text is too short to be a script) |
 | `chats.csv` | chat the walks covered | `chat_id`, `fan_username` (from the chat list, else a message; empty if neither names it), `oldest_message_id`, `oldest_at`, `reached_start` (a walk hit the chat's first message), `walked_at`, then counts in the range: `messages_total`, `inbound`, `outbound`, `dm` (outbound, not mass, not automated), `mass`, `automated` |
 | `transactions.csv` | OF transaction in the range | `tx_id`, `created_at`, `kind`, `gross_cents`, `net_cents`, `currency`, `fan_id`, `fan_id_source` (`field` or `description`) |
 | `reply_times.csv` | fan turn starting in the range | `chat_id`, `inbound_at` (the turn's first fan message), `dm_at` (the reply; empty while open), `wait_seconds`, `status` (`in_cap`: replied within the 12 h cap; `late`: replied after it; `breached`: no reply and the cap has elapsed; `pending`: no reply yet, cap not elapsed), `breached` (`true` only when `status` is `breached`), `is_automated` (a welcome or automation went out during the turn) |
@@ -114,7 +117,8 @@ in the database.
 Mass, automated, DM and fan turn are defined in [section 2 of the spec](spec/future-client-story-ask.md#2-what-we-can-measure).
 `automated_reason` is `welcome`, or `automation` for an outbound message whose text matches one of the client's
 automation texts. Pass those with `--automation <file>`: a text file, one automation text per line, blank lines
-ignored; matching uses the same normalised text hash as scripts (tags, case and spacing do not matter). Without it,
+ignored; matching uses the script normaliser's text steps (tags, case and spacing do not matter; fan names are not
+replaced). Without it,
 `automated_reason` is `welcome` or empty.
 
 ## Diffing against Infloww
