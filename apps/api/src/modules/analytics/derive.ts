@@ -17,9 +17,8 @@ function unescapeHtml(s: string): string {
 }
 
 /**
- * The script normaliser (§4.4), version 1: strip tags (each becomes a space, so `<p>a</p><p>b</p>` stays two
+ * The text part of the script normaliser (§4.4): strip tags (each becomes a space, so `<p>a</p><p>b</p>` stays two
  * words), unescape HTML, NFKC, lowercase, collapse whitespace. Tags go first so an escaped `&lt;3` survives.
- * Not yet done: replacing the fan's name, username and custom name with `<name>`.
  */
 export function normaliseText(html: string): string {
   return unescapeHtml(html.replace(/<[^>]*>/g, ' '))
@@ -29,10 +28,45 @@ export function normaliseText(html: string): string {
     .trim();
 }
 
-/** SHA-256 of the normalised text, first 16 hex; null when nothing is left. */
+const sha16 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
+
+/** SHA-256 of the normalised text (no name replacement), first 16 hex; null when nothing is left. Matches welcome and automation texts. */
 export function textHash(html: unknown): string | null {
   const text = typeof html === 'string' ? normaliseText(html) : '';
-  return text ? createHash('sha256').update(text).digest('hex').slice(0, 16) : null;
+  return text ? sha16(text) : null;
+}
+
+/** Bumped whenever `normaliseScript` or script eligibility changes; stored beside every script hash. */
+export const NORMALISER_VERSION = 1;
+
+/** The fan's name, username and custom name (the account's nickname for the fan, OF's `displayName`) on a user object. */
+export function fanNames(user: unknown): string[] {
+  const u = user as Raw | null | undefined;
+  return [u?.name, u?.username, u?.displayName].filter((n): n is string => typeof n === 'string' && n.trim() !== '');
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The script normaliser (§4.4), version 1: `normaliseText`, then each of the fan's names (normalised the same way,
+ * 2+ characters, as a whole word, longest first, in one pass) becomes `<name>`. Numbers, emoji, prices and
+ * punctuation stay.
+ */
+export function normaliseScript(html: string, names: string[] = []): string {
+  const text = normaliseText(html);
+  const forms = [...new Set(names.map(normaliseText))].filter((n) => [...n].length >= 2).sort((a, b) => b.length - a.length);
+  if (!forms.length) return text;
+  const word = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${forms.map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}_])`, 'gu');
+  return text.replace(word, '<name>');
+}
+
+/** A script needs 4+ tokens or 20+ characters after normalising, so "hey" and empty captions don't collide. */
+export const isScriptEligible = (normalised: string) => normalised.split(' ').filter(Boolean).length >= 4 || [...normalised].length >= 20;
+
+/** The script hash (§4.4): SHA-256 of `normaliseScript`, first 16 hex; null when the text is not eligible. */
+export function scriptHash(html: unknown, names: string[] = []): string | null {
+  const text = typeof html === 'string' ? normaliseScript(html, names) : '';
+  return isScriptEligible(text) ? sha16(text) : null;
 }
 
 const num = (v: unknown): number | null => {
@@ -96,15 +130,19 @@ export type DerivedMessage = {
   isTip: boolean;
   mediaCount: number;
   mediaKey: string | null;
+  /** The script hash (outbound, eligible text only). */
   textHash: string | null;
+  /** `NORMALISER_VERSION` on outbound rows; null on inbound. */
+  normaliserVersion: number | null;
 };
 
 /**
  * Derived columns of one OF message in chat `chatId`; null when it has no numeric `id`. Outbound = `fromUser.id` is
  * the account. Mass = its `queueId` is a broadcast with `sentCount > 1` (`isFromQueue` is not trusted). Automated =
- * it matches the welcome message (text or media) or an automation text.
+ * it matches the welcome message (text or media) or an automation text. `names` are the fan's names from the chat
+ * list; any on the message's fan user object are added.
  */
-export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext): DerivedMessage | null {
+export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext, names: string[] = []): DerivedMessage | null {
   const messageId = num(raw.id);
   if (messageId === null) return null;
   const outbound = num((raw.fromUser as Raw | undefined)?.id) === ctx.accountId;
@@ -130,8 +168,14 @@ export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext): Der
     isTip: raw.isTip === true,
     mediaCount: num(raw.mediaCount) ?? (Array.isArray(raw.media) ? raw.media.length : 0),
     mediaKey: media,
-    textHash: outbound ? hash : null,
+    textHash: outbound ? scriptHash(raw.text, [...names, ...messageFanNames(raw, chatId)]) : null,
+    normaliserVersion: outbound ? NORMALISER_VERSION : null,
   };
+}
+
+/** The names on the fan's user object of a message (`fromUser` when the fan sent it, else `toUser`). */
+export function messageFanNames(raw: Raw, chatId: number): string[] {
+  return fanNames(num((raw.fromUser as Raw | undefined)?.id) === chatId ? raw.fromUser : raw.toUser);
 }
 
 export type DerivedPurchase = {

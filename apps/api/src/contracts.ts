@@ -519,3 +519,55 @@ export const statsOpenerSample = z.object({
 export type StatsOpenerSample = z.infer<typeof statsOpenerSample>;
 export const statsSamples = z.object({ ...statsResultMeta, items: z.array(z.union([statsSample, statsOpenerSample])) });
 export type StatsSamples = z.infer<typeof statsSamples>;
+
+/** `GET /v1/stats/scripts`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
+export const statsScriptsQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type StatsScriptsQuery = z.input<typeof statsScriptsQuery>;
+
+/**
+ * A script candidate (spec §4.4) with its sends in the range. Reply counts are per outbound sequence holding a send:
+ * replied within `open_reply` after its last DM, no reply, or pending (the window has not elapsed). Rates are
+ * percent of the decided sequences; null when none. The substantive variant counts only a fan message of
+ * `min_reply_chars`+.
+ */
+export const statsScript = z.object({
+  /** SHA-256 of the normalised text, 16 hex. */
+  hash: z.string(),
+  origin: z.enum(['auto']),
+  sends: z.number().int(),
+  /** Distinct chats it was sent in. */
+  chats: z.number().int(),
+  firstSentAt: z.string(),
+  lastSentAt: z.string(),
+  sequences: z.number().int(),
+  replied: z.number().int(),
+  noReply: z.number().int(),
+  pending: z.number().int(),
+  replyRate: z.number().nullable(),
+  substantiveReplied: z.number().int(),
+  substantiveNoReply: z.number().int(),
+  substantivePending: z.number().int(),
+  substantiveReplyRate: z.number().nullable(),
+  /** Distinct exact (raw) texts sent. */
+  variantCount: z.number().int(),
+  /** Up to 5 exact texts, most sent first. */
+  variants: z.array(z.object({ text: z.string(), count: z.number().int() })),
+});
+export type StatsScript = z.infer<typeof statsScript>;
+
+export const statsScripts = z.object({
+  timezone: z.string(),
+  configVersion: z.number().int(),
+  normaliserVersion: z.number().int(),
+  asOf: z.string(),
+  from: z.string(),
+  to: z.string(),
+  /** Most sent first; scripts with no send in the range are left out. */
+  items: z.array(statsScript),
+});
+export type StatsScripts = z.infer<typeof statsScripts>;

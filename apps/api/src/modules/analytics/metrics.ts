@@ -222,7 +222,7 @@ export async function scopedTurns(
 }
 
 /** The accounts workspace `teamId` has rows for, narrowed to `accountIds` (null = all). */
-async function workspaceAccounts(teamId: string, accountIds: number[] | null): Promise<number[]> {
+export async function workspaceAccounts(teamId: string, accountIds: number[] | null): Promise<number[]> {
   const rows = await db
     .selectDistinct({ accountId: messageFact.accountId })
     .from(messageFact)

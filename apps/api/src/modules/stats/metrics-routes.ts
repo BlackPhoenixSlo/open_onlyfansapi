@@ -9,6 +9,8 @@ import {
   statsMetricSeries,
   statsSamples,
   statsSamplesQuery,
+  statsScripts,
+  statsScriptsQuery,
   type StatsConfig,
 } from '../../contracts.js';
 import { toCsv } from '../../cli/analytics-csv.js';
@@ -32,6 +34,8 @@ import {
   zonedToday,
   type MetricId,
 } from '../analytics/metrics.js';
+import { NORMALISER_VERSION } from '../analytics/derive.js';
+import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 
 const DAY_MS = 86_400_000;
@@ -74,8 +78,8 @@ const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.en
 const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
 
 /**
- * `/v1/stats/metrics` and `/v1/stats/config` (spec §4.6): reply time, reply SLA and openers over the workspace's analytics
- * store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
+ * `/v1/stats/metrics`, `/v1/stats/scripts` and `/v1/stats/config` (spec §4.6): reply time, reply SLA, openers and
+ * script candidates over the workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -131,6 +135,23 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       return { ...meta(id, cfg, asOf), items };
     },
   );
+
+  r.get('/stats/scripts', { schema: { tags, querystring: statsScriptsQuery, response: { 200: statsScripts } } }, async (request) => {
+    const { actor, query } = request;
+    const cfg = await getStatsConfig(actor.teamId);
+    const span = range(query, cfg.timezone);
+    const asOf = new Date();
+    const items = await scopedScripts(actor.teamId, scopedAccounts(actor, query.accountId), cfg, { ...span, asOf });
+    return {
+      timezone: cfg.timezone,
+      configVersion: cfg.version,
+      normaliserVersion: NORMALISER_VERSION,
+      asOf: asOf.toISOString(),
+      from: span.fromDay,
+      to: span.toDay,
+      items: items.slice(0, query.limit),
+    };
+  });
 
   r.get('/stats/config', { schema: { tags, response: { 200: statsConfigResponse } } }, async (request) => ({
     config: await getStatsConfig(request.actor.teamId),

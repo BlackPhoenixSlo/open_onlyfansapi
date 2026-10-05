@@ -7,7 +7,8 @@ import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream, UpstreamResponse } from '../../lib/upstream.js';
 import { backfillConfig, type BackfillConfig } from './config.js';
-import { deriveContext, deriveMessage, derivePurchase, type DeriveContext, type Raw } from './derive.js';
+import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type Raw } from './derive.js';
+import { syncScripts } from './scripts.js';
 import { claimAccount } from './workspace.js';
 
 const HOUR_MS = 3_600_000;
@@ -92,7 +93,8 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
  * (the walks store messages on both sides of the range) and the welcome template (both feed the derived columns),
  * then chats newest first and each chat's messages newest first down to the range start, then the range's
  * transactions. Rows upsert on `(account_id, message_id)` and `(account_id, tx_id)`, so a re-run never double
- * counts. Paced and capped per account within the run, backs off on 429, and stops when `signal` aborts.
+ * counts. Paced and capped per account within the run, backs off on 429, and stops when `signal` aborts. Ends by
+ * syncing the account's script candidates (`syncScripts`), stopped or not.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(() => run(opts));
@@ -190,6 +192,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     if (!signal?.aborted) throw err;
     result.stopped = true;
   }
+  await syncScripts(teamId, accountId);
   return result;
 }
 
@@ -211,12 +214,14 @@ async function readMass(get: Get, start: number, end: number): Promise<Raw[]> {
   return [...(await readMass(get, start, mid)), ...(await readMass(get, mid, end))];
 }
 
-const username = (user: unknown): string | null => {
-  const name = (user as Raw | null | undefined)?.username;
-  return typeof name === 'string' && name !== '' ? name : null;
+const field = (user: unknown, key: string): string | null => {
+  const value = (user as Raw | null | undefined)?.[key];
+  return typeof value === 'string' && value !== '' ? value : null;
 };
+const username = (user: unknown) => field(user, 'username');
 
-type Chat = { id: number; username: string | null };
+/** The fan's id and, as the chat list gives them, username, name and custom name (`displayName`). */
+type Chat = { id: number; username: string | null; name: string | null; customName: string | null };
 
 /**
  * Chats (the fan's id and username, `skip_users=none` so OF sends the full `withUser`), most recent first. Pages by
@@ -240,7 +245,7 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
       fresh++;
       const lastAt = time((chat.lastMessage as Raw | undefined)?.createdAt);
       if (!(lastAt >= from)) continue; // no messages, or quiet since before the range
-      chats.push({ id, username: username(chat.withUser) });
+      chats.push({ id, username: username(chat.withUser), name: field(chat.withUser, 'name'), customName: field(chat.withUser, 'displayName') });
       active++;
     }
     quiet = active ? 0 : quiet + 1;
@@ -277,7 +282,7 @@ async function walkChat(
     const page = await get(`/chats/${chatId}/messages?limit=${PAGE}&order=desc${cursor}`);
     const fetchedAt = new Date();
     const derived = items(page).flatMap((raw) => {
-      const d = deriveMessage(raw, chatId, ctx);
+      const d = deriveMessage(raw, chatId, ctx, fanNames({ name: chat.name, username: chat.username, displayName: chat.customName }));
       return d ? [{ d, raw }] : [];
     });
     const rows = unique(derived, (x) => x.d.messageId, seen).map(({ d, raw }) => ({ teamId, accountId: ctx.accountId, ...d, raw, fetchedAt }));
@@ -312,6 +317,8 @@ async function walkChat(
     accountId: ctx.accountId,
     chatId,
     fanUsername,
+    fanName: chat.name,
+    fanCustomName: chat.customName,
     oldestMessageId: oldest?.id ?? null,
     oldestAt: oldest?.at ?? null,
     reachedStart,
@@ -327,6 +334,8 @@ async function walkChat(
       set: {
         teamId: sql`excluded.team_id`,
         fanUsername: sql`coalesce(excluded.fan_username, ${chatCoverage.fanUsername})`,
+        fanName: sql`coalesce(excluded.fan_name, ${chatCoverage.fanName})`,
+        fanCustomName: sql`coalesce(excluded.fan_custom_name, ${chatCoverage.fanCustomName})`,
         oldestMessageId: sql`least(excluded.oldest_message_id, ${chatCoverage.oldestMessageId})`,
         oldestAt: sql`case when ${older} then excluded.oldest_at else ${chatCoverage.oldestAt} end`,
         reachedStart: sql`excluded.reached_start or ${chatCoverage.reachedStart}`,

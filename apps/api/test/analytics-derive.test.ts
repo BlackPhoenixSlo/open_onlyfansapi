@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { retryDelay } from '../src/modules/analytics/backfill.js';
 import { REPLY_CAP_MS } from '../src/modules/analytics/config.js';
-import { deriveContext, deriveMessage, normaliseText, textHash, txFan } from '../src/modules/analytics/derive.js';
+import {
+  deriveContext,
+  deriveMessage,
+  fanNames,
+  isScriptEligible,
+  NORMALISER_VERSION,
+  normaliseScript,
+  normaliseText,
+  scriptHash,
+  textHash,
+  txFan,
+} from '../src/modules/analytics/derive.js';
+import { isScript, SCRIPT_WINDOW_MS } from '../src/modules/analytics/scripts.js';
 import { fanTurns, type TurnMessage } from '../src/modules/analytics/turns.js';
 
 const ACCOUNT = 1001;
@@ -16,6 +28,66 @@ describe('analytics normaliser', () => {
     expect(textHash('<p>Hi there</p>')).toBe(textHash('hi   THERE'));
     expect(textHash('<p> </p>')).toBeNull();
     expect(textHash(undefined)).toBeNull();
+  });
+});
+
+describe('script normaliser (§4.4)', () => {
+  const LINE = 'I made something special for you';
+
+  it('is version 1', () => {
+    expect(NORMALISER_VERSION).toBe(1);
+  });
+
+  it('applies each text rule: tags, HTML entities, NFKC, lowercase, whitespace', () => {
+    expect(normaliseScript('<p>a</p><p>b</p>')).toBe('a b'); // a tag becomes a space
+    expect(normaliseScript('Tom &amp; Jerry &lt;3 &#x1F600; &quot;hi&quot;')).toBe('tom & jerry <3 😀 "hi"');
+    expect(normaliseScript('ｆｕｌｌ ①')).toBe('full 1'); // NFKC
+    expect(normaliseScript('HeLLo')).toBe('hello');
+    expect(normaliseScript('  a \n\t b  ')).toBe('a b');
+    expect(normaliseScript('$9.99 for 2 🔥!!')).toBe('$9.99 for 2 🔥!!'); // numbers, prices, emoji, punctuation stay
+  });
+
+  it("replaces the fan's name, username and custom name with <name>, whole words only, longest first", () => {
+    const names = fanNames({ name: 'Anna', username: 'anna_b', displayName: 'Anna Banana', id: 7 });
+    expect(names).toEqual(['Anna', 'anna_b', 'Anna Banana']);
+    expect(normaliseScript('<p>Hey ANNA, hi @anna_b and Anna Banana</p>', names)).toBe('hey <name>, hi @<name> and <name>');
+    expect(normaliseScript('Hey Annabel', names)).toBe('hey annabel'); // not inside a word
+    expect(normaliseScript('Hey Name, hey a', ['name', 'a'])).toBe('hey <name>, hey a'); // one pass; a 1-character name is ignored
+    expect(fanNames({ name: '', username: null })).toEqual([]);
+    expect(fanNames(undefined)).toEqual([]);
+  });
+
+  it('is eligible with 4+ words or 20+ characters, else no hash', () => {
+    expect(isScriptEligible('one two three four')).toBe(true);
+    expect(isScriptEligible('one two three')).toBe(false);
+    expect(isScriptEligible('abcdefghijklmnopqrst')).toBe(true); // 20 characters, one word
+    expect(isScriptEligible('abcdefghijklmnopqrs')).toBe(false);
+    expect(scriptHash('<p>hey</p>')).toBeNull();
+    expect(scriptHash('')).toBeNull();
+    expect(scriptHash(undefined)).toBeNull();
+    expect(scriptHash('<p>Hey Bo</p>', ['Bo'])).toBeNull(); // "hey <name>": 2 words, 10 characters
+  });
+
+  it('hashes the normalised text to 16 hex: personalised sends of one script share a hash', () => {
+    const anna = scriptHash(`<p>Hey Anna, ${LINE}</p>`, ['Anna']);
+    expect(anna).toMatch(/^[0-9a-f]{16}$/);
+    expect(scriptHash(`Hey   BOB, ${LINE}`, ['Bob'])).toBe(anna);
+    expect(scriptHash(`<p>Hey Anna, ${LINE}</p>`)).not.toBe(anna); // without the name it stays literal
+    expect(scriptHash(`<p>Hey Anna, ${LINE}!</p>`, ['Anna'])).not.toBe(anna);
+  });
+});
+
+describe('script detection (§2)', () => {
+  const at = (day: number) => new Date(Date.UTC(2026, 8, 1) + day * 86_400_000);
+  const sends = (list: [number, number][]) => list.map(([day, chatId]) => ({ at: at(day), chatId }));
+
+  it('needs 5+ sends in 3+ chats within 30 days', () => {
+    expect(isScript(sends([[0, 1], [1, 1], [2, 2], [3, 2], [4, 3]]))).toBe(true);
+    expect(isScript(sends([[0, 1], [1, 1], [2, 2], [3, 2], [4, 2]]))).toBe(false); // 2 chats
+    expect(isScript(sends([[0, 1], [1, 2], [2, 3], [3, 3]]))).toBe(false); // 4 sends
+    expect(isScript(sends([[0, 1], [10, 2], [20, 3], [30, 1], [31, 2]]))).toBe(false); // never 5 within 30 days
+    expect(isScript(sends([[0, 1], [10, 2], [20, 3], [29, 1], [30, 2]]))).toBe(true); // exactly 30 days
+    expect(SCRIPT_WINDOW_MS).toBe(30 * 86_400_000);
   });
 });
 
@@ -34,7 +106,17 @@ describe('analytics derived columns', () => {
   it('splits direction on fromUser.id and hashes outbound text only', () => {
     const inbound = deriveMessage(msg({ fromUser: { id: 2001 }, text: 'hello' }), 2001, ctx);
     expect(inbound).toMatchObject({ direction: 'inbound', textHash: null, isMass: false, isAutomated: false });
-    expect(deriveMessage(msg({ text: 'hello' }), 2001, ctx)).toMatchObject({ direction: 'outbound', textHash: textHash('hello') });
+    expect(inbound!.normaliserVersion).toBeNull();
+    const text = '<p>Hey Anna, how was your day?</p>';
+    expect(deriveMessage(msg({ text }), 2001, ctx)).toMatchObject({ direction: 'outbound', textHash: scriptHash(text), normaliserVersion: 1 });
+    expect(deriveMessage(msg({ text: 'hello' }), 2001, ctx)).toMatchObject({ direction: 'outbound', textHash: null, normaliserVersion: 1 });
+  });
+
+  it("hashes with the fan's names from the chat list and from the message's fan user", () => {
+    const withName = scriptHash('<p>Hey <name>, how was your day?</p>'.replace('<name>', 'Anna'), ['Anna']);
+    expect(deriveMessage(msg({ text: '<p>Hey Anna, how was your day?</p>' }), 2001, ctx, ['Anna'])!.textHash).toBe(withName);
+    const toUser = { id: 2001, name: 'Anna' };
+    expect(deriveMessage(msg({ text: '<p>Hey Anna, how was your day?</p>', toUser }), 2001, ctx)!.textHash).toBe(withName);
   });
 
   it('is mass only when the queue id is a broadcast with sentCount > 1', () => {

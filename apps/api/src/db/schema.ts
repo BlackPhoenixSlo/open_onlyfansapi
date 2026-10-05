@@ -178,8 +178,10 @@ export const messageFact = pgTable(
     mediaCount: integer('media_count').notNull(),
     /** Sorted media ids, comma-joined; null = no media. */
     mediaKey: text('media_key'),
-    /** Outbound only (§4.4); null for inbound or empty text. */
+    /** The script hash (§4.4): outbound only; null for inbound or text the normaliser finds not eligible. */
     textHash: text('text_hash'),
+    /** The normaliser version behind `text_hash`; set on outbound rows, null on inbound. */
+    normaliserVersion: integer('normaliser_version'),
     raw: jsonb('raw').$type<Record<string, unknown>>().notNull(),
     fetchedAt: analyticsAt('fetched_at').notNull(),
   },
@@ -198,6 +200,9 @@ export const chatCoverage = pgTable(
     chatId: bigint('chat_id', { mode: 'number' }).notNull(),
     /** The fan's username as the chat list or a message names it; null = not seen. */
     fanUsername: text('fan_username'),
+    /** The fan's name and custom name (OF's `displayName`) as the chat list names them; null = not seen. */
+    fanName: text('fan_name'),
+    fanCustomName: text('fan_custom_name'),
     oldestMessageId: bigint('oldest_message_id', { mode: 'number' }),
     oldestAt: analyticsAt('oldest_at'),
     reachedStart: boolean('reached_start').notNull(),
@@ -227,6 +232,25 @@ export const purchaseFact = pgTable(
     primaryKey({ columns: [t.accountId, t.txId] }),
     index('purchase_fact_team_account_created_idx').on(t.teamId, t.accountId, t.createdAt),
   ],
+);
+
+/**
+ * A script candidate (§4.3, §4.4): a DM text hash sent 5+ times in 3+ chats within 30 days on one of the
+ * workspace's accounts. Auto-detected only; exact variants and counts are read from `message_fact`.
+ */
+export const script = pgTable(
+  'script',
+  {
+    teamId: analyticsTeamId(),
+    hash: text('hash').notNull(),
+    origin: text('origin', { enum: ['auto'] }).notNull().default('auto'),
+    normaliserVersion: integer('normaliser_version').notNull(),
+    firstSeen: analyticsAt('first_seen').notNull(),
+    lastSeen: analyticsAt('last_seen').notNull(),
+    /** The raw text of the latest send seen. */
+    sampleText: text('sample_text').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.teamId, t.hash] })],
 );
 
 /**

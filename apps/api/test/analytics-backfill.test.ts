@@ -241,7 +241,8 @@ describe('analytics backfill', () => {
     expect(byId[107]).toMatchObject({ isAutomated: true, automatedReason: 'welcome', isMass: false });
     expect(byId[302]).toMatchObject({ isMass: false, queueId: 901 });
     expect(byId[301]).toMatchObject({ direction: 'inbound', isTip: true, priceCents: 500, textHash: null, teamId: teamA });
-    expect(byId[110]!.textHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(byId[110]).toMatchObject({ textHash: null, normaliserVersion: 1 }); // "text 110": under 4 words and 20 characters
+    expect(byId[301]!.normaliserVersion).toBeNull();
     expect(byId[110]!.raw).toMatchObject({ id: 110, text: '<p>text 110</p>' });
 
     const tx = await db.select().from(purchaseFact).orderBy(purchaseFact.txId);
