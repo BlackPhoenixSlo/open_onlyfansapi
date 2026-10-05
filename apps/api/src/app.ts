@@ -18,6 +18,7 @@ import realtimeRoutes from './modules/realtime/routes.js';
 import statsRoutes from './modules/stats/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import webhooksRoutes from './modules/webhooks/routes.js';
+import webhookStreamRoutes from './modules/webhooks/stream.js';
 import whoamiRoutes from './modules/whoami/routes.js';
 import { authenticate } from './plugins/actor.js';
 import sessionPlugin from './plugins/session.js';
@@ -71,6 +72,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(keysRoutes, { prefix: '/api/keys' });
   await app.register(logsRoutes, { prefix: '/api/logs' });
   await app.register(usageRoutes, { prefix: '/api' });
+  await app.register(webhookStreamRoutes, { prefix: '/api' });
 
   await app.register(
     async (v1) => {

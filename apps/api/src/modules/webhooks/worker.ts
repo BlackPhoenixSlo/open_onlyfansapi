@@ -5,6 +5,7 @@ import { db } from '../../db/index.js';
 import { env } from '../../env.js';
 import { limiter } from '../../lib/limiter.js';
 import { envelope, sign } from '../../lib/signature.js';
+import { notifyDelivery } from './stream.js';
 
 /** Delay before retry n (after the nth finished attempt); the last step repeats. */
 export const BACKOFF_SECONDS = [30, 120, 600, 3600, 21_600];
@@ -19,6 +20,7 @@ const MAX_ERROR_LENGTH = 500;
 
 export type Claimed = {
   id: string;
+  teamId: string;
   endpointId: string;
   /** `X-OFAPI-Idempotency-Key`. */
   eventId: string;
@@ -28,6 +30,7 @@ export type Claimed = {
   /** The `next_attempt_at` this claim set, as exact Postgres text: completion is fenced on it. */
   leasedUntil: string;
   url: string;
+  description: string | null;
   secret: string;
 };
 
@@ -49,8 +52,8 @@ export async function claimDeliveries(limit = BATCH): Promise<Claimed[]> {
       )
       returning *
     )
-    select c.id, c.endpoint_id as "endpointId", c.event_id as "eventId", c.event_type as "eventType",
-      c.account_id as "accountId", c.payload, c.next_attempt_at as "leasedUntil", e.url, e.secret
+    select c.id, c.team_id as "teamId", c.endpoint_id as "endpointId", c.event_id as "eventId", c.event_type as "eventType",
+      c.account_id as "accountId", c.payload, c.next_attempt_at as "leasedUntil", e.url, e.description, e.secret
     from claimed c join webhook_endpoint e on e.id = c.endpoint_id`);
   return res.rows;
 }
@@ -151,16 +154,17 @@ async function post(c: Claimed): Promise<{ statusCode: number | null; error: str
  * Records a finished attempt: `attempts + 1`, and `next_attempt_at` overwritten with the real backoff (replacing the
  * lease). Fenced on the lease: if this worker outlived it and the row was claimed again (or already completed),
  * nothing changes. 2xx resets the endpoint's breaker; the last failed attempt marks the delivery failed and counts
- * towards pausing the endpoint at WEBHOOK_PAUSE_AFTER consecutive failures.
+ * towards pausing the endpoint at WEBHOOK_PAUSE_AFTER consecutive failures. Returns the delivery's new status, or
+ * undefined when the fence left it unchanged.
  */
 export async function completeDelivery(
   c: Pick<Claimed, 'id' | 'endpointId' | 'leasedUntil'>,
   outcome: { statusCode: number | null; error: string | null },
-) {
+): Promise<'succeeded' | 'pending' | 'failed' | undefined> {
   const ok = outcome.error === null;
   const backoff = sql`array[${sql.raw(BACKOFF_SECONDS.join(','))}]`;
-  await db.transaction(async (tx) => {
-    const res = await tx.execute<{ status: string }>(sql`
+  return db.transaction(async (tx) => {
+    const res = await tx.execute<{ status: 'succeeded' | 'pending' | 'failed' }>(sql`
       update webhook_delivery set
         attempts = attempts + 1,
         last_attempt_at = now(),
@@ -184,19 +188,29 @@ export async function completeDelivery(
           updated_at = now()
         where id = ${c.endpointId}`);
     }
+    return status;
   });
 }
 
 const limit = limiter(CONCURRENCY);
 
 /**
- * One worker tick: claim a batch, POST up to CONCURRENCY at a time, record the outcomes. The whole batch settles
+ * One worker tick: claim a batch, POST up to CONCURRENCY at a time, record the outcomes and tell the workspace's
+ * dashboard streams. The whole batch settles
  * before this returns (so the job's overrun guard holds); then it throws if any completion write failed.
  * Returns the number of deliveries attempted.
  */
 export async function deliverDue(): Promise<number> {
   const batch = await claimDeliveries();
-  const results = await Promise.allSettled(batch.map((c) => limit(async () => completeDelivery(c, await post(c)))));
+  const results = await Promise.allSettled(
+    batch.map((c) =>
+      limit(async () => {
+        const outcome = await post(c);
+        const status = await completeDelivery(c, outcome);
+        if (status) notifyDelivery(c, outcome, status);
+      }),
+    ),
+  );
   const failed = results.filter((r) => r.status === 'rejected');
   if (failed.length > 0) {
     throw new AggregateError(failed.map((r) => r.reason), `${failed.length} of ${batch.length} delivery completions failed`);

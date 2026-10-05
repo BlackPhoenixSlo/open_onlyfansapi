@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { authClient } from '@/lib/auth-client';
+import { useDeliveryNotifications } from '@/lib/delivery-notifications';
 import { PRODUCT_NAME } from '@/lib/brand';
 
 export const Route = createFileRoute('/_app')({
@@ -35,6 +36,7 @@ function AppLayout() {
   const { data: session } = authClient.useSession();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  useDeliveryNotifications(session?.user.id);
 
   async function signOut() {
     await authClient.signOut();

@@ -1,13 +1,15 @@
 import { createHmac } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, get } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { deleteExpired } from '../src/jobs/retention.js';
+import { eventStatus } from '../src/contracts.js';
 import { envelope, sign, verifySignature } from '../src/lib/signature.js';
 import { emit } from '../src/modules/webhooks/service.js';
+import { streamTimings } from '../src/modules/webhooks/stream.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
 import { bearer, createKey, dashboard, resetDb, signUp } from './helpers.js';
 
@@ -163,10 +165,10 @@ describe('webhooks API', () => {
       'webhook.test',
       'upstream.*',
     ]);
-    // Each description carries the status: TBC, never, or (unmarked) emitted.
-    const status = (d: string) => (d.includes('(TBC: not emitted yet)') ? 'tbc' : d.includes('(never emitted') ? 'never' : 'emitted');
-    const byStatus = (want: string) =>
-      (events.json().items as { type: string; description: string }[]).filter((e) => status(e.description) === want).map((e) => e.type);
+    // Each description carries the status (TBC, never, or unmarked = emitted), served as `status` too.
+    const items = events.json().items as { type: string; description: string; status: string }[];
+    expect(items.every((e) => e.status === eventStatus(e.description))).toBe(true);
+    const byStatus = (want: string) => items.filter((e) => e.status === want).map((e) => e.type);
     expect(byStatus('emitted')).toEqual([
       'messages.received',
       'messages.sent',
@@ -562,5 +564,113 @@ describe('emit', () => {
     // A burst queues behind the concurrency cap instead of failing.
     const burst = await Promise.all(Array.from({ length: 30 }, (_, i) => emit(teamId, `evt_b${i}`, 'messages.received', null, {})));
     expect(burst.every((n) => n === 2)).toBe(true);
+  });
+});
+
+type Stream = { text: string; close: () => void; ended: Promise<void> };
+
+/** An open `GET /api/webhooks/stream`, resolved once its `: ready` comment arrives; `text` grows as frames do. */
+function openStream(base: string, cookie: string): Promise<Stream> {
+  return new Promise((resolve, reject) => {
+    const req = get(`${base}/api/webhooks/stream`, { headers: { cookie } }, (res) => {
+      let ended!: () => void;
+      const stream: Stream = { text: '', close: () => req.destroy(), ended: new Promise((r) => (ended = r)) };
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => {
+        stream.text += chunk;
+        if (stream.text.startsWith(': ready')) resolve(stream);
+      });
+      res.on('end', () => {
+        ended();
+        reject(new Error(`stream ended: ${res.statusCode} ${stream.text}`));
+      });
+    });
+    req.on('error', reject);
+  });
+}
+
+const notices = (text: string) =>
+  text
+    .split('\n\n')
+    .filter((f) => f.startsWith('event: delivery\n'))
+    .map((f) => JSON.parse(f.slice(f.indexOf('data: ') + 6)));
+
+describe('dashboard delivery stream', () => {
+  let base: string;
+  beforeAll(async () => {
+    base = await app.listen({ port: 0, host: '127.0.0.1' });
+  });
+
+  it('needs a session', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/webhooks/stream' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("sends each finished attempt only to its own workspace's streams", async () => {
+    const other = await signUp(app, 'webhooks-stream@example.test');
+    const otherKey = (await createKey(app, other.cookie, { scope: 'write' })).secret;
+    const mine = await createEndpoint({ description: 'mine' });
+    const res = await app.inject({ method: 'POST', url: '/v1/webhooks', headers: bearer(otherKey), payload: { url: hookUrl } });
+    const theirs = res.json().endpoint as Endpoint;
+    const [a, b] = await Promise.all([openStream(base, cookie), openStream(base, other.cookie)]);
+    try {
+      const myDelivery = await sendTest(mine.id);
+      const t = await app.inject({ method: 'POST', url: `/v1/webhooks/${theirs.id}/test`, headers: bearer(otherKey) });
+      const theirDelivery = t.json().delivery.id as string;
+      expect(await deliverDue()).toBe(2);
+      const deadline = Date.now() + 2000;
+      while (notices(a.text).length === 0 || notices(b.text).length === 0) {
+        if (Date.now() > deadline) throw new Error(`no frame: ${a.text} | ${b.text}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 50)); // a stray cross-workspace frame would have arrived by now
+      expect(notices(a.text)).toEqual([
+        {
+          deliveryId: myDelivery,
+          endpointId: mine.id,
+          eventType: 'webhook.test',
+          url: hookUrl,
+          description: 'mine',
+          status: 'delivered',
+          statusCode: 200,
+          error: null,
+        },
+      ]);
+      expect(notices(b.text)).toMatchObject([{ deliveryId: theirDelivery, endpointId: theirs.id, status: 'delivered' }]);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it('reports a failed attempt that will be retried as retrying', async () => {
+    receiver.status = 500;
+    const endpoint = await createEndpoint();
+    const stream = await openStream(base, cookie);
+    try {
+      await sendTest(endpoint.id);
+      expect(await deliverDue()).toBe(1);
+      const deadline = Date.now() + 2000;
+      while (notices(stream.text).length === 0) {
+        if (Date.now() > deadline) throw new Error(`no frame: ${stream.text}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(notices(stream.text)).toMatchObject([{ status: 'retrying', statusCode: 500, error: 'HTTP 500' }]);
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('ends a stream after its lifetime, so the reconnect re-checks the session', async () => {
+    const defaults = { ...streamTimings };
+    Object.assign(streamTimings, { heartbeatMs: 20, maxMs: 100 });
+    try {
+      const stream = await openStream(base, cookie);
+      const ended = await Promise.race([stream.ended.then(() => true), new Promise((r) => setTimeout(() => r(false), 2000))]);
+      expect(ended).toBe(true);
+      expect(stream.text).toContain(': ping');
+    } finally {
+      Object.assign(streamTimings, defaults);
+    }
   });
 });

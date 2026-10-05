@@ -11,6 +11,7 @@ import type {
   UsageGroupBy,
   WebhookDeliveryList,
   WebhookEndpoint,
+  WebhookEventStatus,
   WebhookEventType,
   Whoami,
 } from '@api/contracts';
@@ -140,7 +141,7 @@ export const webhookQuery = (id: string) =>
 
 export const webhookEventsQuery = queryOptions({
   queryKey: ['webhooks', 'events'],
-  queryFn: () => api<{ items: { type: WebhookEventType; description: string }[] }>('/v1/webhooks/events'),
+  queryFn: () => api<{ items: { type: WebhookEventType; description: string; status: WebhookEventStatus }[] }>('/v1/webhooks/events'),
   staleTime: Infinity,
 });
 

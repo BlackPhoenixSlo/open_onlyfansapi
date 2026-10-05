@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   createWebhookBody,
   deliveryStatus,
+  eventStatus,
   updateWebhookBody,
   WEBHOOK_EVENTS,
   webhookDelivery,
@@ -69,7 +70,10 @@ export default async function webhooksRoutes(app: FastifyInstance) {
   });
 
   r.get('/webhooks/events', { schema: { tags, response: { 200: webhookEventList } } }, async () => ({
-    items: webhookEventType.options.map((type) => ({ type, description: WEBHOOK_EVENTS[type] })),
+    items: webhookEventType.options.map((type) => {
+      const description = WEBHOOK_EVENTS[type];
+      return { type, description, status: eventStatus(description) };
+    }),
   }));
 
   r.get('/webhooks/:id', { schema: { tags, params, response: { 200: endpointBody } } }, async (request) => ({

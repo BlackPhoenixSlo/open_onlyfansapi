@@ -212,7 +212,19 @@ export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
   'webhook.test': "Sent by the Test action, regardless of the endpoint's event filter.",
   'upstream.*': 'Any other upstream event, passed through as upstream.<name>.',
 };
-export const webhookEventList = z.object({ items: z.array(z.object({ type: webhookEventType, description: z.string() })) });
+export const webhookEventStatus = z.enum(['emitted', 'tbc', 'never']);
+export type WebhookEventStatus = z.infer<typeof webhookEventStatus>;
+
+/** Each WEBHOOK_EVENTS description carries the status: `(TBC: not emitted yet)`, `(never emitted …)`, or unmarked = emitted. */
+export function eventStatus(description: string): WebhookEventStatus {
+  if (description.includes('(TBC: not emitted yet)')) return 'tbc';
+  if (description.includes('(never emitted')) return 'never';
+  return 'emitted';
+}
+
+export const webhookEventList = z.object({
+  items: z.array(z.object({ type: webhookEventType, description: z.string(), status: webhookEventStatus })),
+});
 
 export const webhookEndpoint = z.object({
   id: z.string(),
@@ -281,6 +293,19 @@ export const webhookDelivery = z.object({
 export type WebhookDelivery = z.infer<typeof webhookDelivery>;
 export const webhookDeliveryList = z.object({ items: z.array(webhookDelivery), nextCursor: z.string().nullable() });
 export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;
+
+/** One finished delivery attempt, as `GET /api/webhooks/stream` sends it to the dashboard (`event: delivery`). */
+export type DeliveryNotice = {
+  deliveryId: string;
+  endpointId: string;
+  eventType: string;
+  url: string;
+  description: string | null;
+  /** After this attempt: sent (2xx), will be retried, or out of attempts. */
+  status: 'delivered' | 'retrying' | 'failed';
+  statusCode: number | null;
+  error: string | null;
+};
 
 // Stats
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');

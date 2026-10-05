@@ -1,4 +1,4 @@
-import type { CreateWebhookBody, WebhookEndpoint, WebhookEventType } from '@api/contracts';
+import type { CreateWebhookBody, WebhookEndpoint, WebhookEventStatus, WebhookEventType } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api, webhookEventsQuery, webhooksQuery } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/webhooks/')({ component: Webhooks });
 
@@ -38,6 +39,7 @@ function Webhooks() {
   const queryClient = useQueryClient();
   const [formTarget, setFormTarget] = useState<FormTarget>(null);
   const [deleting, setDeleting] = useState<WebhookEndpoint | null>(null);
+  const [permission, setPermission] = useState(() => ('Notification' in window ? Notification.permission : 'denied'));
 
   const refresh = () =>
     Promise.all([
@@ -75,7 +77,14 @@ function Webhooks() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Webhooks</h1>
-        <Button onClick={() => setFormTarget('new')}>Add endpoint</Button>
+        <div className="flex gap-2">
+          {permission === 'default' && (
+            <Button variant="outline" onClick={() => void Notification.requestPermission().then(setPermission)}>
+              Enable browser notifications
+            </Button>
+          )}
+          <Button onClick={() => setFormTarget('new')}>Add endpoint</Button>
+        </div>
       </div>
 
       {webhooks.isPending ? (
@@ -105,7 +114,9 @@ function Webhooks() {
                   </Link>
                   {w.description && <div className="text-xs text-muted-foreground">{w.description}</div>}
                 </TableCell>
-                <TableCell className="text-xs">{w.events.length === 0 ? 'All events' : w.events.join(', ')}</TableCell>
+                <TableCell className="text-xs" title={w.events.join(', ') || undefined}>
+                  {w.events.length === 0 ? 'All events' : w.events.length <= 2 ? w.events.join(', ') : `${w.events.length} events`}
+                </TableCell>
                 <TableCell className="w-36 min-w-36">
                   <WebhookHealth endpoint={w} />
                 </TableCell>
@@ -224,14 +235,20 @@ function EndpointFormDialog({
     save.mutate({ url: url.trim(), description: description.trim() || null, events });
   }
 
-  const toggleEvent = (type: WebhookEventType, on: boolean) =>
-    setEvents((prev) => (on ? [...prev, type] : prev.filter((t) => t !== type)));
+  const toggleEvents = (types: WebhookEventType[], on: boolean) =>
+    setEvents((prev) => (on ? [...new Set([...prev, ...types])] : prev.filter((t) => !types.includes(t))));
+  // Catalogue order, grouped by the type's prefix (`messages.received` → `messages`).
+  const groups = new Map<string, { type: WebhookEventType; description: string; status: WebhookEventStatus }[]>();
+  for (const ev of catalogue.data?.items ?? []) {
+    const prefix = ev.type.split('.')[0]!;
+    groups.set(prefix, [...(groups.get(prefix) ?? []), ev]);
+  }
   const secret = editing?.secret;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <form onSubmit={onSubmit} className="space-y-4">
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-5xl">
+        <form onSubmit={onSubmit} className="min-w-0 space-y-4">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit endpoint' : 'Add endpoint'}</DialogTitle>
           </DialogHeader>
@@ -256,23 +273,56 @@ function EndpointFormDialog({
               maxLength={500}
             />
           </div>
-          <fieldset className="space-y-2">
+          <fieldset className="min-w-0 space-y-2">
             <legend className="text-sm font-medium">Events</legend>
-            {(catalogue.data?.items ?? []).map((ev) => (
-              <label key={ev.type} className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 size-4 accent-primary"
-                  checked={events.includes(ev.type)}
-                  onChange={(e) => toggleEvent(ev.type, e.target.checked)}
-                />
-                <span>
-                  <span className="font-mono">{ev.type}</span>
-                  <span className="block text-xs text-muted-foreground">{ev.description}</span>
-                </span>
-              </label>
-            ))}
-            <p className="text-xs text-muted-foreground">None selected means every event.</p>
+            <div className="columns-2 gap-5 sm:columns-3 lg:columns-4">
+              {[...groups].map(([prefix, items]) => {
+                const types = items.map((ev) => ev.type);
+                const selected = types.filter((t) => events.includes(t)).length;
+                return (
+                  <div key={prefix} role="group" aria-label={`${prefix} events`} className="mb-3 break-inside-avoid">
+                    <label className="flex items-center gap-1.5 text-xs font-medium">
+                      <input
+                        type="checkbox"
+                        className="size-3.5 accent-primary"
+                        aria-label={`All ${prefix} events`}
+                        checked={selected === types.length}
+                        ref={(el) => {
+                          if (el) el.indeterminate = selected > 0 && selected < types.length;
+                        }}
+                        onChange={(e) => toggleEvents(types, e.target.checked)}
+                      />
+                      <span className="font-mono">{prefix}</span>
+                    </label>
+                    {items.map((ev) => {
+                      // TBC = known OF source, not mapped yet; never = no source in a self-hosted gateway.
+                      const pending = ev.status === 'emitted' ? null : ev.status === 'tbc' ? 'TBC' : 'never';
+                      return (
+                        <label
+                          key={ev.type}
+                          title={`${ev.type}: ${ev.description}`}
+                          className={cn('flex items-center gap-1.5 py-px pl-4 text-xs', pending && 'text-muted-foreground opacity-70')}
+                        >
+                          <input
+                            type="checkbox"
+                            className="size-3.5 accent-primary"
+                            aria-label={ev.type}
+                            checked={events.includes(ev.type)}
+                            onChange={(e) => toggleEvents([ev.type], e.target.checked)}
+                          />
+                          <span className="min-w-0 truncate font-mono">{ev.type.slice(prefix.length + 1)}</span>
+                          {pending && <span className="shrink-0 text-[10px] uppercase">{pending}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              None selected means every event. Muted events are not emitted yet (TBC) or never by this gateway; hover for
+              details.
+            </p>
           </fieldset>
           {secret && (
             <div className="space-y-2">
