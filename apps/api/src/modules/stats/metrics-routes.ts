@@ -93,7 +93,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const accounts = scopedAccounts(actor, query.accountId);
       const asOf = new Date();
       const rows = isOpenerMetric(id)
-        ? openerRows(id, await scopedOpeners(actor.teamId, accounts, cfg, { ...span, asOf }), query.groupBy, cfg)
+        ? openerRows(id, await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg)
         : metricRows(id, await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg);
       if (query.format === 'csv') {
         const csv = toCsv(isOpenerMetric(id) ? OPENER_CSV_COLUMNS : METRIC_CSV_COLUMNS, rows.map(snakeCase));
@@ -118,7 +118,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const asOf = new Date();
       const inGroup = (x: Parameters<typeof groupKey>[0]) => query.group === undefined || groupKey(x, query.groupBy, cfg.timezone) === query.group;
       const items = isOpenerMetric(id)
-        ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, cfg, { ...span, asOf })).filter(inGroup), query.limit)
+        ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), query.limit)
         : metricSamples(id, (await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), cfg, query.limit);
       return { ...meta(id, cfg, asOf), items };
     },

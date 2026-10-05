@@ -3,6 +3,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { backfill } from '../src/modules/analytics/backfill.js';
+import { quantile } from '../src/modules/analytics/metrics.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -121,12 +122,14 @@ describe('stats metrics catalogue', () => {
     const items = res.json().items as { id: string; unit: string; groupings: string[]; verified: boolean; windows: string[] }[];
     expect(items.map((m) => [m.id, m.unit])).toEqual([
       ['reply_time', 'seconds'],
+      ['reply_time_p90', 'seconds'],
       ['reply_time_mean', 'seconds'],
       ['reply_time_mean_last', 'seconds'],
       ['reply_sla', 'percent'],
       ['reply_time_substantive', 'seconds'],
       ['openers', 'count'],
       ['opener_reply_rate', 'percent'],
+      ['opener_reply_rate_substantive', 'percent'],
       ['opener_fan_reply_time', 'seconds'],
     ]);
     expect(items.every((m) => !m.verified && m.groupings.join() === 'day,hour,account')).toBe(true);
@@ -170,6 +173,27 @@ describe('stats metric series', () => {
       });
     }
   }
+
+  it('reply_time_p90 is the 0.9 quantile of the in-cap waits, by day, hour and account, with the turn counts', async () => {
+    // In cap: T1 600 and T2 120 (1001), T6 1200 (1002), all on 09-01.
+    const close = (rows: { group: string; value: number | null; n: number }[], expected: (string | number | null)[][]) => {
+      expect(rows.map((r) => [r.group, r.n])).toEqual(expected.map(([g, , n]) => [g, n]));
+      for (const [i, [, value]] of expected.entries()) {
+        if (value === null) expect(rows[i]!.value).toBeNull();
+        else expect(rows[i]!.value).toBeCloseTo(value as number, 9);
+      }
+    };
+    const day = (await series('reply_time_p90', 'day')).rows;
+    close(day, [['2026-09-01', 1080, 3], ['2026-09-02', null, 0], ['2026-09-04', null, 0]]); // 600 + 0.8 * (1200 - 600)
+    expect(day[1]).toMatchObject({ turns: 2, late: 1, breached: 1 });
+    close((await series('reply_time_p90', 'hour')).rows, [['06', null, 0], ['08', null, 0], ['10', 600, 1], ['12', 120, 1], ['22', 1200, 1], ['23', null, 0]]);
+    close((await series('reply_time_p90', 'account')).rows, [['1001', 552, 2], ['1002', 1200, 1]]); // 120 + 0.9 * (600 - 120)
+    const csv = (await get(`/v1/stats/metrics/reply_time_p90?${RANGE}&groupBy=account&format=csv`)).body.split('\n');
+    expect(csv[0]).toBe('group,value,n,turns,in_cap,late,breached,pending,sla_met');
+    expect(csv[2]).toBe('1002,1200,1,1,1,0,0,0,0');
+    const samples = async (id: string) => (await get(`/v1/stats/metrics/${id}/samples?${RANGE}`)).json().items;
+    expect(await samples('reply_time_p90')).toEqual(await samples('reply_time'));
+  });
 
   it('carries the turn counts by status, as_of, the timezone and the config version', async () => {
     const res = await series('reply_time', 'day');
@@ -287,6 +311,34 @@ describe('stats metric samples', () => {
   });
 });
 
+describe('quantile', () => {
+  it('interpolates linearly between closest ranks (type 7), on unsorted input', () => {
+    expect(quantile([], 0.5)).toBeNull();
+    expect(quantile([7], 0.5)).toBe(7);
+    expect(quantile([7], 0.9)).toBe(7);
+    expect(quantile([4, 1, 3, 2], 0.5)).toBe(2.5);
+    expect(quantile([4, 1, 3, 2], 0.9)).toBeCloseTo(3.7, 12); // position 2.7: 3 + 0.7 * (4 - 3)
+    expect(quantile([100, 90, 80, 70, 60, 50, 40, 30, 20, 10], 0.9)).toBeCloseTo(91, 12); // position 8.1
+    expect(quantile([100, 90, 80, 70, 60, 50, 40, 30, 20, 10], 0.5)).toBe(55);
+    expect(quantile([3, 1, 2], 0)).toBe(1);
+    expect(quantile([3, 1, 2], 1)).toBe(3);
+  });
+
+  it('at 0.5 is exactly the previous median (mean of the two middle values for an even n)', () => {
+    const oldMedian = (xs: number[]) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = (s.length - 1) / 2;
+      return (s[Math.floor(mid)]! + s[Math.ceil(mid)]!) / 2;
+    };
+    let seed = 1;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 1e5;
+    for (let n = 1; n <= 200; n++) {
+      const xs = Array.from({ length: n }, () => (n % 3 ? Math.round(rand()) : rand() / 7));
+      expect(quantile(xs, 0.5)).toBe(oldMedian(xs));
+    }
+  });
+});
+
 describe('stats config', () => {
   it('is made with the defaults on first read', async () => {
     const res = await get('/v1/stats/config');
@@ -325,7 +377,7 @@ describe('stats config', () => {
 describe('stats metrics tenancy', () => {
   it("a second workspace's key sees none of the first's data or config, on every route", async () => {
     expect((await get('/v1/stats/metrics', keyB)).statusCode).toBe(200); // the catalogue holds no data
-    for (const id of ['reply_time', 'reply_time_mean', 'reply_time_mean_last', 'reply_sla', 'reply_time_substantive']) {
+    for (const id of ['reply_time', 'reply_time_p90', 'reply_time_mean', 'reply_time_mean_last', 'reply_sla', 'reply_time_substantive']) {
       for (const q of [`${RANGE}&groupBy=account`, `${RANGE}&accountId=${A1}`]) {
         const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
         expect([s.statusCode, s.json().rows]).toEqual([200, []]);

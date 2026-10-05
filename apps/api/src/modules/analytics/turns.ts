@@ -11,7 +11,7 @@ export type TurnMessage = {
   direction: 'inbound' | 'outbound';
   isMass: boolean;
   isAutomated: boolean;
-  /** Outbound text length in code points after `normaliseText` (as `isScriptEligible`); only read when `minReplyChars` is set. */
+  /** Text length in code points after `normaliseText` (as `isScriptEligible`); only read for a substantive variant (`minReplyChars`). */
   textChars?: number;
 };
 
@@ -92,7 +92,7 @@ export type TurnMessageRange = {
   from?: Date;
   /** Leave out messages at this instant or later; default: none. */
   to?: Date;
-  /** Measure outbound text for `textChars` (the substantive variant only); default false. */
+  /** Measure text for `textChars` (the substantive variants only); default false. */
   text?: boolean;
 };
 
@@ -129,7 +129,7 @@ export async function turnMessages(teamId: string, accountId: number, range: Tur
       direction: messageFact.direction,
       isMass: messageFact.isMass,
       isAutomated: messageFact.isAutomated,
-      text: range.text ? sql<string | null>`case when ${messageFact.direction} = 'outbound' then ${messageFact.raw}->>'text' end` : sql<null>`null`,
+      text: range.text ? sql<string | null>`${messageFact.raw}->>'text'` : sql<null>`null`,
     })
     .from(messageFact)
     .$dynamic();

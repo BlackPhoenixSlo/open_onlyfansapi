@@ -68,7 +68,7 @@ try {
   const teamId = await accountTeam(accountId, values.team);
   const cfg = await getStatsConfig(teamId);
   const asOf = new Date();
-  const openers = await scopedOpeners(teamId, [accountId], cfg, { from, to, asOf });
+  const openers = await scopedOpeners(teamId, [accountId], 'openers', cfg, { from, to, asOf });
   const coverage = new Map(
     (
       await db

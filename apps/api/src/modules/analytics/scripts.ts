@@ -1,4 +1,4 @@
-import { and, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
@@ -37,6 +37,14 @@ export function isScript(sends: Send[]): boolean {
 }
 
 const scoped = (teamId: string, accountId: number) => and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId));
+/** The sends `isScript` decides on: DMs (outbound, not mass, not automated) hashed by the current normaliser version. */
+const scriptSends = and(
+  eq(messageFact.direction, 'outbound'),
+  eq(messageFact.isMass, false),
+  eq(messageFact.isAutomated, false),
+  isNotNull(messageFact.textHash),
+  eq(messageFact.normaliserVersion, NORMALISER_VERSION),
+);
 const rawText = sql<string | null>`${messageFact.raw}->>'text'`;
 
 // Only `message_fact` rows hashed by the current `NORMALISER_VERSION` count: hashes of other versions are not
@@ -52,16 +60,7 @@ export async function syncScripts(teamId: string, accountId: number): Promise<nu
   const rows = await db
     .select({ hash: messageFact.textHash, chatId: messageFact.chatId, at: messageFact.createdAt })
     .from(messageFact)
-    .where(
-      and(
-        scoped(teamId, accountId),
-        eq(messageFact.direction, 'outbound'),
-        eq(messageFact.isMass, false),
-        eq(messageFact.isAutomated, false),
-        isNotNull(messageFact.textHash),
-        eq(messageFact.normaliserVersion, NORMALISER_VERSION),
-      ),
-    );
+    .where(and(scoped(teamId, accountId), scriptSends));
   const byHash = new Map<string, Send[]>();
   for (const r of rows) {
     const sends = byHash.get(r.hash!);
@@ -151,7 +150,8 @@ const rate = (s: Record<Status, number>) => (s.replied + s.no_reply ? (s.replied
  * The scripts of workspace `teamId` (its `script` rows of the current normaliser version) sent in `[from, to)` over
  * `accountIds` (null = every account the workspace has rows for), most sent first. Being a script is decided over the
  * whole history (`syncScripts`); `sends`, `chats`, the first and last send and the variants count every send of the
- * hash in range. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
+ * hash in range, and `sendsAll`/`chatsAll` every stored send of it (the population `isScript` decides on) over the
+ * same accounts, in range or not. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
  * messages neither join nor end it): a sequence holding a send of the script in range counts once, replied when a fan
  * message arrives within `open_reply` after its last DM, pending while that window has not elapsed at `asOf`. The
  * substantive variant counts only a fan message of `min_reply_chars`+ (normalised text, code points).
@@ -178,10 +178,11 @@ export async function scopedScripts(
   const openReplyMs = cfg.openReplySeconds * 1000;
   const asOf = range.asOf.getTime();
   const tallies = new Map<string, Tally>();
+  const accounts = await workspaceAccounts(teamId, accountIds);
   const inRange = (m: Row) =>
     m.textHash !== null && m.normaliserVersion === NORMALISER_VERSION && known.has(m.textHash) && m.createdAt >= range.from && m.createdAt < range.to;
 
-  for (const accountId of await workspaceAccounts(teamId, accountIds)) {
+  for (const accountId of accounts) {
     const rows: Row[] = await db
       .select({
         messageId: messageFact.messageId,
@@ -252,6 +253,20 @@ export async function scopedScripts(
     }
   }
 
+  // All-history totals of the hashes sent in range, per account and summed (a chat belongs to one account).
+  const all = new Map<string, { sends: number; chats: number }>();
+  if (tallies.size) {
+    const totals = await db
+      .select({ hash: messageFact.textHash, sends: sql<number>`count(*)::int`, chats: sql<number>`count(distinct ${messageFact.chatId})::int` })
+      .from(messageFact)
+      .where(and(eq(messageFact.teamId, teamId), inArray(messageFact.accountId, accounts), scriptSends, inArray(messageFact.textHash, [...tallies.keys()])))
+      .groupBy(messageFact.accountId, messageFact.textHash);
+    for (const r of totals) {
+      const a = all.get(r.hash!) ?? { sends: 0, chats: 0 };
+      all.set(r.hash!, { sends: a.sends + r.sends, chats: a.chats + r.chats });
+    }
+  }
+
   return [...tallies.values()]
     .sort((a, b) => b.sends - a.sends || a.hash.localeCompare(b.hash))
     .map((t) => ({
@@ -259,6 +274,8 @@ export async function scopedScripts(
       origin: t.origin,
       sends: t.sends,
       chats: t.chats.size,
+      sendsAll: all.get(t.hash)?.sends ?? 0,
+      chatsAll: all.get(t.hash)?.chats ?? 0,
       firstSentAt: t.first.toISOString(),
       lastSentAt: t.last.toISOString(),
       sequences: t.status.replied + t.status.no_reply + t.status.pending,

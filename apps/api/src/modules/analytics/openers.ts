@@ -27,7 +27,10 @@ export type Opener = {
   previousDirection: 'inbound' | 'outbound' | null;
   /** Mass and automated messages since the previous fan message or DM (or the oldest stored message): they do not reset the gap. */
   ignoredInGap: number;
-  /** The fan's first message after it (up to `asOf` and the messages read), within the window or not; null when none. */
+  /**
+   * The fan's first message after it (up to `asOf` and the messages read), within the window or not; null when none.
+   * With `minReplyChars`, its first message of that many characters or more.
+   */
   fanReplyMessageId: number | null;
   fanReplyAt: Date | null;
   /** `fanReplyAt - sentAt`; null with no fan message. */
@@ -35,7 +38,13 @@ export type Opener = {
   status: OpenerStatus;
 };
 
-export type OpenerOptions = { asOf: Date; openGapMs: number; openReplyMs: number };
+export type OpenerOptions = {
+  asOf: Date;
+  openGapMs: number;
+  openReplyMs: number;
+  /** Substantive variant: a fan message shorter than this (`textChars`) is not a reply. Default 0: any is. */
+  minReplyChars?: number;
+};
 
 const byTime = (a: TurnMessage, b: TurnMessage) => a.createdAt.getTime() - b.createdAt.getTime() || a.messageId - b.messageId;
 const isDm = (m: TurnMessage) => m.direction === 'outbound' && !m.isMass && !m.isAutomated;
@@ -54,6 +63,7 @@ export function chatOpeners(messages: TurnMessage[], reachedStart: Set<number>, 
     if (list) list.push(m);
     else chats.set(m.chatId, [m]);
   }
+  const minChars = opts.minReplyChars ?? 0;
   const openers: Opener[] = [];
   for (const [chatId, list] of chats) {
     list.sort(byTime);
@@ -68,7 +78,7 @@ export function chatOpeners(messages: TurnMessage[], reachedStart: Set<number>, 
       const gapClear = previous === null || (previous.direction === 'outbound' && m.createdAt.getTime() - previous.createdAt.getTime() >= opts.openGapMs);
       if (isDm(m) && gapClear) {
         const kind: OpenerKind = previous ? 'reactivation' : reachedStart.has(chatId) ? 'first_ever' : 'unknown';
-        const reply = list.slice(i + 1).find((x) => x.direction === 'inbound' && x.createdAt <= opts.asOf) ?? null;
+        const reply = list.slice(i + 1).find((x) => x.direction === 'inbound' && x.createdAt <= opts.asOf && (x.textChars ?? 0) >= minChars) ?? null;
         const wait = reply ? reply.createdAt.getTime() - m.createdAt.getTime() : null;
         const status: OpenerStatus =
           wait !== null && wait <= opts.openReplyMs ? 'replied' : opts.asOf.getTime() - m.createdAt.getTime() <= opts.openReplyMs ? 'pending' : 'no_reply';

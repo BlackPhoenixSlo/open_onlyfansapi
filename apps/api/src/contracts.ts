@@ -450,6 +450,8 @@ export const statsMetricRow = z.object({
   unknownKind: z.number().int().optional(),
   replied: z.number().int().optional(),
   noReply: z.number().int().optional(),
+  /** Openers whose open_gap held mass or automated messages (that did not reset it). */
+  massOrAutomatedGap: z.number().int().optional(),
 });
 export type StatsMetricRow = z.infer<typeof statsMetricRow>;
 
@@ -510,7 +512,7 @@ export const statsOpenerSample = z.object({
   gapSeconds: z.number().nullable(),
   /** Mass and automated messages in the gap; they do not reset it. */
   massOrAutomatedInGap: z.number().int(),
-  /** The fan's first message after it, within `open_reply` or not; null when none. */
+  /** The fan's first message after it, within `open_reply` or not (of `min_reply_chars`+ for a substantive metric); null when none. */
   fanReplyMessageId: z.number().int().nullable(),
   fanReplyAt: z.string().nullable(),
   fanReplySeconds: z.number().nullable(),
@@ -542,6 +544,12 @@ export const statsScript = z.object({
   sends: z.number().int(),
   /** Distinct chats it was sent in. */
   chats: z.number().int(),
+  /**
+   * Sends and distinct chats over all stored history of the accounts in scope (the DMs being a script is decided on),
+   * in range or not: a script with 1 send in range qualified on these.
+   */
+  sendsAll: z.number().int(),
+  chatsAll: z.number().int(),
   firstSentAt: z.string(),
   lastSentAt: z.string(),
   sequences: z.number().int(),

@@ -48,10 +48,11 @@ const of = (messages: FakeOf['messages'], over: Partial<FakeOf> = {}): FakeOf =>
  * Openers, all times UTC (open_gap 7 d, open_reply 24 h, as_of 09-20 12:00; range 09-10 to 09-20):
  * O2 1001/3003 DM 22 09-11 16:00 after only welcome 21: first_ever (one page, so the walk reached the start), no reply
  * O1 1001/3001 DM 5  09-14 10:00, 12 d 23 h 30 m after DM 2; mass 3 and welcome 4 in the gap do not reset it:
- *    reactivation, fan 7 at 11:00 → 3600 s, replied (DM 6 at 10:05 is a follow-up, not an opener)
+ *    reactivation, fan 7 "ok" at 11:00 → 3600 s, replied (DM 6 at 10:05 is a follow-up, not an opener); substantive:
+ *    fan 8 (28 characters) at 11:30 → 5400 s, replied
  * O3 1001/3004 DM 31 09-14 20:00: first_ever, fan 32 at 09-16 08:00 → 129600 s, after open_reply: no reply
  * O5 1002/4001 DM 63 09-15 10:00: unknown (pages of 2: the walk stopped at mass 62 and welcome 61 before the range,
- *    not the start; fan 60 is never read), fan 64 at 10:30 → 1800 s, replied
+ *    not the start; fan 60 is never read), fan 64 "hi" at 10:30 → 1800 s, replied; substantive: no reply
  * O4 1001/3005 DM 41 09-20 02:00: first_ever, no fan message, 10 h old: pending
  * Not openers: 1001/3002 DM 13 (the fan wrote first: 12 at 09:00 broke 13 d of silence), 1001/3006 DM 52 (6 d 23 h
  * after DM 51, under open_gap), 1001/3007 DM 72 (13 d after fan 71, unanswered: a late reply, not an opener, whatever
@@ -59,7 +60,8 @@ const of = (messages: FakeOf['messages'], over: Partial<FakeOf> = {}): FakeOf =>
  */
 const DATA_A1 = of({
   3001: [
-    msg(7, '09-14T11:00', 3001),
+    msg(8, '09-14T11:30', 3001),
+    msg(7, '09-14T11:00', 3001, { text: '<p>ok</p>' }),
     msg(6, '09-14T10:05', A1),
     msg(5, '09-14T10:00', A1),
     msg(4, '09-13T08:00', A1, { text: WELCOME }),
@@ -77,7 +79,7 @@ const DATA_A1 = of({
 const DATA_A2 = of(
   {
     4001: [
-      msg(64, '09-15T10:30', 4001),
+      msg(64, '09-15T10:30', 4001, { text: '<p>hi</p>' }),
       msg(63, '09-15T10:00', A2),
       mass(62, '09-09T12:00', A2, 901),
       msg(61, '09-05T08:00', A2, { text: WELCOME }),
@@ -87,7 +89,7 @@ const DATA_A2 = of(
   { pageCap: 2 },
 );
 
-const IDS = ['openers', 'opener_reply_rate', 'opener_fan_reply_time'];
+const IDS = ['openers', 'opener_reply_rate', 'opener_reply_rate_substantive', 'opener_fan_reply_time'];
 
 let keyA: string;
 let writeKeyA: string;
@@ -140,12 +142,13 @@ afterAll(async () => {
 describe('opener metrics catalogue', () => {
   it('lists the opener metrics after the reply-time ones, unverified, by day, hour and account', async () => {
     const items = (await get('/v1/stats/metrics')).json().items as { id: string; unit: string; groupings: string[]; verified: boolean; windows: string[] }[];
-    expect(items.slice(-3).map((m) => [m.id, m.unit, m.windows])).toEqual([
+    expect(items.slice(-4).map((m) => [m.id, m.unit, m.windows])).toEqual([
       ['openers', 'count', ['open_gap', 'open_reply']],
       ['opener_reply_rate', 'percent', ['open_gap', 'open_reply']],
+      ['opener_reply_rate_substantive', 'percent', ['open_gap', 'open_reply', 'min_reply_chars']],
       ['opener_fan_reply_time', 'seconds', ['open_gap', 'open_reply']],
     ]);
-    expect(items.slice(-3).every((m) => !m.verified && m.groupings.join() === 'day,hour,account')).toBe(true);
+    expect(items.slice(-4).every((m) => !m.verified && m.groupings.join() === 'day,hour,account')).toBe(true);
   });
 });
 
@@ -161,6 +164,12 @@ describe('opener metric series', () => {
       day: [['2026-09-11', 0, 1], ['2026-09-14', 50, 2], ['2026-09-15', 100, 1], ['2026-09-20', null, 0]],
       hour: [['02', null, 0], ['10', 100, 2], ['16', 0, 1], ['20', 0, 1]],
       account: [['1001', (1 / 3) * 100, 3], ['1002', 100, 1]],
+    },
+    // Only fan 8 (O1) is long enough: fan 64 "hi" does not answer O5.
+    opener_reply_rate_substantive: {
+      day: [['2026-09-11', 0, 1], ['2026-09-14', 50, 2], ['2026-09-15', 0, 1], ['2026-09-20', null, 0]],
+      hour: [['02', null, 0], ['10', 50, 2], ['16', 0, 1], ['20', 0, 1]],
+      account: [['1001', (1 / 3) * 100, 3], ['1002', 0, 1]],
     },
     opener_fan_reply_time: {
       day: [['2026-09-11', null, 0], ['2026-09-14', 3600, 1], ['2026-09-15', 1800, 1], ['2026-09-20', null, 0]],
@@ -178,9 +187,41 @@ describe('opener metric series', () => {
 
   it('carries the opener counts by kind and by fan reply', async () => {
     expect((await series('opener_reply_rate', 'account')).rows).toEqual([
-      { group: '1001', value: (1 / 3) * 100, n: 3, openers: 4, firstEver: 3, reactivation: 1, unknownKind: 0, replied: 1, noReply: 2, pending: 1 },
-      { group: '1002', value: 100, n: 1, openers: 1, firstEver: 0, reactivation: 0, unknownKind: 1, replied: 1, noReply: 0, pending: 0 },
+      { group: '1001', value: (1 / 3) * 100, n: 3, openers: 4, firstEver: 3, reactivation: 1, unknownKind: 0, replied: 1, noReply: 2, pending: 1, massOrAutomatedGap: 2 },
+      { group: '1002', value: 100, n: 1, openers: 1, firstEver: 0, reactivation: 0, unknownKind: 1, replied: 1, noReply: 0, pending: 0, massOrAutomatedGap: 1 },
     ]);
+  });
+
+  it('counts the openers whose gap held mass or automated messages, per row', async () => {
+    // O2 (welcome 21), O1 (mass 3, welcome 4), O5 (welcome 61, mass 62); O3 and O4 have none.
+    const rows = (await series('openers', 'day')).rows;
+    expect(rows.map((r) => [r.group, r.openers, r.massOrAutomatedGap])).toEqual([
+      ['2026-09-11', 1, 1],
+      ['2026-09-14', 2, 1],
+      ['2026-09-15', 1, 1],
+      ['2026-09-20', 1, 0],
+    ]);
+    expect((await series('opener_reply_rate_substantive', 'account')).rows.map((r) => r.massOrAutomatedGap)).toEqual([2, 1]);
+  });
+
+  it('substantive opener reply rate: only a fan message of min_reply_chars+ within open_reply is a reply', async () => {
+    expect((await series('opener_reply_rate_substantive', 'account')).rows).toEqual([
+      { group: '1001', value: (1 / 3) * 100, n: 3, openers: 4, firstEver: 3, reactivation: 1, unknownKind: 0, replied: 1, noReply: 2, pending: 1, massOrAutomatedGap: 2 },
+      { group: '1002', value: 0, n: 1, openers: 1, firstEver: 0, reactivation: 0, unknownKind: 1, replied: 0, noReply: 1, pending: 0, massOrAutomatedGap: 1 },
+    ]);
+    const items = (await get(`/v1/stats/metrics/opener_reply_rate_substantive/samples?${RANGE}`)).json().items;
+    expect(items.map((s: { openerMessageId: number; fanReplyMessageId: number | null; fanReplySeconds: number | null; status: string }) => [s.openerMessageId, s.fanReplyMessageId, s.fanReplySeconds, s.status])).toEqual([
+      [22, null, null, 'no_reply'],
+      [5, 8, 5400, 'replied'], // not "ok" (7)
+      [31, 32, 129600, 'no_reply'],
+      [63, null, null, 'no_reply'], // "hi" (64) is too short
+    ]);
+    // The plain rate still takes the first fan message, short or not.
+    expect(tuples((await series('opener_fan_reply_time', 'account')).rows)).toEqual([['1001', 3600, 1], ['1002', 1800, 1]]);
+    expect((await put({ minReplyChars: 2 })).statusCode).toBe(200); // "ok" and "hi" now count
+    expect(tuples((await series('opener_reply_rate_substantive', 'account')).rows)).toEqual([['1001', (1 / 3) * 100, 3], ['1002', 100, 1]]);
+    expect((await put({ minReplyChars: 29 })).statusCode).toBe(200); // fan 8 has 28 characters
+    expect(tuples((await series('opener_reply_rate_substantive', 'account')).rows)).toEqual([['1001', 0, 3], ['1002', 0, 1]]);
   });
 
   it('keeps an opener pending until open_reply elapses at as_of, out of the reply-rate denominator', async () => {
@@ -205,7 +246,7 @@ describe('opener metric series', () => {
     const res = await get(`/v1/stats/metrics/openers?${RANGE}&groupBy=account&format=csv`);
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-disposition']).toBe('attachment; filename="openers_2026-09-10_2026-09-20.csv"');
-    expect(res.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending\n1001,4,4,4,3,1,0,1,2,1\n1002,1,1,1,0,0,1,1,0,0\n');
+    expect(res.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap\n1001,4,4,4,3,1,0,1,2,1,2\n1002,1,1,1,0,0,1,1,0,0,1\n');
   });
 
   it('scopes to the key allowlist and the accountId filter', async () => {
@@ -213,7 +254,7 @@ describe('opener metric series', () => {
     const samples = (await get(`/v1/stats/metrics/openers/samples?${RANGE}`, limitedKeyA)).json().items;
     expect(samples.map((s: { openerMessageId: number }) => s.openerMessageId)).toEqual([63]);
     expect((await get(`/v1/stats/metrics/openers?${RANGE}&groupBy=account&format=csv`, limitedKeyA)).body).toBe(
-      'group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending\n1002,1,1,1,0,0,1,1,0,0\n',
+      'group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap\n1002,1,1,1,0,0,1,1,0,0,1\n',
     );
     expect(tuples((await series('openers', 'account', keyA, `${RANGE}&accountId=${A1}`)).rows)).toEqual([['1001', 4, 4]]);
   });
@@ -284,7 +325,7 @@ describe('opener metrics tenancy', () => {
         const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
         expect([s.statusCode, s.json().rows]).toEqual([200, []]);
         const csv = await get(`/v1/stats/metrics/${id}?${q}&format=csv`, keyB);
-        expect(csv.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending\n');
+        expect(csv.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap\n');
         const samples = await get(`/v1/stats/metrics/${id}/samples?${q}`, keyB);
         expect([samples.statusCode, samples.json().items]).toEqual([200, []]);
       }

@@ -26,18 +26,28 @@ const decided = (t: FanTurn) => t.status !== 'pending';
 const waitFromLast = (t: FanTurn) => (t.dmAt ? (t.dmAt.getTime() - t.lastInboundAt.getTime()) / 1000 : null);
 const slaMet = (t: FanTurn, cfg: StatsConfig) => t.waitSeconds !== null && t.waitSeconds <= cfg.slaSeconds;
 
-function median(xs: number[]): number | null {
+/**
+ * The `q`-quantile (0 to 1) of `xs` by linear interpolation between closest ranks (Hyndman and Fan type 7, the default
+ * of R and NumPy, Excel's PERCENTILE.INC): position `(n - 1) * q` in the sorted list, weighted between its two
+ * neighbours. At 0.5 it is the usual median, the mean of the two middle values for an even n. null for no values.
+ */
+export function quantile(xs: number[], q: number): number | null {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
-  const mid = (s.length - 1) / 2;
-  return (s[Math.floor(mid)]! + s[Math.ceil(mid)]!) / 2;
+  const pos = (s.length - 1) * q;
+  const lo = Math.floor(pos);
+  const f = pos - lo;
+  // Weighted form, so the median of two values is exactly (a + b) / 2.
+  return f === 0 ? s[lo]! : s[lo]! * (1 - f) + s[lo + 1]! * f;
 }
+const median = (xs: number[]) => quantile(xs, 0.5);
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
-const medianInCap = (turns: AccountTurn[]) => {
+const quantileInCap = (q: number) => (turns: AccountTurn[]) => {
   const waits = turns.filter(inCap).map((t) => t.waitSeconds!);
-  return { value: median(waits), n: waits.length };
+  return { value: quantile(waits, q), n: waits.length };
 };
+const medianInCap = quantileInCap(0.5);
 
 const TURN_DEFINITIONS = {
   reply_time: {
@@ -48,6 +58,16 @@ const TURN_DEFINITIONS = {
     windows: ['reply_cap', 'sla'],
     substantive: false,
     value: medianInCap,
+    behind: inCap,
+  },
+  reply_time_p90: {
+    name: 'Reply time (90th percentile)',
+    description:
+      '90th percentile of the seconds from the first fan message of a fan turn to the DM that ends it, over the same turns as reply_time (replied within reply_cap); linear interpolation between closest ranks. Late, breached and pending turns are counted beside it.',
+    unit: 'seconds',
+    windows: ['reply_cap', 'sla'],
+    substantive: false,
+    value: quantileInCap(0.9),
     behind: inCap,
   },
   reply_time_mean: {
@@ -102,6 +122,8 @@ const TURN_DEFINITIONS = {
 } satisfies Record<string, Definition>;
 
 type OpenerDefinition = Omit<StatsMetric, 'id' | 'groupings' | 'verified'> & {
+  /** Substantive variant: only a fan message of `minReplyChars`+ is the fan's reply. */
+  substantive: boolean;
   value: (openers: AccountOpener[]) => { value: number | null; n: number };
   /** The openers behind the value, for samples. */
   behind: (o: AccountOpener) => boolean;
@@ -109,6 +131,10 @@ type OpenerDefinition = Omit<StatsMetric, 'id' | 'groupings' | 'verified'> & {
 
 const openerReplied = (o: Opener) => o.status === 'replied';
 const openerDecided = (o: Opener) => o.status !== 'pending';
+const openerReplyRate = (openers: AccountOpener[]) => {
+  const n = openers.filter(openerDecided).length;
+  return { value: n ? (openers.filter(openerReplied).length / n) * 100 : null, n };
+};
 
 const OPENER_DEFINITIONS = {
   openers: {
@@ -117,6 +143,7 @@ const OPENER_DEFINITIONS = {
       'DMs sent with no fan message and no DM in the chat for open_gap before them; mass and automated messages do not reset the gap, and a fan message in it, or an unanswered fan message before it however old, makes the DM a reply, so the fan did not write first. Kind first_ever (the chat was walked to its start and holds no earlier fan message or DM), reactivation (an earlier fan message or DM is stored) or unknown (nothing earlier is stored and the walk did not reach the chat start), counted beside it.',
     unit: 'count',
     windows: ['open_gap', 'open_reply'],
+    substantive: false,
     value: (openers) => ({ value: openers.length, n: openers.length }),
     behind: () => true,
   },
@@ -126,10 +153,18 @@ const OPENER_DEFINITIONS = {
       'Percent of openers the fan answered (any fan message) within open_reply, of the openers whose open_reply has elapsed at as_of. Pending openers are counted beside it, not in the denominator.',
     unit: 'percent',
     windows: ['open_gap', 'open_reply'],
-    value: (openers) => {
-      const n = openers.filter(openerDecided).length;
-      return { value: n ? (openers.filter(openerReplied).length / n) * 100 : null, n };
-    },
+    substantive: false,
+    value: openerReplyRate,
+    behind: openerDecided,
+  },
+  opener_reply_rate_substantive: {
+    name: 'Opener reply rate (substantive)',
+    description:
+      'As opener_reply_rate, but only a fan message of min_reply_chars or more (text after tag strip) is a reply, so "ok" is not: percent of openers with such a fan message within open_reply, of the openers whose open_reply has elapsed at as_of. Pending openers are counted beside it.',
+    unit: 'percent',
+    windows: ['open_gap', 'open_reply', 'min_reply_chars'],
+    substantive: true,
+    value: openerReplyRate,
     behind: openerDecided,
   },
   opener_fan_reply_time: {
@@ -137,6 +172,7 @@ const OPENER_DEFINITIONS = {
     description: "Median seconds from an opener to the fan's first message after it, among openers the fan answered within open_reply.",
     unit: 'seconds',
     windows: ['open_gap', 'open_reply'],
+    substantive: false,
     value: (openers) => {
       const waits = openers.filter(openerReplied).map((o) => o.fanReplySeconds!);
       return { value: median(waits), n: waits.length };
@@ -235,20 +271,28 @@ export async function workspaceAccounts(teamId: string, accountIds: number[] | n
 
 /**
  * The openers of workspace `teamId` sent in `[from, to)`, over `accountIds` (null = every account the workspace has
- * rows for), with the config's `open_gap` and `open_reply`. Messages before `from` still close or open the gap: each
+ * rows for), with the config's `open_gap` and `open_reply` and, for a substantive metric, its `min_reply_chars` (only
+ * a fan message that long is the reply; text is read for it only then). Messages before `from` still close or open the gap: each
  * chat is read from its anchor before `from` (`turnMessages`, exact), up to `to + open_reply`, which decides every
  * opener's status; a fan reply after that is not read, so a no-reply opener's `fanReply*` stays null.
  */
 export async function scopedOpeners(
   teamId: string,
   accountIds: number[] | null,
+  metric: OpenerMetricId,
   cfg: StatsConfig,
   range: { from: Date; to: Date; asOf: Date },
 ): Promise<AccountOpener[]> {
-  const opts = { asOf: range.asOf, openGapMs: cfg.openGapSeconds * 1000, openReplyMs: cfg.openReplySeconds * 1000 };
+  const opts = {
+    asOf: range.asOf,
+    openGapMs: cfg.openGapSeconds * 1000,
+    openReplyMs: cfg.openReplySeconds * 1000,
+    minReplyChars: OPENER_DEFINITIONS[metric].substantive ? cfg.minReplyChars : 0,
+  };
   const openers: AccountOpener[] = [];
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
-    const messages = await turnMessages(teamId, accountId, { from: range.from, to: new Date(range.to.getTime() + opts.openReplyMs) });
+    const to = new Date(range.to.getTime() + opts.openReplyMs);
+    const messages = await turnMessages(teamId, accountId, { from: range.from, to, text: opts.minReplyChars > 0 });
     const found = chatOpeners(messages, await reachedStartChats(teamId, accountId), opts);
     for (const o of found) {
       if (o.sentAt >= range.from && o.sentAt < range.to) openers.push({ ...o, accountId });
@@ -317,6 +361,7 @@ export function openerRows(metric: OpenerMetricId, openers: AccountOpener[], gro
     replied: count(list, openerReplied),
     noReply: count(list, (o) => o.status === 'no_reply'),
     pending: count(list, (o) => o.status === 'pending'),
+    massOrAutomatedGap: count(list, (o) => o.ignoredInGap > 0),
   }));
 }
 
@@ -344,4 +389,4 @@ export function openerSamples(metric: OpenerMetricId, openers: AccountOpener[], 
 
 /** CSV columns: the row's fields in snake_case. */
 export const METRIC_CSV_COLUMNS = ['group', 'value', 'n', 'turns', 'in_cap', 'late', 'breached', 'pending', 'sla_met'] as const;
-export const OPENER_CSV_COLUMNS = ['group', 'value', 'n', 'openers', 'first_ever', 'reactivation', 'unknown_kind', 'replied', 'no_reply', 'pending'] as const;
+export const OPENER_CSV_COLUMNS = ['group', 'value', 'n', 'openers', 'first_ever', 'reactivation', 'unknown_kind', 'replied', 'no_reply', 'pending', 'mass_or_automated_gap'] as const;

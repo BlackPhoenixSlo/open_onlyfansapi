@@ -165,6 +165,8 @@ describe('GET /v1/stats/scripts', () => {
         origin: 'auto',
         sends: 7,
         chats: 5,
+        sendsAll: 7, // mass 103 with the same text is not a send
+        chatsAll: 5,
         firstSentAt: '2026-09-11T10:00:00.000Z',
         lastSentAt: '2026-09-20T02:00:00.000Z',
         sequences: 6,
@@ -190,7 +192,7 @@ describe('GET /v1/stats/scripts', () => {
 
   it('counts only sends in the range, and a sequence once', async () => {
     const [s] = (await scripts('from=2026-09-12&to=2026-09-13')).items; // 201, 301, 302
-    expect(s).toMatchObject({ sends: 3, chats: 2, sequences: 2, replied: 1, noReply: 1, pending: 0, replyRate: 50, variantCount: 2 });
+    expect(s).toMatchObject({ sends: 3, chats: 2, sendsAll: 7, chatsAll: 5, sequences: 2, replied: 1, noReply: 1, pending: 0, replyRate: 50, variantCount: 2 });
     expect((await scripts('from=2026-09-01&to=2026-09-05')).items).toEqual([]); // S2 only: not a script
   });
 
@@ -199,6 +201,15 @@ describe('GET /v1/stats/scripts', () => {
     expect((await scripts(`from=2026-09-15&to=2026-09-15`)).items).toMatchObject([
       { hash: HASH, sends: 1, chats: 1, firstSentAt: '2026-09-15T10:00:00.000Z', lastSentAt: '2026-09-15T10:00:00.000Z' },
     ]);
+  });
+
+  it('sendsAll and chatsAll count every stored send of the accounts in scope, in range or not', async () => {
+    // In range only 204 (A1, 09-14); all history: A1 101, 201, 204, 301, 302, 401 in 4 chats, A2 501 in 1.
+    const one = async (q: string, key = keyA) => (await scripts(q, key)).items.map((i) => [i.sends, i.chats, i.sendsAll, i.chatsAll]);
+    expect(await one(`from=2026-09-14&to=2026-09-14&accountId=${A1}`)).toEqual([[1, 1, 6, 4]]);
+    expect(await one('from=2026-09-14&to=2026-09-14')).toEqual([[1, 1, 7, 5]]);
+    expect(await one('from=2026-09-15&to=2026-09-15', limitedKeyA)).toEqual([[1, 1, 1, 1]]); // A2 only
+    expect(await one('from=2026-08-01&to=2026-08-31')).toEqual([]); // no send in range: not listed
   });
 
   it("counts each script's own sends when one sequence holds two scripts", async () => {
@@ -229,6 +240,8 @@ describe('GET /v1/stats/scripts', () => {
         [HASH]: [1, 1, '2026-09-16T09:31:36.000Z', '2026-09-16T09:31:36.000Z', 1],
         [other]: [1, 1, '2026-09-16T09:31:25.000Z', '2026-09-16T09:31:25.000Z', 1],
       });
+      // On A2: HASH 501 and 602 in 4001 and 4002; the other only 601.
+      expect(Object.fromEntries(items.map((i) => [i.hash, [i.sendsAll, i.chatsAll]]))).toEqual({ [HASH]: [2, 2], [other]: [1, 1] });
     } finally {
       await pool.query('DELETE FROM message_fact WHERE message_id IN (601, 602)');
       await pool.query('DELETE FROM script WHERE hash = $1', [other]);
@@ -238,7 +251,7 @@ describe('GET /v1/stats/scripts', () => {
   it('leaves out hashes of another normaliser version, in sends and in detection', async () => {
     await pool.query('UPDATE message_fact SET normaliser_version = 0 WHERE message_id IN (301, 302)');
     try {
-      expect((await scripts()).items).toMatchObject([{ hash: HASH, sends: 5, chats: 4 }]);
+      expect((await scripts()).items).toMatchObject([{ hash: HASH, sends: 5, chats: 4, sendsAll: 5, chatsAll: 4 }]);
       expect(await syncScripts(teamA, A1)).toBe(0); // 4 current sends left on A1: not a script there
       await pool.query('UPDATE script SET normaliser_version = 0');
       expect((await scripts()).items).toEqual([]); // a script row of another version is not read
