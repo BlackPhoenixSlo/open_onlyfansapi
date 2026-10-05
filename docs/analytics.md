@@ -158,14 +158,14 @@ not collide. The hash is SHA-256 of the result, first 16 hex characters. It is s
 Being a script is decided over all stored messages of the account, not the range: the qualifying 30 days may fall
 outside the requested range. The backfill and `analytics:rehash` record each script found in the `script` table.
 `GET /v1/stats/scripts` then lists those scripts with their sends in the range, so a script can show 1 send in a
-range when its other sends fall outside it; `sendsAll` and `chatsAll` show the sends it qualified on.
+range when its other sends fall outside it; `sendsAll` and `chatsAll` count all stored DM sends of the hash over the accounts in scope (the same population script detection reads), in range or not; a key limited to some accounts may see fewer.
 
 Per script:
 
 | Field | Meaning |
 |---|---|
 | `sends`, `chats` | Sends in the range, and the distinct chats they went to |
-| `sendsAll`, `chatsAll` | Sends and distinct chats over all stored history of the accounts in scope, in range or not: the sends being a script is decided on |
+| `sendsAll`, `chatsAll` | Sends and distinct chats over all stored DM sends of the hash over the accounts in scope (the same population script detection reads), in range or not; a key limited to some accounts may see fewer |
 | `firstSentAt`, `lastSentAt` | First and last send in the range |
 | `sequences`, `replied`, `noReply`, `pending` | Outbound sequences holding a send in the range, by status |
 | `replyRate` | `replied` divided by `replied` plus `noReply`, in percent; null when none is decided |

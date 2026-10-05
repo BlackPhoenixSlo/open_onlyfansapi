@@ -160,7 +160,7 @@ const OPENER_DEFINITIONS = {
   opener_reply_rate_substantive: {
     name: 'Opener reply rate (substantive)',
     description:
-      'As opener_reply_rate, but only a fan message of min_reply_chars or more (text after tag strip) is a reply, so "ok" is not: percent of openers with such a fan message within open_reply, of the openers whose open_reply has elapsed at as_of. Pending openers are counted beside it.',
+      'As opener_reply_rate, but only a fan message of min_reply_chars or more (after the text normaliser) is a reply, so "ok" is not: percent of openers with such a fan message within open_reply, of the openers whose open_reply has elapsed at as_of. Pending openers are counted beside it.',
     unit: 'percent',
     windows: ['open_gap', 'open_reply', 'min_reply_chars'],
     substantive: true,

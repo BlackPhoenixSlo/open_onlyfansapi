@@ -150,8 +150,8 @@ const rate = (s: Record<Status, number>) => (s.replied + s.no_reply ? (s.replied
  * The scripts of workspace `teamId` (its `script` rows of the current normaliser version) sent in `[from, to)` over
  * `accountIds` (null = every account the workspace has rows for), most sent first. Being a script is decided over the
  * whole history (`syncScripts`); `sends`, `chats`, the first and last send and the variants count every send of the
- * hash in range, and `sendsAll`/`chatsAll` every stored send of it (the population `isScript` decides on) over the
- * same accounts, in range or not. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
+ * hash in range, and `sendsAll`/`chatsAll` all stored DM sends of it over the same accounts (the population script
+ * detection reads), in range or not. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
  * messages neither join nor end it): a sequence holding a send of the script in range counts once, replied when a fan
  * message arrives within `open_reply` after its last DM, pending while that window has not elapsed at `asOf`. The
  * substantive variant counts only a fan message of `min_reply_chars`+ (normalised text, code points).
@@ -253,18 +253,19 @@ export async function scopedScripts(
     }
   }
 
-  // All-history totals of the hashes sent in range, per account and summed (a chat belongs to one account).
+  // All-history totals of the hashes sent in range; chat ids are fan ids and repeat across accounts, so count pairs.
   const all = new Map<string, { sends: number; chats: number }>();
   if (tallies.size) {
     const totals = await db
-      .select({ hash: messageFact.textHash, sends: sql<number>`count(*)::int`, chats: sql<number>`count(distinct ${messageFact.chatId})::int` })
+      .select({
+        hash: messageFact.textHash,
+        sends: sql<number>`count(*)::int`,
+        chats: sql<number>`count(distinct (${messageFact.accountId}, ${messageFact.chatId}))::int`,
+      })
       .from(messageFact)
       .where(and(eq(messageFact.teamId, teamId), inArray(messageFact.accountId, accounts), scriptSends, inArray(messageFact.textHash, [...tallies.keys()])))
-      .groupBy(messageFact.accountId, messageFact.textHash);
-    for (const r of totals) {
-      const a = all.get(r.hash!) ?? { sends: 0, chats: 0 };
-      all.set(r.hash!, { sends: a.sends + r.sends, chats: a.chats + r.chats });
-    }
+      .groupBy(messageFact.textHash);
+    for (const r of totals) all.set(r.hash!, { sends: r.sends, chats: r.chats });
   }
 
   return [...tallies.values()]

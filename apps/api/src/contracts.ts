@@ -545,8 +545,8 @@ export const statsScript = z.object({
   /** Distinct chats it was sent in. */
   chats: z.number().int(),
   /**
-   * Sends and distinct chats over all stored history of the accounts in scope (the DMs being a script is decided on),
-   * in range or not: a script with 1 send in range qualified on these.
+   * Sends and distinct chats over all stored DM sends of the hash over the accounts in scope (the same population
+   * script detection reads), in range or not; a key limited to some accounts may see fewer.
    */
   sendsAll: z.number().int(),
   chatsAll: z.number().int(),
