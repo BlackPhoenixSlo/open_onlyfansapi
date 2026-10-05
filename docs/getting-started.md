@@ -70,8 +70,14 @@ docker compose --profile upstream up -d --build upstream
 ```
 
 Connect an account with a curl copied from Chrome (DevTools → Network → a request to `onlyfans.com/api2/v2/…` →
-Copy as cURL; it must carry the cookies as `-b '…'`) and a proxy for that account. The upstream refuses an account
-without a proxy (`OF_REQUIRE_PROXY` defaults to `true`), so the account's traffic never leaves from your own IP:
+Copy as cURL (bash); it must carry the cookies as `-b '…'`) and a proxy for that account. The upstream refuses an
+account without a proxy (`OF_REQUIRE_PROXY` defaults to `true`), so the account's traffic never leaves from your own IP.
+
+From the dashboard (once your workspace is signed up and linked, §4): **Accounts → Connect account**, paste the
+cURL, optionally a nickname, and the proxy URL (`http://user:pass@host:port` or `socks5h://…`). The gateway
+forwards it to the upstream's `/session/bootstrap` and never stores the cURL in the request log.
+
+Or from the command line:
 
 ```sh
 docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt

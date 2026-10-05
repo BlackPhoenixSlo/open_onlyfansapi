@@ -50,6 +50,17 @@ export const account = z.object({
 export type Account = z.infer<typeof account>;
 export const accountList = z.object({ items: z.array(account) });
 
+/** `POST /api/accounts/connect`: a DevTools "Copy as cURL (bash)" of an OF request (live cookies; never logged). */
+export const connectAccountBody = z.object({
+  curl: z.string().min(1),
+  nickname: z.string().trim().min(1).max(100).optional(),
+  /** `scheme://[user:pass@]host:port`; checked by the upstream. */
+  proxyUrl: z.string().trim().min(1).max(2048).optional(),
+});
+export type ConnectAccountBody = z.infer<typeof connectAccountBody>;
+/** The upstream's `/session/bootstrap` success body, passed through unchanged. */
+export type ConnectedAccount = { accountId: number; username: string | null; status: string };
+
 export const whoami = z.object({
   team: z.object({
     id: z.string(),

@@ -100,7 +100,8 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
 /**
  * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed (JSON),
  * `/of/shaped?status&type&body&next&gzip` answers as told (`next` becomes `x-next-page`),
- * `/of-accounts` serves one account list and `/docs/json` a small OpenAPI spec. `/ws` (plan-v4 §2.2) instead needs
+ * `/of-accounts` serves one account list, `/docs/json` a small OpenAPI spec and `/session/bootstrap` answers 200 for a
+ * curl with a numeric `user-id` header, else 400 `invalid_curl` (shaped like the upstream). `/ws` (plan-v4 §2.2) instead needs
  * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
  * `pushFrame()` is given.
  */
@@ -133,6 +134,12 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
 
   app.get('/docs/json', async (_request, reply) => (state.specFails ? reply.status(500).send({ error: 'boom' }) : UPSTREAM_SPEC));
   app.get('/of-accounts', async () => accounts);
+  app.post('/session/bootstrap', async (request, reply) => {
+    const { curl } = JSON.parse(String(request.body)) as { curl: string };
+    const uid = /user-id: (\d+)/.exec(curl)?.[1];
+    if (!uid) return reply.status(400).send({ error: { code: 'invalid_curl', message: 'the curl has no numeric user-id header' } });
+    return { accountId: Number(uid), username: 'fresh', status: 'connecting' };
+  });
   app.get('/ws', { websocket: true }, (socket) => {
     sockets.add(socket);
     if (state.ignoreClose) socket.close = () => {}; // an unresponsive peer: the client's close frame gets no reply

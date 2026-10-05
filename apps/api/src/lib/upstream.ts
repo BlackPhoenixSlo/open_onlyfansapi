@@ -15,6 +15,8 @@ export type ForwardRequest = {
 export interface Upstream {
   /** `GET {origin}/of-accounts` → JSON array of account rows (whitelisted by `modules/accounts`). */
   listAccounts(requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/session/bootstrap` with a JSON `{ curl, nickname?, proxy_url? }` body (it carries live OF cookies). */
+  bootstrapSession(body: string, requestId: string): Promise<UpstreamResponse>;
   /** `{method} {origin}/of{path}` with `x-of-proxy-account-id: {accountId}`. */
   forward(req: ForwardRequest): Promise<UpstreamResponse>;
   /** `GET {origin}/docs/json` → OpenAPI 3 document. It is optional: without it the gateway serves its own routes only. */
@@ -57,6 +59,12 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
   return {
     listAccounts: (requestId) =>
       request(new URL('/of-accounts', origin), { headers: { accept: 'application/json', 'x-request-id': requestId } }),
+    bootstrapSession: (body, requestId) =>
+      request(new URL('/session/bootstrap', origin), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
+        body,
+      }),
     forward: async ({ accountId, path, method, headers, body }) => {
       const url = new URL(`/of${path}`, origin);
       if (!url.pathname.startsWith('/of/')) {

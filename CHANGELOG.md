@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format is based on
 - Webhook event `messages.deleted`, from OF's `chat_message_delete` socket frame (payload `{ id }`). It was
   `upstream.chat_message_delete` before; a value that is not a message id still is. Mapping:
   `docs/spec/plan-v6-ws-events.md`.
+- Dashboard: Accounts → Connect account connects an OnlyFans account from a DevTools cURL, a nickname and a proxy URL, with plain-language hints for the upstream's errors. `POST /api/accounts/connect` (session + CSRF, linked workspaces only) forwards to the upstream's `/session/bootstrap` and passes its status and body through; the cURL is never written to the request log.
 - Dashboard: the Playground shows each parameter's type, required marker, description and default from the spec, prefills `limit` (20) and date ranges (last 7 days), seeds JSON bodies from the request schema, remembers per-operation values and the last account (with Reset to defaults), lists recent operations and summaries in a collapsible sidebar, and adds Copy and a Table view for `rows`/`items`/`data` responses.
 
 ### Changed
