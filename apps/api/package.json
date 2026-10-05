@@ -16,7 +16,8 @@
     "link-team": "tsx --env-file-if-exists=../../.env src/db/link-team.ts",
     "analytics:claim": "tsx --env-file-if-exists=../../.env src/cli/analytics-claim.ts",
     "analytics:backfill": "tsx --env-file-if-exists=../../.env src/cli/analytics-backfill.ts",
-    "analytics:diff": "tsx src/cli/analytics-diff.ts"
+    "analytics:diff": "tsx src/cli/analytics-diff.ts",
+    "analytics:openers": "tsx --env-file-if-exists=../../.env src/cli/analytics-openers.ts"
   },
   "dependencies": {
     "@fastify/rate-limit": "^11.2.0",

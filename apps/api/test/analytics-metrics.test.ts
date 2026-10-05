@@ -115,7 +115,7 @@ afterAll(async () => {
 });
 
 describe('stats metrics catalogue', () => {
-  it('lists the reply-time and reply-SLA metrics, unverified, by day, hour and account', async () => {
+  it('lists the reply-time, reply-SLA and opener metrics, unverified, by day, hour and account', async () => {
     const res = await get('/v1/stats/metrics');
     expect(res.statusCode).toBe(200);
     const items = res.json().items as { id: string; unit: string; groupings: string[]; verified: boolean; windows: string[] }[];
@@ -125,9 +125,12 @@ describe('stats metrics catalogue', () => {
       ['reply_time_mean_last', 'seconds'],
       ['reply_sla', 'percent'],
       ['reply_time_substantive', 'seconds'],
+      ['openers', 'count'],
+      ['opener_reply_rate', 'percent'],
+      ['opener_fan_reply_time', 'seconds'],
     ]);
     expect(items.every((m) => !m.verified && m.groupings.join() === 'day,hour,account')).toBe(true);
-    expect(items.at(-1)!.windows).toContain('min_reply_chars');
+    expect(items.find((m) => m.id === 'reply_time_substantive')!.windows).toContain('min_reply_chars');
   });
 });
 

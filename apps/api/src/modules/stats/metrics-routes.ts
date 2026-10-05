@@ -15,7 +15,23 @@ import { toCsv } from '../../cli/analytics-csv.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { assertWriteScope, type Actor } from '../../plugins/actor.js';
-import { groupKey, isMetricId, METRIC_CSV_COLUMNS, METRICS, metricRows, metricSamples, scopedTurns, zonedMidnight, zonedToday, type MetricId } from '../analytics/metrics.js';
+import {
+  groupKey,
+  isMetricId,
+  isOpenerMetric,
+  METRIC_CSV_COLUMNS,
+  METRICS,
+  metricRows,
+  metricSamples,
+  OPENER_CSV_COLUMNS,
+  openerRows,
+  openerSamples,
+  scopedOpeners,
+  scopedTurns,
+  zonedMidnight,
+  zonedToday,
+  type MetricId,
+} from '../analytics/metrics.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 
 const DAY_MS = 86_400_000;
@@ -53,10 +69,12 @@ function metricId(id: string): MetricId {
   return id;
 }
 
+const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]));
+
 const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
 
 /**
- * `/v1/stats/metrics` and `/v1/stats/config` (spec §4.6): reply time and reply SLA over the workspace's analytics
+ * `/v1/stats/metrics` and `/v1/stats/config` (spec §4.6): reply time, reply SLA and openers over the workspace's analytics
  * store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
@@ -82,12 +100,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const span = range(query, cfg.timezone);
       const accounts = scopedAccounts(actor, query.accountId);
       const asOf = new Date();
-      const rows = metricRows(id, await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg);
+      const rows = isOpenerMetric(id)
+        ? openerRows(id, await scopedOpeners(actor.teamId, accounts, cfg, { ...span, asOf }), query.groupBy, cfg)
+        : metricRows(id, await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg);
       if (query.format === 'csv') {
-        const csv = toCsv(
-          METRIC_CSV_COLUMNS,
-          rows.map((row) => ({ ...row, in_cap: row.inCap, sla_met: row.slaMet })),
-        );
+        const csv = toCsv(isOpenerMetric(id) ? OPENER_CSV_COLUMNS : METRIC_CSV_COLUMNS, rows.map(snakeCase));
         return reply
           .type('text/csv; charset=utf-8')
           .header('content-disposition', `attachment; filename="${id}_${span.fromDay}_${span.toDay}.csv"`)
@@ -107,10 +124,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const span = range(query, cfg.timezone);
       const accounts = scopedAccounts(actor, query.accountId);
       const asOf = new Date();
-      const turns = (await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(
-        (t) => query.group === undefined || groupKey(t, query.groupBy, cfg.timezone) === query.group,
-      );
-      return { ...meta(id, cfg, asOf), items: metricSamples(id, turns, cfg, query.limit) };
+      const inGroup = (x: Parameters<typeof groupKey>[0]) => query.group === undefined || groupKey(x, query.groupBy, cfg.timezone) === query.group;
+      const items = isOpenerMetric(id)
+        ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, cfg, { ...span, asOf })).filter(inGroup), query.limit)
+        : metricSamples(id, (await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), cfg, query.limit);
+      return { ...meta(id, cfg, asOf), items };
     },
   );
 

@@ -1,13 +1,15 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact } from '../../db/schema.js';
-import type { StatsConfig, StatsGroupBy, StatsMetric, StatsMetricRow, StatsSample } from '../../contracts.js';
+import type { StatsConfig, StatsGroupBy, StatsMetric, StatsMetricRow, StatsOpenerSample, StatsSample } from '../../contracts.js';
+import { chatOpeners, reachedStartChats, type Opener } from './openers.js';
 import { fanTurns, turnMessages, type FanTurn } from './turns.js';
 
-// Reply time and reply SLA over fan turns (spec §2, step 1), computed at query time from `message_fact` with the
-// workspace's config windows. Nothing is stored.
+// Reply time and reply SLA over fan turns (spec §2, step 1) and openers (step 2), computed at query time from
+// `message_fact` and `chat_coverage` with the workspace's config windows. Nothing is stored.
 
 export type AccountTurn = FanTurn & { accountId: number };
+export type AccountOpener = Opener & { accountId: number };
 
 type Definition = Omit<StatsMetric, 'id' | 'groupings' | 'verified'> & {
   /** Substantive variant: only a DM of `minReplyChars`+ ends a turn. */
@@ -37,7 +39,7 @@ const medianInCap = (turns: AccountTurn[]) => {
   return { value: median(waits), n: waits.length };
 };
 
-const DEFINITIONS = {
+const TURN_DEFINITIONS = {
   reply_time: {
     name: 'Reply time (median)',
     description:
@@ -99,7 +101,54 @@ const DEFINITIONS = {
   },
 } satisfies Record<string, Definition>;
 
-export type MetricId = keyof typeof DEFINITIONS;
+type OpenerDefinition = Omit<StatsMetric, 'id' | 'groupings' | 'verified'> & {
+  value: (openers: AccountOpener[]) => { value: number | null; n: number };
+  /** The openers behind the value, for samples. */
+  behind: (o: AccountOpener) => boolean;
+};
+
+const openerReplied = (o: Opener) => o.status === 'replied';
+const openerDecided = (o: Opener) => o.status !== 'pending';
+
+const OPENER_DEFINITIONS = {
+  openers: {
+    name: 'Openers',
+    description:
+      'DMs sent with no fan message and no DM in the chat for open_gap before them; mass and automated messages do not reset the gap, and a fan message in it makes the DM a reply, so the fan did not write first. Kind first_ever (the chat was walked to its start and holds no earlier fan message or DM), reactivation (an earlier fan message or DM is stored) or unknown (nothing earlier is stored and the walk did not reach the chat start), counted beside it.',
+    unit: 'count',
+    windows: ['open_gap', 'open_reply'],
+    value: (openers) => ({ value: openers.length, n: openers.length }),
+    behind: () => true,
+  },
+  opener_reply_rate: {
+    name: 'Opener reply rate',
+    description:
+      'Percent of openers the fan answered (any fan message) within open_reply, of the openers whose open_reply has elapsed at as_of. Pending openers are counted beside it, not in the denominator.',
+    unit: 'percent',
+    windows: ['open_gap', 'open_reply'],
+    value: (openers) => {
+      const n = openers.filter(openerDecided).length;
+      return { value: n ? (openers.filter(openerReplied).length / n) * 100 : null, n };
+    },
+    behind: openerDecided,
+  },
+  opener_fan_reply_time: {
+    name: 'Time to fan reply after an opener (median)',
+    description: "Median seconds from an opener to the fan's first message after it, among openers the fan answered within open_reply.",
+    unit: 'seconds',
+    windows: ['open_gap', 'open_reply'],
+    value: (openers) => {
+      const waits = openers.filter(openerReplied).map((o) => o.fanReplySeconds!);
+      return { value: median(waits), n: waits.length };
+    },
+    behind: openerReplied,
+  },
+} satisfies Record<string, OpenerDefinition>;
+
+export type TurnMetricId = keyof typeof TURN_DEFINITIONS;
+export type OpenerMetricId = keyof typeof OPENER_DEFINITIONS;
+export type MetricId = TurnMetricId | OpenerMetricId;
+const DEFINITIONS: Record<MetricId, Omit<StatsMetric, 'id' | 'groupings' | 'verified'>> = { ...TURN_DEFINITIONS, ...OPENER_DEFINITIONS };
 const GROUPINGS: StatsGroupBy[] = ['day', 'hour', 'account'];
 
 export const METRICS: StatsMetric[] = Object.entries(DEFINITIONS).map(([id, d]) => ({
@@ -114,6 +163,7 @@ export const METRICS: StatsMetric[] = Object.entries(DEFINITIONS).map(([id, d]) 
 }));
 
 export const isMetricId = (id: string): id is MetricId => Object.hasOwn(DEFINITIONS, id);
+export const isOpenerMetric = (id: MetricId): id is OpenerMetricId => Object.hasOwn(OPENER_DEFINITIONS, id);
 
 // Timezone buckets, via Intl (no dependency).
 
@@ -139,9 +189,10 @@ export function zonedMidnight(day: string, tz: string): Date {
 /** Today in `tz`, as `YYYY-MM-DD`. */
 export const zonedToday = (tz: string, now = new Date()) => zoned(now, tz).day;
 
-export function groupKey(t: AccountTurn, groupBy: StatsGroupBy, tz: string): string {
+/** A turn's group by its start, an opener's by its send time. */
+export function groupKey(t: AccountTurn | AccountOpener, groupBy: StatsGroupBy, tz: string): string {
   if (groupBy === 'account') return String(t.accountId);
-  const z = zoned(t.inboundAt, tz);
+  const z = zoned('sentAt' in t ? t.sentAt : t.inboundAt, tz);
   return groupBy === 'day' ? z.day : z.hour;
 }
 
@@ -152,21 +203,17 @@ export function groupKey(t: AccountTurn, groupBy: StatsGroupBy, tz: string): str
 export async function scopedTurns(
   teamId: string,
   accountIds: number[] | null,
-  metric: MetricId,
+  metric: TurnMetricId,
   cfg: StatsConfig,
   range: { from: Date; to: Date; asOf: Date },
 ): Promise<AccountTurn[]> {
-  const accounts = await db
-    .selectDistinct({ accountId: messageFact.accountId })
-    .from(messageFact)
-    .where(and(eq(messageFact.teamId, teamId), accountIds ? inArray(messageFact.accountId, accountIds) : undefined));
   const opts = {
     asOf: range.asOf,
     replyCapMs: cfg.replyCapSeconds * 1000,
-    minReplyChars: DEFINITIONS[metric].substantive ? cfg.minReplyChars : 0,
+    minReplyChars: TURN_DEFINITIONS[metric].substantive ? cfg.minReplyChars : 0,
   };
   const turns: AccountTurn[] = [];
-  for (const { accountId } of accounts) {
+  for (const accountId of await workspaceAccounts(teamId, accountIds)) {
     for (const t of fanTurns(await turnMessages(teamId, accountId), opts)) {
       if (t.inboundAt >= range.from && t.inboundAt < range.to) turns.push({ ...t, accountId });
     }
@@ -174,32 +221,64 @@ export async function scopedTurns(
   return turns.sort((a, b) => a.inboundAt.getTime() - b.inboundAt.getTime() || a.accountId - b.accountId || a.chatId - b.chatId);
 }
 
-/** One row per group with at least one turn, sorted by group. */
-export function metricRows(metric: MetricId, turns: AccountTurn[], groupBy: StatsGroupBy, cfg: StatsConfig): StatsMetricRow[] {
-  const groups = new Map<string, AccountTurn[]>();
-  for (const t of turns) {
-    const key = groupKey(t, groupBy, cfg.timezone);
-    groups.set(key, [...(groups.get(key) ?? []), t]);
+/** The accounts workspace `teamId` has rows for, narrowed to `accountIds` (null = all). */
+async function workspaceAccounts(teamId: string, accountIds: number[] | null): Promise<number[]> {
+  const rows = await db
+    .selectDistinct({ accountId: messageFact.accountId })
+    .from(messageFact)
+    .where(and(eq(messageFact.teamId, teamId), accountIds ? inArray(messageFact.accountId, accountIds) : undefined));
+  return rows.map((r) => r.accountId);
+}
+
+/**
+ * The openers of workspace `teamId` sent in `[from, to)`, over `accountIds` (null = every account the workspace has
+ * rows for), with the config's `open_gap` and `open_reply`. Messages before `from` still close or open the gap.
+ */
+export async function scopedOpeners(
+  teamId: string,
+  accountIds: number[] | null,
+  cfg: StatsConfig,
+  range: { from: Date; to: Date; asOf: Date },
+): Promise<AccountOpener[]> {
+  const opts = { asOf: range.asOf, openGapMs: cfg.openGapSeconds * 1000, openReplyMs: cfg.openReplySeconds * 1000 };
+  const openers: AccountOpener[] = [];
+  for (const accountId of await workspaceAccounts(teamId, accountIds)) {
+    const found = chatOpeners(await turnMessages(teamId, accountId), await reachedStartChats(teamId, accountId), opts);
+    for (const o of found) {
+      if (o.sentAt >= range.from && o.sentAt < range.to) openers.push({ ...o, accountId });
+    }
   }
+  return openers.sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime() || a.accountId - b.accountId || a.chatId - b.chatId);
+}
+
+function grouped<T extends AccountTurn | AccountOpener>(items: T[], groupBy: StatsGroupBy, tz: string): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const x of items) {
+    const key = groupKey(x, groupBy, tz);
+    groups.set(key, [...(groups.get(key) ?? []), x]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }));
+}
+
+/** One row per group with at least one turn, sorted by group. */
+export function metricRows(metric: TurnMetricId, turns: AccountTurn[], groupBy: StatsGroupBy, cfg: StatsConfig): StatsMetricRow[] {
   const count = (list: AccountTurn[], status: FanTurn['status']) => list.filter((t) => t.status === status).length;
-  return [...groups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))
-    .map(([group, list]) => ({
-      group,
-      ...DEFINITIONS[metric].value(list, cfg),
-      turns: list.length,
-      inCap: count(list, 'in_cap'),
-      late: count(list, 'late'),
-      breached: count(list, 'breached'),
-      pending: count(list, 'pending'),
-      slaMet: list.filter((t) => slaMet(t, cfg)).length,
-    }));
+  return grouped(turns, groupBy, cfg.timezone).map(([group, list]) => ({
+    group,
+    ...TURN_DEFINITIONS[metric].value(list, cfg),
+    turns: list.length,
+    inCap: count(list, 'in_cap'),
+    late: count(list, 'late'),
+    breached: count(list, 'breached'),
+    pending: count(list, 'pending'),
+    slaMet: list.filter((t) => slaMet(t, cfg)).length,
+  }));
 }
 
 /** Up to `limit` turns behind the metric's value, oldest turn start first. */
-export function metricSamples(metric: MetricId, turns: AccountTurn[], cfg: StatsConfig, limit: number): StatsSample[] {
+export function metricSamples(metric: TurnMetricId, turns: AccountTurn[], cfg: StatsConfig, limit: number): StatsSample[] {
   return turns
-    .filter(DEFINITIONS[metric].behind)
+    .filter(TURN_DEFINITIONS[metric].behind)
     .slice(0, limit)
     .map((t) => ({
       accountId: t.accountId,
@@ -217,4 +296,44 @@ export function metricSamples(metric: MetricId, turns: AccountTurn[], cfg: Stats
     }));
 }
 
+/** One row per group with at least one opener, sorted by group. */
+export function openerRows(metric: OpenerMetricId, openers: AccountOpener[], groupBy: StatsGroupBy, cfg: StatsConfig): StatsMetricRow[] {
+  const count = (list: AccountOpener[], keep: (o: Opener) => boolean) => list.filter(keep).length;
+  return grouped(openers, groupBy, cfg.timezone).map(([group, list]) => ({
+    group,
+    ...OPENER_DEFINITIONS[metric].value(list),
+    openers: list.length,
+    firstEver: count(list, (o) => o.kind === 'first_ever'),
+    reactivation: count(list, (o) => o.kind === 'reactivation'),
+    unknownKind: count(list, (o) => o.kind === 'unknown'),
+    replied: count(list, openerReplied),
+    noReply: count(list, (o) => o.status === 'no_reply'),
+    pending: count(list, (o) => o.status === 'pending'),
+  }));
+}
+
+/** Up to `limit` openers behind the metric's value, oldest first. */
+export function openerSamples(metric: OpenerMetricId, openers: AccountOpener[], limit: number): StatsOpenerSample[] {
+  return openers
+    .filter(OPENER_DEFINITIONS[metric].behind)
+    .slice(0, limit)
+    .map((o) => ({
+      accountId: o.accountId,
+      chatId: o.chatId,
+      openerMessageId: o.messageId,
+      sentAt: o.sentAt.toISOString(),
+      kind: o.kind,
+      previousMessageId: o.previousMessageId,
+      previousAt: o.previousAt?.toISOString() ?? null,
+      gapSeconds: o.previousAt ? (o.sentAt.getTime() - o.previousAt.getTime()) / 1000 : null,
+      massOrAutomatedInGap: o.ignoredInGap,
+      fanReplyMessageId: o.fanReplyMessageId,
+      fanReplyAt: o.fanReplyAt?.toISOString() ?? null,
+      fanReplySeconds: o.fanReplySeconds,
+      status: o.status,
+    }));
+}
+
+/** CSV columns: the row's fields in snake_case. */
 export const METRIC_CSV_COLUMNS = ['group', 'value', 'n', 'turns', 'in_cap', 'late', 'breached', 'pending', 'sla_met'] as const;
+export const OPENER_CSV_COLUMNS = ['group', 'value', 'n', 'openers', 'first_ever', 'reactivation', 'unknown_kind', 'replied', 'no_reply', 'pending'] as const;

@@ -366,7 +366,7 @@ export const stats = z.object({
 });
 export type Stats = z.infer<typeof stats>;
 
-// Stats metrics (docs/spec/future-client-story-ask.md §4.6): fan-turn reply time and reply SLA from the analytics store.
+// Stats metrics (docs/spec/future-client-story-ask.md §4.6): fan-turn reply time and reply SLA, and openers, from the analytics store.
 export const statsGroupBy = z.enum(['day', 'hour', 'account']);
 export type StatsGroupBy = z.infer<typeof statsGroupBy>;
 
@@ -406,7 +406,7 @@ export const statsMetric = z.object({
   name: z.string(),
   /** The formula in words. */
   description: z.string(),
-  unit: z.enum(['seconds', 'percent']),
+  unit: z.enum(['seconds', 'percent', 'count']),
   groupings: z.array(statsGroupBy),
   /** The config windows it reads. */
   windows: z.array(z.string()),
@@ -426,21 +426,30 @@ export const statsMetricQuery = z.object({
 });
 export type StatsMetricQuery = z.input<typeof statsMetricQuery>;
 
+/** Reply-time metrics carry the turn counts, opener metrics the opener counts. */
 export const statsMetricRow = z.object({
-  /** `YYYY-MM-DD` (day), `00`–`23` (hour of day of the turn start) or the account id. */
+  /** `YYYY-MM-DD` (day), `00`–`23` (hour of day of the turn start or opener send) or the account id. */
   group: z.string(),
-  /** null when no turn qualifies. */
+  /** null when no turn or opener qualifies. */
   value: z.number().nullable(),
-  /** Turns behind `value`. */
+  /** Turns or openers behind `value`. */
   n: z.number().int(),
   /** Fan turns starting in the group, by status. */
-  turns: z.number().int(),
-  inCap: z.number().int(),
-  late: z.number().int(),
-  breached: z.number().int(),
+  turns: z.number().int().optional(),
+  inCap: z.number().int().optional(),
+  late: z.number().int().optional(),
+  breached: z.number().int().optional(),
+  /** Turns (cap not elapsed) or openers (`open_reply` not elapsed) still open at `asOf`. */
   pending: z.number().int(),
   /** Turns replied within `sla`. */
-  slaMet: z.number().int(),
+  slaMet: z.number().int().optional(),
+  /** Openers sent in the group, by kind and by fan reply. */
+  openers: z.number().int().optional(),
+  firstEver: z.number().int().optional(),
+  reactivation: z.number().int().optional(),
+  unknownKind: z.number().int().optional(),
+  replied: z.number().int().optional(),
+  noReply: z.number().int().optional(),
 });
 export type StatsMetricRow = z.infer<typeof statsMetricRow>;
 
@@ -486,5 +495,27 @@ export const statsSample = z.object({
   slaMet: z.boolean(),
 });
 export type StatsSample = z.infer<typeof statsSample>;
-export const statsSamples = z.object({ ...statsResultMeta, items: z.array(statsSample) });
+
+/** One opener behind a number. */
+export const statsOpenerSample = z.object({
+  accountId: z.number().int(),
+  chatId: z.number().int(),
+  openerMessageId: z.number().int(),
+  sentAt: z.string(),
+  kind: z.enum(['first_ever', 'reactivation', 'unknown']),
+  /** The last fan message or DM before it (a reactivation); null when none is stored. */
+  previousMessageId: z.number().int().nullable(),
+  previousAt: z.string().nullable(),
+  /** `sentAt - previousAt`; null when none is stored. */
+  gapSeconds: z.number().nullable(),
+  /** Mass and automated messages in the gap; they do not reset it. */
+  massOrAutomatedInGap: z.number().int(),
+  /** The fan's first message after it, within `open_reply` or not; null when none. */
+  fanReplyMessageId: z.number().int().nullable(),
+  fanReplyAt: z.string().nullable(),
+  fanReplySeconds: z.number().nullable(),
+  status: z.enum(['replied', 'no_reply', 'pending']),
+});
+export type StatsOpenerSample = z.infer<typeof statsOpenerSample>;
+export const statsSamples = z.object({ ...statsResultMeta, items: z.array(z.union([statsSample, statsOpenerSample])) });
 export type StatsSamples = z.infer<typeof statsSamples>;
