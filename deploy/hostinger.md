@@ -185,10 +185,20 @@ docker compose exec -T postgres pg_dump -U gateway -Fc gateway > "/root/backups/
 git -C /opt/gateway pull
 docker compose up -d --build
 docker image prune -f      # drops the image the build replaced
+./smoke.sh https://gw.example.com <api-key> <account-id>   # read-only check, see below
 ```
 
-Before updating across a major version, read the "Upgrading" section of `CHANGELOG.md` (2.0 renames events,
-changes the webhook signature and wraps responses; both images are rebuilt together by the commands above).
+`up -d --build` rebuilds the gateway and upstream images together from the same checkout; upgrade them as a
+pair. Before updating, read the release's entry in `CHANGELOG.md`, and across a major version its "Upgrading"
+section (2.0 renames events, changes the webhook signature and wraps responses).
+
+**2.0 to 2.1** needs no `.env` change and no new migration: between `v2.0.0` and `v2.1.0`, `deploy/.env.example`,
+`deploy/docker-compose.yml` and `apps/api/drizzle` are unchanged; apart from version strings, the code changes are
+all in the upstream service.
+
+`smoke.sh` takes an API key from the dashboard and a connected account id. It calls `/healthz`, `GET me` and
+`GET settings/drm` (a 2.1 route), and prints each status code with the JSON key names, never the values. It
+exits non-zero on any status other than 200.
 
 Migrations run on start and are **forward-only**: there is no down path, so take the backup above before every
 update. Only one gateway instance runs, so migrations never race.
