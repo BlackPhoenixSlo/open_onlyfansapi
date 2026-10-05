@@ -294,6 +294,9 @@ export type WebhookDelivery = z.infer<typeof webhookDelivery>;
 export const webhookDeliveryList = z.object({ items: z.array(webhookDelivery), nextCursor: z.string().nullable() });
 export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;
 
+/** One event as `GET /api/webhooks/stream` sends it to the dashboard (`event: event`), whether or not an endpoint gets it. */
+export type LiveEvent = { id: string; type: string; accountId: number | null; ts: string; payload: unknown };
+
 /** One finished delivery attempt, as `GET /api/webhooks/stream` sends it to the dashboard (`event: delivery`). */
 export type DeliveryNotice = {
   deliveryId: string;

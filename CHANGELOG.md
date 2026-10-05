@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 - Dashboard: the webhook event picker is a compact grid grouped by prefix with a select-all per group, so the whole catalogue fits on one screen. `GET /v1/webhooks/events` items carry a typed `status` (`emitted` | `tbc` | `never`).
 - Dashboard: in-browser notifications for webhook deliveries. `GET /api/webhooks/stream` (session-authenticated SSE, scoped to the workspace, 10-minute lifetime) pushes a frame after each delivery attempt; the dashboard shows a toast (delivered / retrying / failed) and, when permitted and the tab is hidden, a desktop notification.
+- Dashboard: a Live events card on the Webhooks page shows the last 50 events as they arrive (time, type, account, payload), with or without a registered endpoint. The same stream now also carries `event: event` frames (`{ id, type, accountId, ts, payload }`, `upstream.*` included) for linked workspaces; `POST /api/webhooks/stream/test` pushes a synthetic `webhook.test` event to the caller's workspace only (the card's Emit test event button).
 
 - Webhook event `messages.deleted`, from OF's `chat_message_delete` socket frame (payload `{ id }`). It was
   `upstream.chat_message_delete` before; a value that is not a message id still is. Mapping:

@@ -8,10 +8,11 @@ import { env } from '../src/env.js';
 import { deleteExpired } from '../src/jobs/retention.js';
 import { eventStatus } from '../src/contracts.js';
 import { envelope, sign, verifySignature } from '../src/lib/signature.js';
+import { ingestFrame } from '../src/modules/events/ingest.js';
 import { emit } from '../src/modules/webhooks/service.js';
 import { streamTimings } from '../src/modules/webhooks/stream.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
-import { bearer, createKey, dashboard, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
 type Received = { headers: Record<string, string | string[] | undefined>; body: string };
 
@@ -589,11 +590,12 @@ function openStream(base: string, cookie: string): Promise<Stream> {
   });
 }
 
-const notices = (text: string) =>
+const frames = (text: string, name: 'delivery' | 'event') =>
   text
     .split('\n\n')
-    .filter((f) => f.startsWith('event: delivery\n'))
+    .filter((f) => f.startsWith(`event: ${name}\n`))
     .map((f) => JSON.parse(f.slice(f.indexOf('data: ') + 6)));
+const notices = (text: string) => frames(text, 'delivery');
 
 describe('dashboard delivery stream', () => {
   let base: string;
@@ -671,6 +673,38 @@ describe('dashboard delivery stream', () => {
       expect(stream.text).toContain(': ping');
     } finally {
       Object.assign(streamTimings, defaults);
+    }
+  });
+
+  it('pushes upstream events to linked workspaces only, and the test event to the caller only', async () => {
+    const unlinked = await signUp(app, 'webhooks-unlinked@example.test');
+    await linkTeam(teamId);
+    const [a, b] = await Promise.all([openStream(base, cookie), openStream(base, unlinked.cookie)]);
+    try {
+      const ts = '2026-10-05T12:00:00.000Z';
+      await ingestFrame({ id: null, type: 'messages.received', account_id: 7, ts, payload: { text: 'hi' }, amount_cents: null }, app.log);
+      await ingestFrame({ id: null, type: 'upstream.chat_typing', account_id: 7, ts, payload: {} }, app.log);
+      const noCsrf = await app.inject({ method: 'POST', url: '/api/webhooks/stream/test', headers: { cookie: unlinked.cookie } });
+      expect(noCsrf.statusCode).toBe(403);
+      const test = await app.inject({ method: 'POST', url: '/api/webhooks/stream/test', headers: dashboard(unlinked.cookie) });
+      expect(test.statusCode).toBe(202);
+      const deadline = Date.now() + 2000;
+      while (frames(a.text, 'event').length < 2 || frames(b.text, 'event').length < 1) {
+        if (Date.now() > deadline) throw new Error(`no frame: ${a.text} | ${b.text}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 50)); // a stray cross-workspace frame would have arrived by now
+      const evt = expect.stringMatching(/^evt_/);
+      expect(frames(a.text, 'event')).toEqual([
+        { id: evt, type: 'messages.received', accountId: 7, ts, payload: { text: 'hi' } },
+        { id: evt, type: 'upstream.chat_typing', accountId: 7, ts, payload: {} },
+      ]);
+      expect(frames(b.text, 'event')).toEqual([
+        { id: evt, type: 'webhook.test', accountId: null, ts: expect.any(String), payload: { message: 'Test event from the gateway' } },
+      ]);
+    } finally {
+      a.close();
+      b.close();
     }
   });
 });

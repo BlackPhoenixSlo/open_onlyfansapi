@@ -1,7 +1,27 @@
-import type { DeliveryNotice } from '@api/contracts';
+import type { DeliveryNotice, LiveEvent } from '@api/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
+
+/** Receivers of the stream's `event` frames and of its open/closed state (the webhooks page's Live events card). */
+type LiveListener = { event: (e: LiveEvent) => void; open: (open: boolean) => void };
+const live = new Set<LiveListener>();
+let streamOpen = false;
+
+function setStreamOpen(open: boolean) {
+  streamOpen = open;
+  for (const l of live) l.open(open);
+}
+
+export const isStreamOpen = () => streamOpen;
+
+/** Listens on the one stream the app layout opens; returns the unsubscribe function. */
+export function subscribeLive(l: LiveListener): () => void {
+  live.add(l);
+  return () => {
+    live.delete(l);
+  };
+}
 
 /**
  * While signed in, listens to `/api/webhooks/stream` and shows each finished webhook delivery attempt as a toast and, for
@@ -12,6 +32,12 @@ export function useDeliveryNotifications(userId: string | undefined) {
   useEffect(() => {
     if (!userId) return;
     const source = new EventSource('/api/webhooks/stream');
+    source.onopen = () => setStreamOpen(true);
+    source.onerror = () => setStreamOpen(false); // EventSource retries on its own
+    source.addEventListener('event', (e) => {
+      const event = JSON.parse(e.data) as LiveEvent;
+      for (const l of live) l.event(event);
+    });
     source.addEventListener('delivery', (e) => {
       const n = JSON.parse(e.data) as DeliveryNotice;
       const outcome = n.status === 'delivered' ? `HTTP ${n.statusCode}` : n.error;
@@ -29,6 +55,9 @@ export function useDeliveryNotifications(userId: string | undefined) {
         };
       }
     });
-    return () => source.close();
+    return () => {
+      source.close();
+      setStreamOpen(false);
+    };
   }, [userId, navigate]);
 }

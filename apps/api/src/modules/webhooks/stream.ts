@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
-import type { DeliveryNotice } from '../../contracts.js';
+import type { DeliveryNotice, LiveEvent } from '../../contracts.js';
+import { newId } from '../../lib/ids.js';
 import type { Claimed } from './worker.js';
 
 /**
@@ -24,6 +25,18 @@ function drop(l: Listener) {
   if (!l.res.writableEnded) l.res.end();
 }
 
+/** Sends one frame to the open streams of these workspaces only. */
+function send(teamIds: Iterable<string>, event: 'delivery' | 'event', data: unknown) {
+  const teams = new Set(teamIds);
+  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const l of listeners) if (teams.has(l.teamId)) write(l, frame);
+}
+
+/** An ingested upstream event, for the dashboard's live view; `teamIds` are the linked workspaces emit() serves. */
+export function notifyEvent(teamIds: string[], e: LiveEvent): void {
+  send(teamIds, 'event', e);
+}
+
 const NOTICE_STATUS = { succeeded: 'delivered', pending: 'retrying', failed: 'failed' } as const;
 
 /**
@@ -44,11 +57,13 @@ export function notifyDelivery(
     status: NOTICE_STATUS[status],
     ...outcome,
   };
-  const frame = `event: delivery\ndata: ${JSON.stringify(notice)}\n\n`;
-  for (const l of listeners) if (l.teamId === c.teamId) write(l, frame);
+  send([c.teamId], 'delivery', notice);
 }
 
-/** `GET /api/webhooks/stream`: Server-Sent Events of the session workspace's webhook deliveries (no replay). */
+/**
+ * `GET /api/webhooks/stream`: Server-Sent Events of the session workspace's webhook deliveries and upstream events
+ * (no replay). `POST /api/webhooks/stream/test` pushes one synthetic `webhook.test` event to the caller's workspace.
+ */
 export default async function webhookStreamRoutes(app: FastifyInstance) {
   app.addHook('preClose', async () => {
     for (const l of [...listeners]) drop(l);
@@ -69,5 +84,17 @@ export default async function webhookStreamRoutes(app: FastifyInstance) {
     };
     listeners.add(listener);
     res.on('close', () => drop(listener));
+  });
+
+  app.post('/webhooks/stream/test', { preHandler: app.requireSession }, async (request, reply) => {
+    const e: LiveEvent = {
+      id: newId('evt'),
+      type: 'webhook.test',
+      accountId: null,
+      ts: new Date().toISOString(),
+      payload: { message: 'Test event from the gateway' },
+    };
+    send([request.session.teamId], 'event', e);
+    return reply.status(202).send({ event: e });
   });
 }
