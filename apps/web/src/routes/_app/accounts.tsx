@@ -1,8 +1,8 @@
 import type { ConnectAccountBody, ConnectedAccount } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { LoaderCircle } from 'lucide-react';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { CircleCheck, LoaderCircle } from 'lucide-react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,6 +85,77 @@ function Accounts() {
   );
 }
 
+const FASTT_EXTENSION_ID: string = import.meta.env.VITE_FASTT_EXTENSION_ID || 'anjjmiahkfondbhahocpkehjjabkommc';
+const FASTT_STORE_URL = 'https://chromewebstore.google.com/detail/fastt-login-capture-of-+/anjjmiahkfondbhahocpkehjjabkommc';
+
+/**
+ * Whether the Fastt Login Capture extension is installed: it exposes icons/icon16.png to every page, so loading it
+ * via chrome-extension:// succeeds only when installed (Chromium only; anything else reads as missing).
+ * Checked on mount and again on window focus (e.g. after returning from the store).
+ */
+function useFasttExtension(): 'checking' | 'installed' | 'missing' {
+  const [state, setState] = useState<'checking' | 'installed' | 'missing'>('checking');
+  useEffect(() => {
+    let run = 0;
+    let cancel = () => {};
+    const check = () => {
+      cancel();
+      const id = ++run;
+      const img = new Image();
+      const done = (installed: boolean) => {
+        if (id !== run) return;
+        clearTimeout(timer);
+        setState(installed ? 'installed' : 'missing');
+      };
+      const timer = setTimeout(() => done(false), 2000);
+      img.onload = () => done(true);
+      img.onerror = () => done(false);
+      img.src = `chrome-extension://${FASTT_EXTENSION_ID}/icons/icon16.png`;
+      cancel = () => {
+        clearTimeout(timer);
+        img.onload = img.onerror = null;
+      };
+    };
+    check();
+    window.addEventListener('focus', check);
+    return () => {
+      run++;
+      cancel();
+      window.removeEventListener('focus', check);
+    };
+  }, []);
+  return state;
+}
+
+function FasttBlock() {
+  const ext = useFasttExtension();
+  return (
+    <div className="space-y-2 rounded-md border p-3" data-testid="fastt-extension" data-state={ext}>
+      <p className="font-medium">Fastt extension</p>
+      {ext === 'checking' ? (
+        <p className="text-muted-foreground">Checking for the extension…</p>
+      ) : ext === 'installed' ? (
+        <>
+          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
+            <CircleCheck />
+            Fastt extension installed
+          </Badge>
+          <p className="text-muted-foreground">Open the extension, press Copy curl, then paste it below and press Connect.</p>
+        </>
+      ) : (
+        <>
+          <Button asChild size="sm">
+            <a href={FASTT_STORE_URL} target="_blank" rel="noopener noreferrer">
+              Add the Fastt extension
+            </a>
+          </Button>
+          <p className="text-muted-foreground">It captures your OnlyFans login in one click and copies the cURL.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** A client-side sanity check of a DevTools "Copy as cURL (bash)": null when plausible, else what is wrong. */
 function checkCurl(curl: string): string | null {
   if (!/(^|\s)(-b\s+\$?'|--cookie\b)/.test(curl)) {
@@ -102,7 +173,7 @@ function connectHint(e: ApiError): string | null {
     case 'invalid_curl':
       return 'The upstream could not read this cURL. Copy the request again with DevTools → Copy as cURL (bash).';
     case 'proxy_required':
-      return 'Add a proxy: each account needs its own proxy; the upstream refuses accounts without one.';
+      return 'This upstream requires a proxy per account (OF_REQUIRE_PROXY=true). Add one and try again.';
     case 'invalid_proxy_url':
       return 'Use http://user:pass@host:port or socks5h://user:pass@host:port.';
     case 'proxy_error':
@@ -156,11 +227,19 @@ function ConnectDialog({ onClose }: { onClose: () => void }) {
         <form onSubmit={onSubmit} className="min-w-0 space-y-4">
           <DialogHeader>
             <DialogTitle>Connect account</DialogTitle>
-            <DialogDescription className="leading-relaxed">
-              In Chrome, sign in to onlyfans.com as the account (use an incognito window to keep your current login),
-              DevTools → Network → any api2/v2 request → Copy as cURL (bash).
-            </DialogDescription>
           </DialogHeader>
+          <FasttBlock />
+          <DialogDescription asChild>
+            <ol className="list-decimal space-y-1 pl-5 leading-relaxed">
+              <li>
+                Add the extension (or copy a cURL from DevTools: in Chrome, sign in to onlyfans.com as the account, use
+                an incognito window to keep your current login, DevTools → Network → any api2/v2 request → Copy as cURL
+                (bash)).
+              </li>
+              <li>Sign in to OnlyFans through it and press Copy curl.</li>
+              <li>Paste here, add a proxy, press Connect.</li>
+            </ol>
+          </DialogDescription>
           <div className="space-y-2">
             <Label htmlFor="connect-curl">cURL</Label>
             <Textarea
@@ -192,8 +271,8 @@ function ConnectDialog({ onClose }: { onClose: () => void }) {
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
-              Each account needs its own proxy; the upstream refuses accounts without one. Leave empty to keep the
-              proxy an already connected account has.
+              Optional. Leave empty to connect from the server's own IP (or to keep the proxy an already connected
+              account has). Give each account its own proxy if you want its traffic to come from a different IP.
             </p>
           </div>
           {connect.error && (

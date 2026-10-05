@@ -82,7 +82,7 @@ Leave the rest as `.env.example` sets it:
 |---|---|---|
 | `UPSTREAM_URL` | `http://upstream:8000` | The bundled upstream, inside the compose network. |
 | `UPSTREAM_WS_URL` | `ws://upstream:8000/ws` | The upstream's event socket. Empty turns events off: no upstream webhooks, and `/v1/ws` answers 503. |
-| `OF_REQUIRE_PROXY` | `true` | An account without its own proxy is not run, so the VPS IP never reaches OF. |
+| `OF_REQUIRE_PROXY` | `false` | Accounts without their own proxy connect from the VPS IP. Set `true` to refuse such accounts. |
 | `STATIC_PARAM` | empty | OF's static signing parameter. Set it here once, or pass `--static-param` per account in §7. |
 | `EVENT_RETENTION_DAYS` | `365` | Days of the event ledger behind `/v1/stats`. |
 
@@ -138,7 +138,7 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
 ## 7. Connect an OF account
 
-Each account needs a logged-in OF session and, with `OF_REQUIRE_PROXY=true`, a proxy of its own. Any provider
+Each account needs a logged-in OF session and, optionally, a proxy of its own (required only with `OF_REQUIRE_PROXY=true`). Any provider
 works; use a `socks5h://` URL (DNS is resolved at the proxy too) or `http://`.
 
 1. In Chrome, log in to OF, open **DevTools → Network**, click a request to `onlyfans.com/api2/v2/…` (for example

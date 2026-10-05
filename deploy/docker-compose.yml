@@ -79,7 +79,7 @@ services:
     environment:
       UPSTREAM_TOKEN: ${UPSTREAM_TOKEN:?}
       UPSTREAM_STATE_DIR: /data
-      OF_REQUIRE_PROXY: ${OF_REQUIRE_PROXY:-true}
+      OF_REQUIRE_PROXY: ${OF_REQUIRE_PROXY:-false}
       STATIC_PARAM: ${STATIC_PARAM:-}
     # Sessions (cookies) and proxies.json (proxy passwords): credentials. Back up encrypted.
     volumes:

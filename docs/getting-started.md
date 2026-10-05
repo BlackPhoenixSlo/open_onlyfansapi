@@ -71,7 +71,7 @@ docker compose --profile upstream up -d --build upstream
 
 Connect an account with a curl copied from Chrome (DevTools → Network → a request to `onlyfans.com/api2/v2/…` →
 Copy as cURL (bash); it must carry the cookies as `-b '…'`) and a proxy for that account. The upstream refuses an
-account without a proxy (`OF_REQUIRE_PROXY` defaults to `true`), so the account's traffic never leaves from your own IP.
+account without a proxy only when `OF_REQUIRE_PROXY=true`; by default an account with no proxy connects from the server's own IP.
 
 From the dashboard (once your workspace is signed up and linked, §4): **Accounts → Connect account**, paste the
 cURL, optionally a nickname, and the proxy URL (`http://user:pass@host:port` or `socks5h://…`). The gateway

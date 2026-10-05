@@ -48,7 +48,7 @@ _WS_PROTOCOL = f"bearer.{TOKEN}".encode()
 
 hub = Hub()
 # `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
-supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "true").strip().lower()
+supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "false").strip().lower()
                         not in {"0", "false", "no", "off"})
 
 
