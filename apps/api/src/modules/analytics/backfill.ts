@@ -12,7 +12,9 @@ import { claimAccount } from './workspace.js';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
-const CHAT_PAGE = 50; // the upstream's cap on /chats
+const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers about 10 a page whatever the limit
+/** Consecutive chat-list pages with no chat active in the range that end the list: OF's order is not strictly recent. */
+const QUIET_CHAT_PAGES = 2;
 const PAGE = 100; // the upstream's cap on messages, mass history and transactions
 
 export type BackfillOptions = {
@@ -217,23 +219,34 @@ const username = (user: unknown): string | null => {
 type Chat = { id: number; username: string | null };
 
 /**
- * Chats (the fan's id and username), most recent first, until a whole page has no chat active since `from`: one
- * older chat (a pinned one listed first) does not end the list.
+ * Chats (the fan's id and username, `skip_users=none` so OF sends the full `withUser`), most recent first. Pages by
+ * the page's `nextOffset` (else by the chats it returned: OF's pages are short whatever the limit) until `hasMore` is
+ * false, a page adds no new chat, or QUIET_CHAT_PAGES pages in a row have no chat active since `from`: the order is
+ * not strictly recent (a pinned or unread chat can come first, an older one mid-list).
  */
 async function listChats(get: Get, from: number): Promise<Chat[]> {
   const chats: Chat[] = [];
-  for (let offset = 0; ; offset += CHAT_PAGE) {
-    const page = await get(`/chats?limit=${CHAT_PAGE}&offset=${offset}&order=recent`);
-    let added = 0;
-    for (const chat of items(page)) {
-      const lastAt = time((chat.lastMessage as Raw | undefined)?.createdAt);
-      if (lastAt < from) continue; // quiet since before the range (a pinned chat can come first)
+  const seen = new Set<number>();
+  let quiet = 0;
+  for (let offset = 0; ; ) {
+    const page = await get(`/chats?limit=${CHAT_PAGE}&offset=${offset}&order=recent&skip_users=none`);
+    const list = items(page);
+    let fresh = 0;
+    let active = 0;
+    for (const chat of list) {
       const id = Number((chat.withUser as Raw | undefined)?.id);
-      if (Number.isNaN(lastAt) || !Number.isFinite(id) || chats.some((c) => c.id === id)) continue; // no messages, or a repeat
+      if (!Number.isFinite(id) || seen.has(id)) continue; // no fan, or a repeat
+      seen.add(id);
+      fresh++;
+      const lastAt = time((chat.lastMessage as Raw | undefined)?.createdAt);
+      if (!(lastAt >= from)) continue; // no messages, or quiet since before the range
       chats.push({ id, username: username(chat.withUser) });
-      added++;
+      active++;
     }
-    if (!hasMore(page) || added === 0) return chats;
+    quiet = active ? 0 : quiet + 1;
+    if (!hasMore(page) || fresh === 0 || quiet >= QUIET_CHAT_PAGES) return chats;
+    const next = Number((page as Raw).nextOffset);
+    offset = Number.isInteger(next) && next > offset ? next : offset + list.length;
   }
 }
 

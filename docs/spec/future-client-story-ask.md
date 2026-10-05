@@ -1,8 +1,11 @@
 # Client story: account and shift performance stats
 
-Status (2026-10-05): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
+Status (2026-10-06): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
 built (`apps/api/src/modules/analytics`, the `analytics:claim`, `analytics:backfill` and `analytics:diff` CLIs,
-[docs/analytics-backfill.md](../analytics-backfill.md)); the Infloww diff awaits the client's export. Feeds the
+[docs/analytics-backfill.md](../analytics-backfill.md)); a live last-7-days run on one account after the chat-list
+fixes took 92 requests (13 chat-list pages) in 268 s and listed 63 chats (all 62 known active plus one mass-only
+chat) with every fan username filled, 490 messages (463 inbound, 5 DM, 22 mass) and 0 transactions; the Infloww diff
+awaits the client's export. Feeds the
 user-designable statistics page in [FUTURE.md](FUTURE.md) and [handoff Phase 3](docs/spec/handoff-of-serving.md).
 
 ## 1. The ask

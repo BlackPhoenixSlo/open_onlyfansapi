@@ -216,7 +216,7 @@ describe('analytics backfill', () => {
       '/of/mass-messaging/overview?startDate=2026-09-03+00%3A00%3A00&endDate=2026-09-03+23%3A59%3A59&limit=100',
       '/of/mass-messaging/overview?startDate=2026-09-04+00%3A00%3A00&endDate=2026-09-04+23%3A59%3A59&limit=100',
       '/of/settings/welcome-message',
-      '/of/chats?limit=50&offset=0&order=recent',
+      '/of/chats?limit=50&offset=0&order=recent&skip_users=none',
       // A full chat: the page holding the range start is the last one read.
       '/of/chats/2003/messages?limit=100&order=desc',
       '/of/chats/2001/messages?limit=100&order=desc',
@@ -307,10 +307,28 @@ describe('analytics backfill', () => {
     expect(await stored()).toMatchObject({ isMass: true, raw: expect.objectContaining({ text: '<p>text 101</p>' }) });
   });
 
-  it('lists chats past an older pinned chat, down to a page with none active in the range', async () => {
+  it('lists chats past an older pinned chat', async () => {
     const of = fake.state.of!;
     of.chats.unshift(of.chats.splice(3, 1)[0]!); // 2004, quiet since before the range, listed first
     expect(await backfill(opts())).toMatchObject({ chats: 3 });
+  });
+
+  it.each([
+    ['nextOffset', false],
+    ['the chats returned, without nextOffset', true],
+  ])('pages the chat list by %s, past one page with none active, down to two in a row', async (_, noNextOffset) => {
+    const of = fake.state.of!;
+    const at = (id: number, active: boolean) => chat(id, { id, createdAt: active ? '2026-09-02T10:00:00.000Z' : '2026-08-20T10:00:00.000Z' }, `fan_${id}`);
+    // OF pages of 10 (asked for 50): 10 active, 10 quiet, 1 active among 9 quiet, then 20 quiet; the active one after them is not read.
+    of.chats = Array.from({ length: 51 }, (_, i) => at(3000 + i, i < 10 || i === 25 || i === 50));
+    of.noNextOffset = noNextOffset;
+    const start = fake.requests.length;
+    expect(await backfill(opts())).toMatchObject({ chats: 11 });
+    expect(ofCalls(start).filter((u) => u.startsWith('/of/chats?'))).toEqual(
+      [0, 10, 20, 30, 40].map((o) => `/of/chats?limit=50&offset=${o}&order=recent&skip_users=none`),
+    );
+    const coverage = await db.select().from(chatCoverage).orderBy(chatCoverage.chatId);
+    expect(coverage.map((c) => [c.chatId, c.fanUsername])).toEqual([...Array.from({ length: 10 }, (_, i) => 3000 + i), 3025].map((id) => [id, `fan_${id}`]));
   });
 
   it('splits a full mass window in halves, and fails on a full hour', async () => {

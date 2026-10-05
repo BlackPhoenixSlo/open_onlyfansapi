@@ -98,8 +98,9 @@ type Raw = Record<string, unknown>;
 
 /**
  * OF data for the analytics backfill, served on the upstream's named routes when `state.of` is set (else those
- * paths echo like any `/of/*`). Lists are newest first. Like OF: message pages hold at most `pageCap` messages
- * however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
+ * paths echo like any `/of/*`). Lists are newest first. Like OF: chat-list pages hold at most `chatPageCap` (10)
+ * chats however large `limit` is and carry `nextOffset` (unless `noNextOffset`), `withUser` is only `{ _view, id }`
+ * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
  * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set).
  */
 export type FakeOf = {
@@ -109,6 +110,8 @@ export type FakeOf = {
   transactions: (Raw & { createdAt: string })[];
   welcome: Raw | null;
   pageCap?: number;
+  chatPageCap?: number;
+  noNextOffset?: boolean;
   stuckChats?: number[];
   rateLimit?: number;
   retryAfter?: string;
@@ -121,7 +124,11 @@ function serveOf(of: FakeOf, path: string, q: Record<string, string | undefined>
   const limit = Number(q.limit ?? 10);
   const offset = Number(q.offset ?? 0);
   const page = (list: unknown[], start: number, size: number) => ({ list: list.slice(start, start + size), hasMore: start + size < list.length });
-  if (path === '/of/chats') return page(of.chats, offset, limit);
+  if (path === '/of/chats') {
+    const chats = q.skip_users === 'none' ? of.chats : of.chats.map((c) => ({ ...c, withUser: { _view: 's', id: c.withUser.id } }));
+    const p = page(chats, offset, Math.min(limit, of.chatPageCap ?? 10));
+    return of.noNextOffset ? p : { ...p, nextOffset: offset + p.list.length };
+  }
   const chat = /^\/of\/chats\/(\d+)\/messages$/.exec(path);
   if (chat) {
     const id = Number(chat[1]);

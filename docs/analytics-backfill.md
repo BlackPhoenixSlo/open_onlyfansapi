@@ -48,12 +48,18 @@ ids.
 
 The run reads, in order: mass-message history in one-day windows from the day before `--from` up to now (the chat
 walks store messages on both sides of the range, and each outbound message's queue id is looked up there), the
-welcome message, the chat list (most recent first, down to a page with no chat active since `--from`; an older
-pinned chat listed first does not end it), each chat's messages newest first down to the page that reaches
+welcome message, the chat list (most recent first, with `skip_users=none` so each chat carries the fan's username;
+see below), each chat's messages newest first down to the page that reaches
 `--from`, then the range's transactions. Messages on that boundary page older than the mass window (before the day
 before `--from`) are stored once and never updated by a later run, since their mass history was not read. Mass history answers
 one page of 100 per window; a full page may have been cut, so that window is split in halves until a page is not
 full, and a full page for an hour or less fails the run.
+
+OF answers about 10 chats a page (sometimes 17 to 19) whatever the `limit`, so the list is paged by each page's
+`nextOffset` (by the number of chats returned when it is missing) until `hasMore` is false or a page adds no new
+chat. The list is not strictly newest first: pinned and unread chats come first and older chats appear mid-list. So
+one page with no chat active since `--from` does not end it; two such pages in a row do (`QUIET_CHAT_PAGES`). An
+active chat listed after two quiet pages in a row is missed.
 
 It prints the request count and whether it was stopped, then two checks:
 
