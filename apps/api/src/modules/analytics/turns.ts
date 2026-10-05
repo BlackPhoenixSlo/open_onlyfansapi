@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, lt, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact } from '../../db/schema.js';
 import { REPLY_CAP_MS } from './config.js';
@@ -11,7 +11,7 @@ export type TurnMessage = {
   direction: 'inbound' | 'outbound';
   isMass: boolean;
   isAutomated: boolean;
-  /** Outbound text length after tag strip (the script normaliser); only read when `minReplyChars` is set. */
+  /** Outbound text length in code points after `normaliseText` (as `isScriptEligible`); only read when `minReplyChars` is set. */
   textChars?: number;
 };
 
@@ -87,9 +87,41 @@ export function fanTurns(messages: TurnMessage[], opts: TurnOptions): FanTurn[] 
   return turns.sort((a, b) => a.inboundAt.getTime() - b.inboundAt.getTime() || a.chatId - b.chatId);
 }
 
-/** Every stored message of one account in workspace `teamId`, as turn input; outbound text measured for `textChars`. */
-export async function turnMessages(teamId: string, accountId: number): Promise<TurnMessage[]> {
-  const rows = await db
+export type TurnMessageRange = {
+  /** Read each chat from its anchor before this instant (see `turnMessages`); default: the whole history. */
+  from?: Date;
+  /** Leave out messages at this instant or later; default: none. */
+  to?: Date;
+  /** Measure outbound text for `textChars` (the substantive variant only); default false. */
+  text?: boolean;
+};
+
+/**
+ * The stored messages of one account in workspace `teamId`, as turn input. With `from`, each chat is read from its
+ * anchor instead of its whole history: the earlier of its latest fan message and its latest DM before `from`, or its
+ * oldest stored message when it has neither, or `from` when nothing of it is stored before `from`. That lookback is
+ * exact (not a fixed reply_cap or open_gap window): from the latest fan message on, a fan turn open at `from` is seen
+ * open and starting before `from` (so it is never split into a turn in range), whatever DMs ended or did not end it;
+ * from the latest fan message or DM on, an opener in range sees its previous fan message or DM and the mass and
+ * automated messages since.
+ */
+export async function turnMessages(teamId: string, accountId: number, range: TurnMessageRange = {}): Promise<TurnMessage[]> {
+  const scope = and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId));
+  const anchor = range.from
+    ? db
+        .select({
+          chatId: messageFact.chatId,
+          at: sql<Date>`coalesce(least(
+              max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound'),
+              max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated})
+            ), min(${messageFact.createdAt}))`.as('at'),
+        })
+        .from(messageFact)
+        .where(and(scope, lt(messageFact.createdAt, range.from)))
+        .groupBy(messageFact.chatId)
+        .as('anchor')
+    : null;
+  const query = db
     .select({
       chatId: messageFact.chatId,
       messageId: messageFact.messageId,
@@ -97,14 +129,22 @@ export async function turnMessages(teamId: string, accountId: number): Promise<T
       direction: messageFact.direction,
       isMass: messageFact.isMass,
       isAutomated: messageFact.isAutomated,
-      text: sql<string | null>`case when ${messageFact.direction} = 'outbound' then ${messageFact.raw}->>'text' end`,
+      text: range.text ? sql<string | null>`case when ${messageFact.direction} = 'outbound' then ${messageFact.raw}->>'text' end` : sql<null>`null`,
     })
     .from(messageFact)
-    .where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId)));
-  return rows.map(({ text, ...m }) => ({ ...m, textChars: text ? normaliseText(text).length : 0 }));
+    .$dynamic();
+  if (anchor) query.leftJoin(anchor, eq(anchor.chatId, messageFact.chatId));
+  const rows = await query.where(
+    and(
+      scope,
+      anchor ? gte(messageFact.createdAt, sql`coalesce(${anchor.at}, ${range.from!.toISOString()}::timestamptz)`) : undefined,
+      range.to ? lt(messageFact.createdAt, range.to) : undefined,
+    ),
+  );
+  return rows.map(({ text, ...m }) => (range.text ? { ...m, textChars: text ? [...normaliseText(text)].length : 0 } : m));
 }
 
 /** The fan turns of one account that start in `[from, to)`, read from `message_fact` of workspace `teamId` only. */
 export async function replyTimes(teamId: string, accountId: number, from: Date, to: Date, asOf = new Date()): Promise<FanTurn[]> {
-  return fanTurns(await turnMessages(teamId, accountId), { asOf }).filter((t) => t.inboundAt >= from && t.inboundAt < to);
+  return fanTurns(await turnMessages(teamId, accountId, { from }), { asOf }).filter((t) => t.inboundAt >= from && t.inboundAt < to);
 }

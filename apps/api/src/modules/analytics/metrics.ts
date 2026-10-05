@@ -114,7 +114,7 @@ const OPENER_DEFINITIONS = {
   openers: {
     name: 'Openers',
     description:
-      'DMs sent with no fan message and no DM in the chat for open_gap before them; mass and automated messages do not reset the gap, and a fan message in it makes the DM a reply, so the fan did not write first. Kind first_ever (the chat was walked to its start and holds no earlier fan message or DM), reactivation (an earlier fan message or DM is stored) or unknown (nothing earlier is stored and the walk did not reach the chat start), counted beside it.',
+      'DMs sent with no fan message and no DM in the chat for open_gap before them; mass and automated messages do not reset the gap, and a fan message in it, or an unanswered fan message before it however old, makes the DM a reply, so the fan did not write first. Kind first_ever (the chat was walked to its start and holds no earlier fan message or DM), reactivation (an earlier fan message or DM is stored) or unknown (nothing earlier is stored and the walk did not reach the chat start), counted beside it.',
     unit: 'count',
     windows: ['open_gap', 'open_reply'],
     value: (openers) => ({ value: openers.length, n: openers.length }),
@@ -198,7 +198,10 @@ export function groupKey(t: AccountTurn | AccountOpener, groupBy: StatsGroupBy, 
 
 /**
  * The fan turns of workspace `teamId` that start in `[from, to)`, over `accountIds` (null = every account the
- * workspace has rows for), with the config's reply cap and, for a substantive metric, its `min_reply_chars`.
+ * workspace has rows for), with the config's reply cap and, for a substantive metric, its `min_reply_chars`. Reads
+ * each chat from its anchor before `from` (`turnMessages`: exact, so a turn started before `from` is not split) with
+ * no upper bound, since a late reply ends a turn however long after the cap it comes; text only for the substantive
+ * variant.
  */
 export async function scopedTurns(
   teamId: string,
@@ -214,7 +217,7 @@ export async function scopedTurns(
   };
   const turns: AccountTurn[] = [];
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
-    for (const t of fanTurns(await turnMessages(teamId, accountId), opts)) {
+    for (const t of fanTurns(await turnMessages(teamId, accountId, { from: range.from, text: opts.minReplyChars > 0 }), opts)) {
       if (t.inboundAt >= range.from && t.inboundAt < range.to) turns.push({ ...t, accountId });
     }
   }
@@ -232,7 +235,9 @@ export async function workspaceAccounts(teamId: string, accountIds: number[] | n
 
 /**
  * The openers of workspace `teamId` sent in `[from, to)`, over `accountIds` (null = every account the workspace has
- * rows for), with the config's `open_gap` and `open_reply`. Messages before `from` still close or open the gap.
+ * rows for), with the config's `open_gap` and `open_reply`. Messages before `from` still close or open the gap: each
+ * chat is read from its anchor before `from` (`turnMessages`, exact), up to `to + open_reply`, which decides every
+ * opener's status; a fan reply after that is not read, so a no-reply opener's `fanReply*` stays null.
  */
 export async function scopedOpeners(
   teamId: string,
@@ -243,7 +248,8 @@ export async function scopedOpeners(
   const opts = { asOf: range.asOf, openGapMs: cfg.openGapSeconds * 1000, openReplyMs: cfg.openReplySeconds * 1000 };
   const openers: AccountOpener[] = [];
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
-    const found = chatOpeners(await turnMessages(teamId, accountId), await reachedStartChats(teamId, accountId), opts);
+    const messages = await turnMessages(teamId, accountId, { from: range.from, to: new Date(range.to.getTime() + opts.openReplyMs) });
+    const found = chatOpeners(messages, await reachedStartChats(teamId, accountId), opts);
     for (const o of found) {
       if (o.sentAt >= range.from && o.sentAt < range.to) openers.push({ ...o, accountId });
     }
@@ -255,7 +261,9 @@ function grouped<T extends AccountTurn | AccountOpener>(items: T[], groupBy: Sta
   const groups = new Map<string, T[]>();
   for (const x of items) {
     const key = groupKey(x, groupBy, tz);
-    groups.set(key, [...(groups.get(key) ?? []), x]);
+    const list = groups.get(key);
+    if (list) list.push(x);
+    else groups.set(key, [x]);
   }
   return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }));
 }

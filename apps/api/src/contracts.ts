@@ -503,7 +503,7 @@ export const statsOpenerSample = z.object({
   openerMessageId: z.number().int(),
   sentAt: z.string(),
   kind: z.enum(['first_ever', 'reactivation', 'unknown']),
-  /** The last fan message or DM before it (a reactivation); null when none is stored. */
+  /** The last DM before it (a reactivation); null when none is stored. A fan message there makes the DM a reply, not an opener. */
   previousMessageId: z.number().int().nullable(),
   previousAt: z.string().nullable(),
   /** `sentAt - previousAt`; null when none is stored. */

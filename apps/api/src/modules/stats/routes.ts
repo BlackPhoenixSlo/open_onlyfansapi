@@ -6,19 +6,7 @@ import { event } from '../../db/schema.js';
 import { stats, statsQuery, type Stats } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
-
-const DAY_MS = 86_400_000;
-const DEFAULT_DAYS = 30;
-const MAX_DAYS = 366;
-
-/** Midnight UTC of a `YYYY-MM-DD` day; 400 for a day that does not exist (e.g. 2026-02-30). */
-function parseDay(value: string, name: string): number {
-  const t = Date.parse(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== value) {
-    throw new AppError(400, 'validation_error', `\`${name}\` is not a valid YYYY-MM-DD day`);
-  }
-  return t;
-}
+import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const day = sql<string>`to_char(${event.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
 
@@ -39,11 +27,7 @@ export default async function statsRoutes(app: FastifyInstance) {
         throw new AppError(400, 'range_too_large', `The range can span at most ${MAX_DAYS} days`);
       }
 
-      const allowed = actor.accountIds;
-      if (query.accountId !== undefined && allowed && !allowed.includes(query.accountId)) {
-        throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${query.accountId}`);
-      }
-      const ids = query.accountId !== undefined ? [query.accountId] : allowed;
+      const ids = scopedAccounts(actor, query.accountId);
       const types = query.types
         ?.split(',')
         .map((t) => t.trim())

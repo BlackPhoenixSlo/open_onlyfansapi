@@ -6,7 +6,7 @@ import { messageFact, script } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { backfill } from '../src/modules/analytics/backfill.js';
 import { scriptHash } from '../src/modules/analytics/derive.js';
-import { rehashAccount } from '../src/modules/analytics/scripts.js';
+import { rehashAccount, syncScripts } from '../src/modules/analytics/scripts.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
 import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -150,9 +150,6 @@ describe('script detection in the backfill', () => {
         hash: HASH,
         origin: 'auto',
         normaliserVersion: 1,
-        firstSeen: new Date('2026-09-11T10:00:00.000Z'),
-        lastSeen: new Date('2026-09-20T02:00:00.000Z'),
-        sampleText: S1('Dee'),
       },
     ]);
   });
@@ -195,6 +192,60 @@ describe('GET /v1/stats/scripts', () => {
     const [s] = (await scripts('from=2026-09-12&to=2026-09-13')).items; // 201, 301, 302
     expect(s).toMatchObject({ sends: 3, chats: 2, sequences: 2, replied: 1, noReply: 1, pending: 0, replyRate: 50, variantCount: 2 });
     expect((await scripts('from=2026-09-01&to=2026-09-05')).items).toEqual([]); // S2 only: not a script
+  });
+
+  it('a script found over the history with one send in range: sends 1, first and last send equal', async () => {
+    // DM 501 to Eve (A2) is S1's only send on 09-15; S1 is a script by A1's sends.
+    expect((await scripts(`from=2026-09-15&to=2026-09-15`)).items).toMatchObject([
+      { hash: HASH, sends: 1, chats: 1, firstSentAt: '2026-09-15T10:00:00.000Z', lastSentAt: '2026-09-15T10:00:00.000Z' },
+    ]);
+  });
+
+  it("counts each script's own sends when one sequence holds two scripts", async () => {
+    // A second (registered by hand) script sent 11 s before an S1 send, in one sequence on A2.
+    const other = scriptHash(S2)!;
+    const row = (messageId: number, at: string, text: string, textHash: string) => ({
+      teamId: teamA,
+      accountId: A2,
+      messageId,
+      chatId: 4002,
+      direction: 'outbound' as const,
+      createdAt: new Date(at),
+      isMass: false,
+      isAutomated: false,
+      priceCents: 0,
+      isTip: false,
+      mediaCount: 0,
+      textHash,
+      normaliserVersion: 1,
+      raw: { id: messageId, text },
+      fetchedAt: NOW,
+    });
+    await db.insert(script).values({ teamId: teamA, hash: other, normaliserVersion: 1 });
+    await db.insert(messageFact).values([row(601, '2026-09-16T09:31:25.000Z', S2, other), row(602, '2026-09-16T09:31:36.000Z', S1('Fay'), HASH)]);
+    try {
+      const items = (await scripts(`from=2026-09-16&to=2026-09-16&accountId=${A2}`)).items;
+      expect(Object.fromEntries(items.map((i) => [i.hash, [i.sends, i.chats, i.firstSentAt, i.lastSentAt, i.sequences]]))).toEqual({
+        [HASH]: [1, 1, '2026-09-16T09:31:36.000Z', '2026-09-16T09:31:36.000Z', 1],
+        [other]: [1, 1, '2026-09-16T09:31:25.000Z', '2026-09-16T09:31:25.000Z', 1],
+      });
+    } finally {
+      await pool.query('DELETE FROM message_fact WHERE message_id IN (601, 602)');
+      await pool.query('DELETE FROM script WHERE hash = $1', [other]);
+    }
+  });
+
+  it('leaves out hashes of another normaliser version, in sends and in detection', async () => {
+    await pool.query('UPDATE message_fact SET normaliser_version = 0 WHERE message_id IN (301, 302)');
+    try {
+      expect((await scripts()).items).toMatchObject([{ hash: HASH, sends: 5, chats: 4 }]);
+      expect(await syncScripts(teamA, A1)).toBe(0); // 4 current sends left on A1: not a script there
+      await pool.query('UPDATE script SET normaliser_version = 0');
+      expect((await scripts()).items).toEqual([]); // a script row of another version is not read
+    } finally {
+      await pool.query('UPDATE message_fact SET normaliser_version = 1 WHERE message_id IN (301, 302)');
+      await pool.query('UPDATE script SET normaliser_version = 1');
+    }
   });
 
   it('reads open_reply and min_reply_chars from the stats config', async () => {

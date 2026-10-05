@@ -244,11 +244,8 @@ export const script = pgTable(
     teamId: analyticsTeamId(),
     hash: text('hash').notNull(),
     origin: text('origin', { enum: ['auto'] }).notNull().default('auto'),
+    /** The normaliser version `hash` was found with; only rows of the current version are read. */
     normaliserVersion: integer('normaliser_version').notNull(),
-    firstSeen: analyticsAt('first_seen').notNull(),
-    lastSeen: analyticsAt('last_seen').notNull(),
-    /** The raw text of the latest send seen. */
-    sampleText: text('sample_text').notNull(),
   },
   (t) => [primaryKey({ columns: [t.teamId, t.hash] })],
 );

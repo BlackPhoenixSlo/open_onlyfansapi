@@ -16,7 +16,7 @@ import {
 import { toCsv } from '../../cli/analytics-csv.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
-import { assertWriteScope, type Actor } from '../../plugins/actor.js';
+import { assertWriteScope } from '../../plugins/actor.js';
 import {
   groupKey,
   isMetricId,
@@ -37,16 +37,13 @@ import {
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
-
-const DAY_MS = 86_400_000;
-const DEFAULT_DAYS = 30;
-const MAX_DAYS = 366;
+import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
-/** 400 for a day that does not exist (e.g. 2026-02-30). */
+/** `value`; 400 for a day that does not exist (e.g. 2026-02-30, 2026-13-01). */
 function checkDay(value: string, name: string): string {
-  if (addDays(value, 0) !== value) throw new AppError(400, 'validation_error', `\`${name}\` is not a valid YYYY-MM-DD day`);
+  parseDay(value, name);
   return value;
 }
 
@@ -57,15 +54,6 @@ function range(query: { from?: string; to?: string }, tz: string) {
   if (from > to) throw new AppError(400, 'invalid_range', '`from` must not be after `to`');
   if (addDays(from, MAX_DAYS - 1) < to) throw new AppError(400, 'range_too_large', `The range can span at most ${MAX_DAYS} days`);
   return { fromDay: from, toDay: to, from: zonedMidnight(from, tz), to: zonedMidnight(addDays(to, 1), tz) };
-}
-
-/** As `GET /v1/stats`: the key's allowlist, narrowed by `accountId`; null = every account of the workspace. */
-function scopedAccounts(actor: Actor, accountId: number | undefined): number[] | null {
-  const allowed = actor.accountIds;
-  if (accountId !== undefined && allowed && !allowed.includes(accountId)) {
-    throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
-  }
-  return accountId !== undefined ? [accountId] : allowed;
 }
 
 function metricId(id: string): MetricId {

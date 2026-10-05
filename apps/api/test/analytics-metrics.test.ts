@@ -44,7 +44,7 @@ const of = (messages: FakeOf['messages']): FakeOf => ({
  * T1 1001/3001 09-01 10:00 (msgs 1, 2 at 10:05) → DM 3 at 10:10: 600 / 300 s, in cap, SLA met
  * T2 1001/3001 09-01 12:00 (4) → "one sec" 5 at 12:02: 120 s, met; substantive: → DM 6 at 13:00, 3600 s, not met
  * T3 1001/3001 09-02 08:00 (7), mass 8 does not end it → DM 9 at 21:00: 46800 s, late
- * T4 1001/3002 09-02 23:30 (10), no reply: breached
+ * T4 1001/3002 09-02 23:30 (10, and 12 at 09-04 07:00), no reply: breached
  * T5 1001/3003 09-04 06:00 (11), no reply: pending
  * T6 1002/4001 09-01 22:00 (21) → DM 22 at 22:20: 1200 s, in cap, not met
  */
@@ -60,7 +60,7 @@ const DATA_A1 = of({
     msg(2, '09-01T10:05', 3001),
     msg(1, '09-01T10:00', 3001),
   ],
-  3002: [msg(10, '09-02T23:30', 3002)],
+  3002: [msg(12, '09-04T07:00', 3002), msg(10, '09-02T23:30', 3002)],
   3003: [msg(11, '09-04T06:00', 3003)],
 });
 const DATA_A2 = of({ 4001: [msg(22, '09-01T22:20', A2), msg(21, '09-01T22:00', 4001)] });
@@ -181,6 +181,13 @@ describe('stats metric series', () => {
     ]);
   });
 
+  it('does not split a turn that started before from, however long before', async () => {
+    // T4 started 09-02 23:30, 31.5 h before fan message 12: a fixed reply_cap lookback would start a turn at 12.
+    expect((await series('reply_time', 'day', keyA, 'from=2026-09-04&to=2026-09-04')).rows).toEqual([
+      { group: '2026-09-04', value: null, n: 0, turns: 1, inCap: 0, late: 0, breached: 0, pending: 1, slaMet: 0 },
+    ]);
+  });
+
   it('buckets days and hours, and reads from/to, in the config timezone', async () => {
     expect((await put({ timezone: 'Europe/Ljubljana' })).statusCode).toBe(200); // UTC+2 in September
     const day = await series('reply_time', 'day');
@@ -212,8 +219,15 @@ describe('stats metric series', () => {
   it('scopes to the key allowlist and the accountId filter', async () => {
     expect(tuples((await series('reply_time', 'account', limitedKeyA)).rows)).toEqual([['1002', 1200, 1]]);
     expect(tuples((await series('reply_time', 'account', keyA, `${RANGE}&accountId=${A1}`)).rows)).toEqual([['1001', 360, 2]]);
-    const denied = await get(`/v1/stats/metrics/reply_time?${RANGE}&accountId=${A1}`, limitedKeyA);
-    expect([denied.statusCode, denied.json().error.code]).toEqual([403, 'account_not_allowed']);
+    const samples = (await get(`/v1/stats/metrics/reply_time/samples?${RANGE}`, limitedKeyA)).json().items;
+    expect(samples.map((s: { accountId: number; fanMessageId: number }) => [s.accountId, s.fanMessageId])).toEqual([[A2, 21]]);
+    expect((await get(`/v1/stats/metrics/reply_time?${RANGE}&groupBy=day&format=csv`, limitedKeyA)).body).toBe(
+      'group,value,n,turns,in_cap,late,breached,pending,sla_met\n2026-09-01,1200,1,1,1,0,0,0,0\n',
+    );
+    for (const path of ['', '/samples']) {
+      const denied = await get(`/v1/stats/metrics/reply_time${path}?${RANGE}&accountId=${A1}`, limitedKeyA);
+      expect([denied.statusCode, denied.json().error.code]).toEqual([403, 'account_not_allowed']);
+    }
     const session = await app.inject({ method: 'GET', url: `/v1/stats/metrics/reply_time?${RANGE}&groupBy=account`, headers: dashboard(cookieA) });
     expect(tuples(session.json().rows)).toEqual([['1001', 360, 2], ['1002', 1200, 1]]);
   });
@@ -228,6 +242,10 @@ describe('stats metric series', () => {
     expect(await status(`/v1/stats/metrics/reply_time?${RANGE}&groupBy=shift`)).toEqual([400, 'validation_error']);
     expect(await status(`/v1/stats/metrics/reply_time?${RANGE}&format=xlsx`)).toEqual([400, 'validation_error']);
     expect(await status('/v1/stats/metrics/reply_time?from=2026-02-30')).toEqual([400, 'validation_error']);
+    expect(await status('/v1/stats/metrics/reply_time?from=2026-13-01')).toEqual([400, 'validation_error']); // month 13
+    expect(await status('/v1/stats/metrics/reply_time?to=2026-13-01')).toEqual([400, 'validation_error']);
+    expect(await status('/v1/stats/scripts?from=2026-13-01')).toEqual([400, 'validation_error']);
+    expect(await status('/v1/stats?from=2026-13-01')).toEqual([400, 'validation_error']);
     expect(await status('/v1/stats/metrics/reply_time?from=2026-09-04&to=2026-09-01')).toEqual([400, 'invalid_range']);
     expect(await status('/v1/stats/metrics/reply_time?from=2025-01-01&to=2026-01-02')).toEqual([400, 'range_too_large']);
     expect(await status(`/v1/stats/metrics/reply_time/samples?${RANGE}&limit=21`)).toEqual([400, 'validation_error']);

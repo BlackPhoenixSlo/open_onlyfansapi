@@ -21,13 +21,13 @@ export type Opener = {
   messageId: number;
   sentAt: Date;
   kind: OpenerKind;
-  /** The last fan message or DM before it (a reactivation); null when none is stored. */
+  /** The last DM before it (a reactivation; a fan message there makes it a reply, not an opener); null when none is stored. */
   previousMessageId: number | null;
   previousAt: Date | null;
   previousDirection: 'inbound' | 'outbound' | null;
   /** Mass and automated messages since the previous fan message or DM (or the oldest stored message): they do not reset the gap. */
   ignoredInGap: number;
-  /** The fan's first message after it (up to `asOf`), within the window or not; null when none. */
+  /** The fan's first message after it (up to `asOf` and the messages read), within the window or not; null when none. */
   fanReplyMessageId: number | null;
   fanReplyAt: Date | null;
   /** `fanReplyAt - sentAt`; null with no fan message. */
@@ -42,13 +42,18 @@ const isDm = (m: TurnMessage) => m.direction === 'outbound' && !m.isMass && !m.i
 
 /**
  * Openers (spec §2): in each chat, ordered by `(createdAt, id)`, a DM with no fan message and no DM in the
- * `open_gap` before it. Mass and automated messages do not reset the gap, and a fan message in the gap makes the DM
- * a reply, so the fan never wrote first. `reachedStart` holds the chats whose walk reached their first message
+ * `open_gap` before it, whose last fan message or DM before it (if any) is a DM. Mass and automated messages do not
+ * reset the gap; a fan message in the gap, or an unanswered fan message before it however old, makes the DM a reply,
+ * so the fan did not write first. `reachedStart` holds the chats whose walk reached their first message
  * (`chat_coverage.reached_start`).
  */
 export function chatOpeners(messages: TurnMessage[], reachedStart: Set<number>, opts: OpenerOptions): Opener[] {
   const chats = new Map<number, TurnMessage[]>();
-  for (const m of messages) chats.set(m.chatId, [...(chats.get(m.chatId) ?? []), m]);
+  for (const m of messages) {
+    const list = chats.get(m.chatId);
+    if (list) list.push(m);
+    else chats.set(m.chatId, [m]);
+  }
   const openers: Opener[] = [];
   for (const [chatId, list] of chats) {
     list.sort(byTime);
@@ -59,7 +64,8 @@ export function chatOpeners(messages: TurnMessage[], reachedStart: Set<number>, 
         ignored++;
         continue;
       }
-      const gapClear = previous === null || m.createdAt.getTime() - previous.createdAt.getTime() >= opts.openGapMs;
+      // After an unanswered fan message the DM is a (late) reply, however long the gap: the fan wrote first.
+      const gapClear = previous === null || (previous.direction === 'outbound' && m.createdAt.getTime() - previous.createdAt.getTime() >= opts.openGapMs);
       if (isDm(m) && gapClear) {
         const kind: OpenerKind = previous ? 'reactivation' : reachedStart.has(chatId) ? 'first_ever' : 'unknown';
         const reply = list.slice(i + 1).find((x) => x.direction === 'inbound' && x.createdAt <= opts.asOf) ?? null;

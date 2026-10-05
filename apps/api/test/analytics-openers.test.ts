@@ -54,7 +54,8 @@ const of = (messages: FakeOf['messages'], over: Partial<FakeOf> = {}): FakeOf =>
  *    not the start; fan 60 is never read), fan 64 at 10:30 → 1800 s, replied
  * O4 1001/3005 DM 41 09-20 02:00: first_ever, no fan message, 10 h old: pending
  * Not openers: 1001/3002 DM 13 (the fan wrote first: 12 at 09:00 broke 13 d of silence), 1001/3006 DM 52 (6 d 23 h
- * after fan 51, under open_gap), and 1001/3002 DM 11 (first_ever on 09-02, before the range).
+ * after DM 51, under open_gap), 1001/3007 DM 72 (13 d after fan 71, unanswered: a late reply, not an opener, whatever
+ * open_gap), and 1001/3002 DM 11 (first_ever on 09-02, before the range).
  */
 const DATA_A1 = of({
   3001: [
@@ -70,7 +71,8 @@ const DATA_A1 = of({
   3003: [msg(22, '09-11T16:00', A1), msg(21, '09-11T15:00', A1, { text: WELCOME })],
   3004: [msg(32, '09-16T08:00', 3004), msg(31, '09-14T20:00', A1)],
   3005: [msg(41, '09-20T02:00', A1)],
-  3006: [msg(52, '09-15T11:00', A1), msg(51, '09-08T12:00', 3006)],
+  3006: [msg(52, '09-15T11:00', A1), msg(51, '09-08T12:00', A1)],
+  3007: [msg(72, '09-15T12:00', A1), msg(71, '09-02T10:00', 3007)],
 });
 const DATA_A2 = of(
   {
@@ -193,7 +195,7 @@ describe('opener metric series', () => {
 
   it('applies the config windows: open_gap and open_reply', async () => {
     expect((await put({ openGapSeconds: 6 * 86400, openReplySeconds: 2 * 86400 })).statusCode).toBe(200);
-    // DM 52 (6 d 23 h after the fan's 51) is now a reactivation (no fan reply); O3's fan reply (36 h) is now within open_reply.
+    // DM 52 (6 d 23 h after DM 51) is now a reactivation (no fan reply); O3's fan reply (36 h) is now within open_reply.
     expect((await series('openers', 'account')).rows[0]).toMatchObject({ group: '1001', value: 5, reactivation: 2, replied: 2, noReply: 2, pending: 1 });
     expect(tuples((await series('opener_fan_reply_time', 'account')).rows)).toEqual([['1001', (3600 + 129600) / 2, 2], ['1002', 1800, 1]]);
     expect(await sampleIds('openers')).toEqual([22, 5, 31, 63, 52, 41]);
@@ -208,6 +210,11 @@ describe('opener metric series', () => {
 
   it('scopes to the key allowlist and the accountId filter', async () => {
     expect(tuples((await series('openers', 'account', limitedKeyA)).rows)).toEqual([['1002', 1, 1]]);
+    const samples = (await get(`/v1/stats/metrics/openers/samples?${RANGE}`, limitedKeyA)).json().items;
+    expect(samples.map((s: { openerMessageId: number }) => s.openerMessageId)).toEqual([63]);
+    expect((await get(`/v1/stats/metrics/openers?${RANGE}&groupBy=account&format=csv`, limitedKeyA)).body).toBe(
+      'group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending\n1002,1,1,1,0,0,1,1,0,0\n',
+    );
     expect(tuples((await series('openers', 'account', keyA, `${RANGE}&accountId=${A1}`)).rows)).toEqual([['1001', 4, 4]]);
   });
 });
@@ -259,6 +266,14 @@ describe('opener samples', () => {
     expect(await sampleIds('openers', '&limit=2')).toEqual([22, 5]);
     const kinds = (await get(`/v1/stats/metrics/openers/samples?${RANGE}`)).json().items.map((s: { kind: string; massOrAutomatedInGap: number }) => [s.kind, s.massOrAutomatedInGap]);
     expect(kinds).toEqual([['first_ever', 1], ['reactivation', 2], ['first_ever', 0], ['unknown', 2], ['first_ever', 0]]);
+  });
+
+  it('a DM after an unanswered fan message is a late reply, not an opener, however long the gap', async () => {
+    expect(await sampleIds('openers')).not.toContain(72); // 13 d after fan 71, over open_gap
+    expect((await put({ openGapSeconds: 3600 })).statusCode).toBe(200);
+    const ids = await sampleIds('openers');
+    expect(ids).toContain(52); // 6 d 23 h after a DM: an opener under a 1 h open_gap
+    expect(ids).not.toContain(72);
   });
 });
 

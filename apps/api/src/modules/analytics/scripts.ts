@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
@@ -39,14 +39,18 @@ export function isScript(sends: Send[]): boolean {
 const scoped = (teamId: string, accountId: number) => and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId));
 const rawText = sql<string | null>`${messageFact.raw}->>'text'`;
 
+// Only `message_fact` rows hashed by the current `NORMALISER_VERSION` count: hashes of other versions are not
+// comparable. Rows stored before migration 0010 have no version (and no name replacement), so after deploying it run
+// `analytics:rehash` per account to bring them in; until then they are left out of scripts.
+
 /**
- * Upserts the `script` rows of one account's DMs (outbound, not mass, not automated, with a script hash) in workspace
- * `teamId`: every hash that is a script on this account. A row seen before keeps the earliest first send and the
- * latest last send (and that send's text as its sample). Rows are never deleted. Returns the scripts found.
+ * Upserts the `script` rows of one account's DMs (outbound, not mass, not automated, with a script hash of the
+ * current normaliser version) in workspace `teamId`: every hash that is a script on this account. Rows are never
+ * deleted. Returns the scripts found.
  */
 export async function syncScripts(teamId: string, accountId: number): Promise<number> {
   const rows = await db
-    .select({ hash: messageFact.textHash, chatId: messageFact.chatId, at: messageFact.createdAt, text: rawText })
+    .select({ hash: messageFact.textHash, chatId: messageFact.chatId, at: messageFact.createdAt })
     .from(messageFact)
     .where(
       and(
@@ -55,30 +59,21 @@ export async function syncScripts(teamId: string, accountId: number): Promise<nu
         eq(messageFact.isMass, false),
         eq(messageFact.isAutomated, false),
         isNotNull(messageFact.textHash),
+        eq(messageFact.normaliserVersion, NORMALISER_VERSION),
       ),
     );
-  const byHash = new Map<string, typeof rows>();
-  for (const r of rows) byHash.set(r.hash!, [...(byHash.get(r.hash!) ?? []), r]);
-  const values = [...byHash]
-    .filter(([, sends]) => isScript(sends))
-    .map(([hash, sends]) => {
-      const sorted = sends.sort((a, b) => a.at.getTime() - b.at.getTime());
-      const last = sorted[sorted.length - 1]!;
-      return { teamId, hash, normaliserVersion: NORMALISER_VERSION, firstSeen: sorted[0]!.at, lastSeen: last.at, sampleText: last.text ?? '' };
-    });
+  const byHash = new Map<string, Send[]>();
+  for (const r of rows) {
+    const sends = byHash.get(r.hash!);
+    if (sends) sends.push(r);
+    else byHash.set(r.hash!, [r]);
+  }
+  const values = [...byHash].filter(([, sends]) => isScript(sends)).map(([hash]) => ({ teamId, hash, normaliserVersion: NORMALISER_VERSION }));
   for (let i = 0; i < values.length; i += CHUNK) {
     await db
       .insert(script)
       .values(values.slice(i, i + CHUNK))
-      .onConflictDoUpdate({
-        target: [script.teamId, script.hash],
-        set: {
-          normaliserVersion: sql`excluded.normaliser_version`,
-          firstSeen: sql`least(${script.firstSeen}, excluded.first_seen)`,
-          lastSeen: sql`greatest(${script.lastSeen}, excluded.last_seen)`,
-          sampleText: sql`case when excluded.last_seen >= ${script.lastSeen} then excluded.sample_text else ${script.sampleText} end`,
-        },
-      });
+      .onConflictDoUpdate({ target: [script.teamId, script.hash], set: { normaliserVersion: sql`excluded.normaliser_version` } });
   }
   return values.length;
 }
@@ -131,6 +126,8 @@ type Row = {
   isMass: boolean;
   isAutomated: boolean;
   textHash: string | null;
+  normaliserVersion: number | null;
+  /** Inbound and hashed outbound rows only. */
   text: string | null;
 };
 type Status = 'replied' | 'no_reply' | 'pending';
@@ -151,12 +148,17 @@ const isDm = (m: Row) => m.direction === 'outbound' && !m.isMass && !m.isAutomat
 const rate = (s: Record<Status, number>) => (s.replied + s.no_reply ? (s.replied / (s.replied + s.no_reply)) * 100 : null);
 
 /**
- * The scripts of workspace `teamId` (its `script` rows) sent in `[from, to)` over `accountIds` (null = every
- * account the workspace has rows for), most sent first. Reply rate is per outbound sequence (consecutive DMs with no
- * fan message between; mass and automated messages neither join nor end it): a sequence holding a send of the script
- * in range counts once, replied when a fan message arrives within `open_reply` after its last DM, pending while that
- * window has not elapsed at `asOf`. The substantive variant counts only a fan message of `min_reply_chars`+
- * (normalised text).
+ * The scripts of workspace `teamId` (its `script` rows of the current normaliser version) sent in `[from, to)` over
+ * `accountIds` (null = every account the workspace has rows for), most sent first. Being a script is decided over the
+ * whole history (`syncScripts`); `sends`, `chats`, the first and last send and the variants count every send of the
+ * hash in range. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
+ * messages neither join nor end it): a sequence holding a send of the script in range counts once, replied when a fan
+ * message arrives within `open_reply` after its last DM, pending while that window has not elapsed at `asOf`. The
+ * substantive variant counts only a fan message of `min_reply_chars`+ (normalised text, code points).
+ *
+ * Reads `[from, to + open_reply)` per account: a sequence's DMs before `from` are not sends in range and do not move
+ * its last DM, so `from` needs no lookback; `to + open_reply` decides every sequence whose last DM is by `to`. A
+ * sequence still running past `to` is judged on its DMs read (one past `to + open_reply` and its fan reply are not).
  */
 export async function scopedScripts(
   teamId: string,
@@ -164,12 +166,20 @@ export async function scopedScripts(
   cfg: StatsConfig,
   range: { from: Date; to: Date; asOf: Date },
 ): Promise<StatsScript[]> {
-  const known = new Map((await db.select({ hash: script.hash, origin: script.origin }).from(script).where(eq(script.teamId, teamId))).map((s) => [s.hash, s.origin]));
+  const known = new Map(
+    (
+      await db
+        .select({ hash: script.hash, origin: script.origin })
+        .from(script)
+        .where(and(eq(script.teamId, teamId), eq(script.normaliserVersion, NORMALISER_VERSION)))
+    ).map((s) => [s.hash, s.origin]),
+  );
   if (!known.size) return [];
   const openReplyMs = cfg.openReplySeconds * 1000;
   const asOf = range.asOf.getTime();
   const tallies = new Map<string, Tally>();
-  const inRange = (m: Row) => m.textHash !== null && known.has(m.textHash) && m.createdAt >= range.from && m.createdAt < range.to;
+  const inRange = (m: Row) =>
+    m.textHash !== null && m.normaliserVersion === NORMALISER_VERSION && known.has(m.textHash) && m.createdAt >= range.from && m.createdAt < range.to;
 
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
     const rows: Row[] = await db
@@ -181,12 +191,23 @@ export async function scopedScripts(
         isMass: messageFact.isMass,
         isAutomated: messageFact.isAutomated,
         textHash: messageFact.textHash,
-        text: rawText,
+        normaliserVersion: messageFact.normaliserVersion,
+        text: sql<string | null>`case when ${messageFact.direction} = 'inbound' or ${messageFact.textHash} is not null then ${rawText} end`,
       })
       .from(messageFact)
-      .where(scoped(teamId, accountId));
+      .where(
+        and(
+          scoped(teamId, accountId),
+          gte(messageFact.createdAt, range.from),
+          lt(messageFact.createdAt, new Date(range.to.getTime() + openReplyMs)),
+        ),
+      );
     const chats = new Map<number, Row[]>();
-    for (const m of rows) chats.set(m.chatId, [...(chats.get(m.chatId) ?? []), m]);
+    for (const m of rows) {
+      const list = chats.get(m.chatId);
+      if (list) list.push(m);
+      else chats.set(m.chatId, [m]);
+    }
 
     for (const [chatId, list] of chats) {
       list.sort(byTime);
@@ -207,15 +228,17 @@ export async function scopedScripts(
         const within = list.slice(end + 1).filter((m) => m.direction === 'inbound' && m.createdAt.getTime() - lastAt <= openReplyMs && m.createdAt.getTime() <= asOf);
         const status = (found: boolean): Status => (found ? 'replied' : asOf - lastAt <= openReplyMs ? 'pending' : 'no_reply');
         const replied = status(within.length > 0);
-        const substantive = status(within.some((m) => normaliseText(m.text ?? '').length >= cfg.minReplyChars));
+        const substantive = status(within.some((m) => [...normaliseText(m.text ?? '')].length >= cfg.minReplyChars));
         for (const hash of new Set(sends.map((s) => s.textHash!))) {
+          const own = sends.filter((x) => x.textHash === hash);
           let t = tallies.get(hash);
           if (!t) {
-            const at = sends[0]!.createdAt;
+            // From this hash's own first send: the sequence may open with another script's send.
+            const at = own[0]!.createdAt;
             t = { hash, origin: known.get(hash)!, sends: 0, chats: new Set(), first: at, last: at, variants: new Map(), status: { replied: 0, no_reply: 0, pending: 0 }, substantive: { replied: 0, no_reply: 0, pending: 0 } };
             tallies.set(hash, t);
           }
-          for (const s of sends.filter((x) => x.textHash === hash)) {
+          for (const s of own) {
             t.sends++;
             if (s.createdAt < t.first) t.first = s.createdAt;
             if (s.createdAt > t.last) t.last = s.createdAt;
