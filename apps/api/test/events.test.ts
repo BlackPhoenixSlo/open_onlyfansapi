@@ -3,7 +3,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
-import { subscribe, type GatewayEvent } from '../src/lib/event-bus.js';
+import type { GatewayEvent } from '../src/contracts.js';
+import { subscribe } from '../src/lib/event-bus.js';
 import { parseFrame } from '../src/modules/events/ingest.js';
 import { startEventSource, type SourceTimings } from '../src/modules/events/source.js';
 import { eventFrame as frame, startFakeUpstream } from './fake-upstream.js';

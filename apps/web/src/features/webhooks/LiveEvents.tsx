@@ -8,17 +8,6 @@ import { api } from '@/lib/api';
 import { subscribe, useStreamOpen } from '@/lib/dashboard-stream';
 import { cn } from '@/lib/utils';
 
-/** Asks for the browser-notification permission the delivery toasts use when the tab is hidden; shown until answered. */
-export function EnableNotificationsButton() {
-  const [permission, setPermission] = useState(() => ('Notification' in window ? Notification.permission : 'denied'));
-  if (permission !== 'default') return null;
-  return (
-    <Button variant="outline" onClick={() => void Notification.requestPermission().then(setPermission)}>
-      Enable browser notifications
-    </Button>
-  );
-}
-
 /** The last 50 events on the dashboard stream (newest first), whether or not an endpoint gets them. Kept while the page is open. */
 export function LiveEvents() {
   const [items, setItems] = useState<GatewayEvent[]>([]);

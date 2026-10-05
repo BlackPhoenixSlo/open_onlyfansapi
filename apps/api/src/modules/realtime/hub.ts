@@ -6,7 +6,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { WebSocket } from 'ws';
 import { db } from '../../db/index.js';
 import { apiKey, requestLog, teamBackend } from '../../db/schema.js';
-import { subscribe, type GatewayEvent } from '../../lib/event-bus.js';
+import type { GatewayEvent } from '../../contracts.js';
+import { subscribe } from '../../lib/event-bus.js';
 import { envelope } from '../../lib/signature.js';
 
 export const MAX_SOCKETS_PER_KEY = 5;

@@ -2,8 +2,6 @@
 // One gateway process (plan-v4 §1.3).
 import type { DeliveryNotice, GatewayEvent } from '../contracts.js';
 
-export type { GatewayEvent };
-
 /** A finished webhook delivery attempt, for the open dashboard streams of the endpoint's workspace. */
 export type DeliveryMessage = { teamId: string; notice: DeliveryNotice };
 

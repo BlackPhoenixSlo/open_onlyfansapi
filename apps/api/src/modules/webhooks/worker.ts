@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIPv4 } from 'node:net';
 import { sql } from 'drizzle-orm';
-import type { DeliveryNotice } from '../../contracts.js';
+import type { DeliveryStatus } from '../../contracts.js';
 import { db } from '../../db/index.js';
 import { env } from '../../env.js';
 import { publishDelivery } from '../../lib/event-bus.js';
@@ -161,11 +161,11 @@ async function post(c: Claimed): Promise<{ statusCode: number | null; error: str
 export async function completeDelivery(
   c: Pick<Claimed, 'id' | 'endpointId' | 'leasedUntil'>,
   outcome: { statusCode: number | null; error: string | null },
-): Promise<DeliveryNotice['status'] | undefined> {
+): Promise<Exclude<DeliveryStatus, 'dropped'> | undefined> {
   const ok = outcome.error === null;
   const backoff = sql`array[${sql.raw(BACKOFF_SECONDS.join(','))}]`;
   return db.transaction(async (tx) => {
-    const res = await tx.execute<{ status: DeliveryNotice['status'] }>(sql`
+    const res = await tx.execute<{ status: Exclude<DeliveryStatus, 'dropped'> }>(sql`
       update webhook_delivery set
         attempts = attempts + 1,
         last_attempt_at = now(),

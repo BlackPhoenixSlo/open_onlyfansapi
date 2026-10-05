@@ -42,19 +42,17 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
     if (!l.res.writableEnded) l.res.end();
   }
 
-  /** Sends one frame to the open streams of these workspaces only. */
-  function send(teamIds: Iterable<string>, frame: DashboardFrame) {
-    const teams = new Set(teamIds);
+  /** Sends one frame to the open streams that `to` accepts. */
+  function send(frame: DashboardFrame, to: (l: Listener) => boolean) {
     const chunk = `event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`;
-    for (const l of listeners) if (teams.has(l.teamId)) write(l, chunk);
+    for (const l of listeners) if (to(l)) write(l, chunk);
   }
 
-  const linkedTeams = () => [...listeners].filter((l) => l.linked).map((l) => l.teamId);
   const unsubscribe = [
-    subscribe((e) => send(linkedTeams(), { event: 'event', data: e })),
+    subscribe((e) => send({ event: 'event', data: e }, (l) => l.linked)),
     // The worker claims deliveries of enabled endpoints, and emit() queues only for endpoints whose events filter
     // matches, so a delivery needs no filter beyond its workspace.
-    subscribeDeliveries((d) => send([d.teamId], { event: 'delivery', data: d.notice })),
+    subscribeDeliveries((d) => send({ event: 'delivery', data: d.notice }, (l) => l.teamId === d.teamId)),
   ];
 
   app.addHook('preClose', async () => {
@@ -90,7 +88,7 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
       ts: new Date().toISOString(),
       data: { message: 'Test event from the gateway' },
     };
-    send([request.session.teamId], { event: 'event', data: e });
+    send({ event: 'event', data: e }, (l) => l.teamId === request.session.teamId);
     return reply.status(202).send({ event: e });
   });
 }

@@ -706,4 +706,26 @@ describe('dashboard delivery stream', () => {
       b.close();
     }
   });
+
+  it('a stream opened before link-team stays unlinked for its lifetime', async () => {
+    const late = await signUp(app, 'webhooks-late-link@example.test');
+    const before = await openStream(base, late.cookie);
+    await linkTeam(late.teamId);
+    const after = await openStream(base, late.cookie);
+    try {
+      const ts = '2026-10-05T12:00:00.000Z';
+      await ingestFrame({ id: null, type: 'upstream.chat_typing', account_id: 7, ts, payload: {} }, app.log);
+      const deadline = Date.now() + 2000;
+      while (frames(after.text, 'event').length === 0) {
+        if (Date.now() > deadline) throw new Error(`no frame: ${after.text}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 50)); // a stray frame to the unlinked stream would have arrived by now
+      expect(frames(after.text, 'event')).toMatchObject([{ type: 'upstream.chat_typing' }]);
+      expect(frames(before.text, 'event')).toEqual([]);
+    } finally {
+      before.close();
+      after.close();
+    }
+  });
 });
