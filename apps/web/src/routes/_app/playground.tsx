@@ -3,13 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { type ReactNode, useState } from 'react';
 import { OperationPicker } from '@/features/playground/OperationPicker';
-import { type Draft, RequestForm } from '@/features/playground/RequestForm';
+import { type Draft, type Missing, RequestForm } from '@/features/playground/RequestForm';
 import { type Result, ResponsePanel } from '@/features/playground/ResponsePanel';
 import {
   defaultDraft,
   forgetDraft,
   initialDraft,
   lastAccount,
+  overlayRows,
   pickAccount,
   pushRecent,
   recentOps,
@@ -40,15 +41,16 @@ function fromLog(log: LogDetail, ops: Op[]): Initial {
   const proxied = /^\/v1\/(\d+)(\/.*)$/.exec(log.path);
   const { account, ...params } = match?.params ?? {};
   const logged = [...new URLSearchParams(log.query ?? '')].map(([key, value]) => ({ key, value }));
-  // The operation's other declared parameters as empty rows (not sent), so the replay shows their help text.
-  const declared = (match?.op.params ?? []).filter((p) => p.in === 'query' && !logged.some((r) => r.key === p.name));
+  // The logged values over the operation's declared parameters; the unlogged ones stay as empty rows (not sent), so
+  // the replay shows their help text.
+  const declared = (match?.op.params ?? []).filter((p) => p.in === 'query').map((p) => ({ key: p.name, value: '' }));
   return {
     account: account ?? proxied?.[1] ?? '',
     draft: {
       method: log.method,
       path: match?.op.path ?? (proxied ? `/v1/{account}${proxied[2]}` : log.path),
       params,
-      query: [...logged, ...declared.map((p) => ({ key: p.name, value: '' }))],
+      query: overlayRows(declared, logged),
       body: log.reqBody ?? match?.op.body ?? '',
     },
   };
@@ -132,15 +134,17 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
   const query = new URLSearchParams(draft.query.filter((r) => r.key && r.value).map((r) => [r.key, r.value])).toString();
   const url = query ? `${path}?${query}` : path;
   const body = draft.method !== 'GET' && draft.body.trim() ? draft.body : undefined;
-  const missingPath = pathParams(draft.path).filter((n) => !(n === 'account' ? accountId : draft.params[n]));
-  const missingQuery = (op?.params ?? [])
-    .filter((p) => p.in === 'query' && p.required && !draft.query.some((r) => r.key === p.name && r.value))
-    .map((p) => p.name);
-  const missing = [...missingPath, ...missingQuery];
-  const kind = missingQuery.length === 0 ? 'path ' : missingPath.length === 0 ? 'query ' : '';
+  const missing: Missing = {
+    path: pathParams(draft.path).filter((n) => !(n === 'account' ? accountId : draft.params[n])),
+    query: (op?.params ?? [])
+      .filter((p) => p.in === 'query' && p.required && !draft.query.some((r) => r.key === p.name && r.value))
+      .map((p) => p.name),
+  };
+  const names = [...missing.path, ...missing.query];
+  const kind = missing.query.length === 0 ? 'path ' : missing.path.length === 0 ? 'query ' : '';
   const problem =
-    missing.length > 0
-      ? `Fill in the required ${kind}${missing.length === 1 ? 'parameter' : 'parameters'}: ${missing.join(', ')}.`
+    names.length > 0
+      ? `Fill in the required ${kind}${names.length === 1 ? 'parameter' : 'parameters'}: ${names.join(', ')}.`
       : (urlProblem(url, window.location.origin) ?? (body !== undefined ? jsonProblem(body) : null));
 
   const send = useMutation({
@@ -178,6 +182,7 @@ function Workbench({ ops, initial }: { ops: Op[]; initial: Initial }) {
             rememberAccount(id);
           }}
           snippet={curlSnippet({ method: draft.method, url: `${window.location.origin}${url}`, body })}
+          missing={missing}
           problem={problem}
           sending={send.isPending}
           onSend={() => {

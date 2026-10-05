@@ -183,11 +183,19 @@ export function groupOf(op: Op): string {
   return `platform / ${op.path.split('/')[3] ?? ''}`;
 }
 
+/** A sidebar group; `collapsed` = closed until toggled (the platform sub-groups). */
+export type OpGroup = { label: string; ops: Op[]; collapsed: boolean };
+
 /** Operations by `groupOf`, in first-seen order. */
-export function groupOps(ops: Op[]): [string, Op[]][] {
-  const groups = new Map<string, Op[]>();
-  for (const op of ops) groups.set(groupOf(op), [...(groups.get(groupOf(op)) ?? []), op]);
-  return [...groups];
+export function groupOps(ops: Op[]): OpGroup[] {
+  const groups = new Map<string, OpGroup>();
+  for (const op of ops) {
+    const label = groupOf(op);
+    const group = groups.get(label);
+    if (group) group.ops.push(op);
+    else groups.set(label, { label, ops: [op], collapsed: op.tag === 'platform' });
+  }
+  return [...groups.values()];
 }
 
 const PARAM = /\{([^}]+)\}/g;

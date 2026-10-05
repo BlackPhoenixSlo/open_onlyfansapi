@@ -1,25 +1,39 @@
-// In-process event fan-out: the event source publishes, client sockets subscribe. One gateway process (plan-v4 §1.3).
+// In-process fan-out: the event source and the webhook worker publish; client sockets and dashboard streams subscribe.
+// One gateway process (plan-v4 §1.3).
+import type { DeliveryNotice, GatewayEvent } from '../contracts.js';
 
-/** One event as clients see it; `envelope()` from lib/signature.ts turns it into the wire frame. */
-export type GatewayEvent = { id: string; type: string; accountId: number | null; data: unknown };
+export type { GatewayEvent };
 
-const listeners = new Set<(e: GatewayEvent) => void>();
+/** A finished webhook delivery attempt, for the open dashboard streams of the endpoint's workspace. */
+export type DeliveryMessage = { teamId: string; notice: DeliveryNotice };
 
-/** Calls every listener synchronously; a throwing listener is logged and never stops the others. */
-export function publish(e: GatewayEvent): void {
-  for (const fn of [...listeners]) {
-    try {
-      fn(e);
-    } catch (err) {
-      console.error('event-bus listener failed', { eventId: e.id, type: e.type }, err);
-    }
-  }
-}
-
-/** Returns the unsubscribe function. */
-export function subscribe(fn: (e: GatewayEvent) => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
+/** One topic. Listeners are called synchronously; a throwing listener is logged and never stops the others. */
+function topic<M>(context: (m: M) => object) {
+  const listeners = new Set<(m: M) => void>();
+  return {
+    publish(m: M): void {
+      for (const fn of [...listeners]) {
+        try {
+          fn(m);
+        } catch (err) {
+          console.error('event-bus listener failed', context(m), err);
+        }
+      }
+    },
+    /** Returns the unsubscribe function. */
+    subscribe(fn: (m: M) => void): () => void {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
   };
 }
+
+/** Upstream events, for every linked workspace. */
+export const { publish, subscribe } = topic<GatewayEvent>((e) => ({ eventId: e.id, type: e.type }));
+
+/** Finished delivery attempts, each for one workspace. */
+export const { publish: publishDelivery, subscribe: subscribeDeliveries } = topic<DeliveryMessage>((d) => ({
+  deliveryId: d.notice.deliveryId,
+}));

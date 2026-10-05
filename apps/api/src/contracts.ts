@@ -192,50 +192,58 @@ export const webhookEventType = z.enum([
   'upstream.*',
 ]);
 export type WebhookEventType = z.infer<typeof webhookEventType>;
-export const WEBHOOK_EVENTS: Record<WebhookEventType, string> = {
-  'messages.received': 'A connected account received a message.',
-  'messages.sent': 'A connected account sent a message.',
-  'messages.ppv.unlocked': 'A fan unlocked a paid message (TBC: not emitted yet).',
-  'messages.deleted': "A message in one of the account's chats was deleted.",
-  'messages.liked': 'A fan liked a message (TBC: not emitted yet).',
-  'messages.unliked': 'A fan unliked a message (TBC: not emitted yet).',
-  'chat_queue.updated': 'A mass-message queue made progress (TBC: not emitted yet).',
-  'chat_queue.finished': 'A mass-message queue finished (TBC: not emitted yet).',
-  'subscriptions.new': 'A fan subscribed to a connected account (TBC: not emitted yet).',
-  'subscriptions.renewed': 'A fan renewed a subscription (TBC: not emitted yet).',
-  'subscriptions.expired': 'A fan subscription expired (TBC: not emitted yet).',
-  'users.typing': 'A fan is typing (TBC: not emitted yet).',
-  'users.online': 'A fan came online (TBC: not emitted yet).',
-  'users.offline': 'A fan went offline (TBC: not emitted yet).',
-  'posts.liked': 'A fan liked a post (TBC: not emitted yet).',
-  'posts.expired': "A post in the account's feed expired, not only one of its own.",
-  'tips.received': 'A connected account received a tip (TBC: not emitted yet).',
-  'transactions.new': 'A new earnings transaction (TBC: not emitted yet).',
-  'accounts.connected': 'An account was connected for the first time.',
-  'accounts.reconnected': 'An account that already had a session was connected again.',
-  'accounts.disconnected': 'An account was disconnected (never emitted by this gateway).',
-  'accounts.session_expired': "A connected account's session expired; reconnect it.",
-  'accounts.authentication_failed': 'Connecting an account failed (never emitted by this gateway).',
-  'accounts.otp_code_required': 'Connecting an account needs an OTP code (never emitted by this gateway).',
-  'accounts.face_otp_required': 'Connecting an account needs a face check (never emitted by this gateway).',
-  'media_uploads.completed': 'A media upload completed (never emitted by this gateway).',
-  'media_uploads.failed': 'A media upload failed (never emitted by this gateway).',
-  'webhook.test': "Sent by the Test action, regardless of the endpoint's event filter.",
-  'upstream.*': 'Any other upstream event, passed through as upstream.<name>.',
-};
 export const webhookEventStatus = z.enum(['emitted', 'tbc', 'never']);
 export type WebhookEventStatus = z.infer<typeof webhookEventStatus>;
 
-/** Each WEBHOOK_EVENTS description carries the status: `(TBC: not emitted yet)`, `(never emitted …)`, or unmarked = emitted. */
-export function eventStatus(description: string): WebhookEventStatus {
-  if (description.includes('(TBC: not emitted yet)')) return 'tbc';
-  if (description.includes('(never emitted')) return 'never';
-  return 'emitted';
+/** Each type's meaning and whether this gateway emits it: `tbc` = known OF source, not mapped yet; `never` = no source here. */
+export const WEBHOOK_EVENTS: Record<WebhookEventType, { description: string; status: WebhookEventStatus }> = {
+  'messages.received': { description: 'A connected account received a message', status: 'emitted' },
+  'messages.sent': { description: 'A connected account sent a message', status: 'emitted' },
+  'messages.ppv.unlocked': { description: 'A fan unlocked a paid message', status: 'tbc' },
+  'messages.deleted': { description: "A message in one of the account's chats was deleted", status: 'emitted' },
+  'messages.liked': { description: 'A fan liked a message', status: 'tbc' },
+  'messages.unliked': { description: 'A fan unliked a message', status: 'tbc' },
+  'chat_queue.updated': { description: 'A mass-message queue made progress', status: 'tbc' },
+  'chat_queue.finished': { description: 'A mass-message queue finished', status: 'tbc' },
+  'subscriptions.new': { description: 'A fan subscribed to a connected account', status: 'tbc' },
+  'subscriptions.renewed': { description: 'A fan renewed a subscription', status: 'tbc' },
+  'subscriptions.expired': { description: 'A fan subscription expired', status: 'tbc' },
+  'users.typing': { description: 'A fan is typing', status: 'tbc' },
+  'users.online': { description: 'A fan came online', status: 'tbc' },
+  'users.offline': { description: 'A fan went offline', status: 'tbc' },
+  'posts.liked': { description: 'A fan liked a post', status: 'tbc' },
+  'posts.expired': { description: "A post in the account's feed expired, not only one of its own", status: 'emitted' },
+  'tips.received': { description: 'A connected account received a tip', status: 'tbc' },
+  'transactions.new': { description: 'A new earnings transaction', status: 'tbc' },
+  'accounts.connected': { description: 'An account was connected for the first time', status: 'emitted' },
+  'accounts.reconnected': { description: 'An account that already had a session was connected again', status: 'emitted' },
+  'accounts.disconnected': { description: 'An account was disconnected', status: 'never' },
+  'accounts.session_expired': { description: "A connected account's session expired; reconnect it", status: 'emitted' },
+  'accounts.authentication_failed': { description: 'Connecting an account failed', status: 'never' },
+  'accounts.otp_code_required': { description: 'Connecting an account needs an OTP code', status: 'never' },
+  'accounts.face_otp_required': { description: 'Connecting an account needs a face check', status: 'never' },
+  'media_uploads.completed': { description: 'A media upload completed', status: 'never' },
+  'media_uploads.failed': { description: 'A media upload failed', status: 'never' },
+  'webhook.test': { description: "Sent by the Test action, regardless of the endpoint's event filter", status: 'emitted' },
+  'upstream.*': { description: 'Any other upstream event, passed through as upstream.<name>', status: 'emitted' },
+};
+
+const STATUS_SUFFIX: Record<WebhookEventStatus, string> = {
+  emitted: '',
+  tbc: ' (TBC: not emitted yet)',
+  never: ' (never emitted by this gateway)',
+};
+
+/** The catalogue's served description: the text, then the status unless emitted (`… (TBC: not emitted yet).`). */
+export function eventDescription(type: WebhookEventType): string {
+  const { description, status } = WEBHOOK_EVENTS[type];
+  return `${description}${STATUS_SUFFIX[status]}.`;
 }
 
 export const webhookEventList = z.object({
   items: z.array(z.object({ type: webhookEventType, description: z.string(), status: webhookEventStatus })),
 });
+export type WebhookEventInfo = z.infer<typeof webhookEventList>['items'][number];
 
 export const webhookEndpoint = z.object({
   id: z.string(),
@@ -305,8 +313,12 @@ export type WebhookDelivery = z.infer<typeof webhookDelivery>;
 export const webhookDeliveryList = z.object({ items: z.array(webhookDelivery), nextCursor: z.string().nullable() });
 export type WebhookDeliveryList = z.infer<typeof webhookDeliveryList>;
 
-/** One event as `GET /api/webhooks/stream` sends it to the dashboard (`event: event`), whether or not an endpoint gets it. */
-export type LiveEvent = { id: string; type: string; accountId: number | null; ts: string; payload: unknown };
+/**
+ * One event as the bus carries it, and as `GET /api/webhooks/stream` sends it to the dashboard (`event: event`) whether
+ * or not an endpoint gets it; `envelope()` from lib/signature.ts turns it into the client wire frame. `ts` is when it
+ * happened (ISO 8601).
+ */
+export type GatewayEvent = { id: string; type: string; accountId: number | null; ts: string; data: unknown };
 
 /** One finished delivery attempt, as `GET /api/webhooks/stream` sends it to the dashboard (`event: delivery`). */
 export type DeliveryNotice = {
@@ -316,10 +328,13 @@ export type DeliveryNotice = {
   url: string;
   description: string | null;
   /** After this attempt: sent (2xx), will be retried, or out of attempts. */
-  status: 'delivered' | 'retrying' | 'failed';
+  status: Exclude<DeliveryStatus, 'dropped'>;
   statusCode: number | null;
   error: string | null;
 };
+
+/** One `GET /api/webhooks/stream` frame: its SSE `event:` name and its JSON `data:`. */
+export type DashboardFrame = { event: 'event'; data: GatewayEvent } | { event: 'delivery'; data: DeliveryNotice };
 
 // Stats
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');

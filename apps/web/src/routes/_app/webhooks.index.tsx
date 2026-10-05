@@ -1,8 +1,8 @@
-import type { CreateWebhookBody, LiveEvent, WebhookEndpoint, WebhookEventStatus, WebhookEventType } from '@api/contracts';
+import type { CreateWebhookBody, WebhookEndpoint, WebhookEventInfo, WebhookEventType } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { WebhookHealth } from '@/components/webhook-health';
 import {
@@ -16,7 +16,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -27,8 +26,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EnableNotificationsButton, LiveEvents } from '@/features/webhooks/LiveEvents';
 import { api, webhookEventsQuery, webhooksQuery } from '@/lib/api';
-import { isStreamOpen, subscribeLive } from '@/lib/delivery-notifications';
 import { cn } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/webhooks/')({ component: Webhooks });
@@ -41,7 +40,6 @@ function Webhooks() {
   const queryClient = useQueryClient();
   const [formTarget, setFormTarget] = useState<FormTarget>(null);
   const [deleting, setDeleting] = useState<WebhookEndpoint | null>(null);
-  const [permission, setPermission] = useState(() => ('Notification' in window ? Notification.permission : 'denied'));
 
   const refresh = () =>
     Promise.all([
@@ -80,11 +78,7 @@ function Webhooks() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Webhooks</h1>
         <div className="flex gap-2">
-          {permission === 'default' && (
-            <Button variant="outline" onClick={() => void Notification.requestPermission().then(setPermission)}>
-              Enable browser notifications
-            </Button>
-          )}
+          <EnableNotificationsButton />
           <Button onClick={() => setFormTarget('new')}>Add endpoint</Button>
         </div>
       </div>
@@ -193,58 +187,6 @@ function Webhooks() {
   );
 }
 
-/** The last 50 events on the dashboard stream (newest first), whether or not an endpoint gets them. Kept while the page is open. */
-function LiveEvents() {
-  const [items, setItems] = useState<LiveEvent[]>([]);
-  const [open, setOpen] = useState(isStreamOpen);
-  useEffect(() => subscribeLive({ event: (e) => setItems((prev) => [e, ...prev].slice(0, 50)), open: setOpen }), []);
-  const emitTest = useMutation({
-    mutationFn: () => api('/api/webhooks/stream/test', { method: 'POST' }),
-    onError: (e) => toast.error(e.message),
-  });
-
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          Live events
-          <span className={cn('size-2 rounded-full', open ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
-          <span className="text-xs font-normal text-muted-foreground">{open ? 'Listening' : 'Not connected'}</span>
-        </CardTitle>
-        <CardDescription>Register an endpoint to have these delivered to your server.</CardDescription>
-        <CardAction className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => emitTest.mutate()} disabled={emitTest.isPending}>
-            Emit test event
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setItems([])} disabled={items.length === 0}>
-            Clear
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No events since this page opened.</p>
-        ) : (
-          <ul className="divide-y text-xs">
-            {items.map((e) => (
-              <li key={e.id}>
-                <details>
-                  <summary className="flex cursor-pointer gap-4 py-1.5">
-                    <span className="w-20 shrink-0 text-muted-foreground tabular-nums">{new Date(e.ts).toLocaleTimeString()}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono">{e.type}</span>
-                    <span className="shrink-0 text-muted-foreground">{e.accountId === null ? '—' : `account ${e.accountId}`}</span>
-                  </summary>
-                  <pre className="mb-2 max-h-64 overflow-auto rounded-md bg-muted p-2">{JSON.stringify(e.payload, null, 2)}</pre>
-                </details>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function EndpointFormDialog({
   editing,
   onClose,
@@ -294,7 +236,7 @@ function EndpointFormDialog({
   const toggleEvents = (types: WebhookEventType[], on: boolean) =>
     setEvents((prev) => (on ? [...new Set([...prev, ...types])] : prev.filter((t) => !types.includes(t))));
   // Catalogue order, grouped by the type's prefix (`messages.received` → `messages`).
-  const groups = new Map<string, { type: WebhookEventType; description: string; status: WebhookEventStatus }[]>();
+  const groups = new Map<string, WebhookEventInfo[]>();
   for (const ev of catalogue.data?.items ?? []) {
     const prefix = ev.type.split('.')[0]!;
     groups.set(prefix, [...(groups.get(prefix) ?? []), ev]);

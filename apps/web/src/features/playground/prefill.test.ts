@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { defaultDraft, initialDraft, pickAccount, pushRecent, rememberDraft, smartDefault } from './prefill';
+import { defaultDraft, initialDraft, overlayRows, pickAccount, pushRecent, rememberDraft, smartDefault } from './prefill';
 import { type Param, operations } from './spec';
 
 const NOW = new Date('2026-10-05T12:00:00Z');
@@ -125,9 +125,26 @@ describe('remembered drafts', () => {
     expect(initialDraft(chats!)).toEqual(draft);
   });
 
+  it('ignores a stored draft of the wrong shape', () => {
+    localStorage.setItem('gateway.playground.op.' + chats!.id, JSON.stringify({ params: {}, query: [{ key: 'limit' }] }));
+    expect(initialDraft(chats!)).toEqual(defaultDraft(chats!));
+  });
+
   it('keeps the 8 most recent operations, newest first', () => {
     for (let i = 0; i < 10; i++) pushRecent(`op${i}`);
     expect(pushRecent('op3')).toEqual(['op3', 'op9', 'op8', 'op7', 'op6', 'op5', 'op4', 'op2']);
+  });
+});
+
+describe('overlayRows', () => {
+  it('puts each row on the first free base row of its key and appends the rest', () => {
+    const row = (key: string, value: string) => ({ key, value });
+    expect(overlayRows([row('a', ''), row('b', '2')], [row('x', '9'), row('b', '3'), row('b', '4'), row('a', '1')])).toEqual([
+      row('a', '1'),
+      row('b', '3'),
+      row('x', '9'),
+      row('b', '4'),
+    ]);
   });
 });
 

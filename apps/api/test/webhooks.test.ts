@@ -6,11 +6,10 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
 import { deleteExpired } from '../src/jobs/retention.js';
-import { eventStatus } from '../src/contracts.js';
+import { eventDescription, WEBHOOK_EVENTS, type WebhookEventInfo } from '../src/contracts.js';
 import { envelope, sign, verifySignature } from '../src/lib/signature.js';
 import { ingestFrame } from '../src/modules/events/ingest.js';
 import { emit } from '../src/modules/webhooks/service.js';
-import { streamTimings } from '../src/modules/webhooks/stream.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -166,9 +165,10 @@ describe('webhooks API', () => {
       'webhook.test',
       'upstream.*',
     ]);
-    // Each description carries the status (TBC, never, or unmarked = emitted), served as `status` too.
-    const items = events.json().items as { type: string; description: string; status: string }[];
-    expect(items.every((e) => e.status === eventStatus(e.description))).toBe(true);
+    // Each type's status is served as `status`, and the description carries it too (TBC, never, or unmarked = emitted).
+    const items = events.json().items as WebhookEventInfo[];
+    expect(items.every((e) => e.status === WEBHOOK_EVENTS[e.type].status && e.description === eventDescription(e.type))).toBe(true);
+    expect(items.find((e) => e.type === 'messages.liked')?.description).toBe('A fan liked a message (TBC: not emitted yet).');
     const byStatus = (want: string) => items.filter((e) => e.status === want).map((e) => e.type);
     expect(byStatus('emitted')).toEqual([
       'messages.received',
@@ -633,19 +633,19 @@ describe('dashboard delivery stream', () => {
           eventType: 'webhook.test',
           url: hookUrl,
           description: 'mine',
-          status: 'delivered',
+          status: 'succeeded',
           statusCode: 200,
           error: null,
         },
       ]);
-      expect(notices(b.text)).toMatchObject([{ deliveryId: theirDelivery, endpointId: theirs.id, status: 'delivered' }]);
+      expect(notices(b.text)).toMatchObject([{ deliveryId: theirDelivery, endpointId: theirs.id, status: 'succeeded' }]);
     } finally {
       a.close();
       b.close();
     }
   });
 
-  it('reports a failed attempt that will be retried as retrying', async () => {
+  it('reports a failed attempt that will be retried as pending', async () => {
     receiver.status = 500;
     const endpoint = await createEndpoint();
     const stream = await openStream(base, cookie);
@@ -657,22 +657,21 @@ describe('dashboard delivery stream', () => {
         if (Date.now() > deadline) throw new Error(`no frame: ${stream.text}`);
         await new Promise((r) => setTimeout(r, 20));
       }
-      expect(notices(stream.text)).toMatchObject([{ status: 'retrying', statusCode: 500, error: 'HTTP 500' }]);
+      expect(notices(stream.text)).toMatchObject([{ status: 'pending', statusCode: 500, error: 'HTTP 500' }]);
     } finally {
       stream.close();
     }
   });
 
   it('ends a stream after its lifetime, so the reconnect re-checks the session', async () => {
-    const defaults = { ...streamTimings };
-    Object.assign(streamTimings, { heartbeatMs: 20, maxMs: 100 });
+    const short = await buildApp({ logger: false, stream: { heartbeatMs: 20, maxMs: 100 } });
     try {
-      const stream = await openStream(base, cookie);
+      const stream = await openStream(await short.listen({ port: 0, host: '127.0.0.1' }), cookie);
       const ended = await Promise.race([stream.ended.then(() => true), new Promise((r) => setTimeout(() => r(false), 2000))]);
       expect(ended).toBe(true);
       expect(stream.text).toContain(': ping');
     } finally {
-      Object.assign(streamTimings, defaults);
+      await short.close();
     }
   });
 
@@ -696,11 +695,11 @@ describe('dashboard delivery stream', () => {
       await new Promise((r) => setTimeout(r, 50)); // a stray cross-workspace frame would have arrived by now
       const evt = expect.stringMatching(/^evt_/);
       expect(frames(a.text, 'event')).toEqual([
-        { id: evt, type: 'messages.received', accountId: 7, ts, payload: { text: 'hi' } },
-        { id: evt, type: 'upstream.chat_typing', accountId: 7, ts, payload: {} },
+        { id: evt, type: 'messages.received', accountId: 7, ts, data: { text: 'hi' } },
+        { id: evt, type: 'upstream.chat_typing', accountId: 7, ts, data: {} },
       ]);
       expect(frames(b.text, 'event')).toEqual([
-        { id: evt, type: 'webhook.test', accountId: null, ts: expect.any(String), payload: { message: 'Test event from the gateway' } },
+        { id: evt, type: 'webhook.test', accountId: null, ts: expect.any(String), data: { message: 'Test event from the gateway' } },
       ]);
     } finally {
       a.close();

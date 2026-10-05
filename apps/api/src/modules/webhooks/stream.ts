@@ -1,84 +1,80 @@
 import type { ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
-import type { DeliveryNotice, LiveEvent } from '../../contracts.js';
+import type { DashboardFrame, GatewayEvent } from '../../contracts.js';
+import { subscribe, subscribeDeliveries } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
-import type { Claimed } from './worker.js';
+import { isTeamLinked } from '../../lib/team-link.js';
 
-/**
- * Keepalive comment interval, and each stream's lifetime (checked on the keepalive tick): EventSource then reconnects
- * through requireSession, which re-checks the session. Mutable for tests only.
- */
-export const streamTimings = { heartbeatMs: 25_000, maxMs: 10 * 60_000 };
+export type StreamOptions = {
+  /** Keepalive comment interval. */
+  heartbeatMs?: number;
+  /**
+   * Each stream's lifetime, checked on the keepalive tick: EventSource then reconnects through requireSession, which
+   * re-checks the session, and the workspace link is checked again.
+   */
+  maxMs?: number;
+};
 
-type Listener = { teamId: string; res: ServerResponse; heartbeat: NodeJS.Timeout };
-
-/** Open dashboard streams, each tagged with its session's workspace. */
-const listeners = new Set<Listener>();
-
-function write(l: Listener, chunk: string) {
-  if (!l.res.writableEnded && !l.res.destroyed) l.res.write(chunk);
-}
-
-function drop(l: Listener) {
-  clearInterval(l.heartbeat);
-  listeners.delete(l);
-  if (!l.res.writableEnded) l.res.end();
-}
-
-/** Sends one frame to the open streams of these workspaces only. */
-function send(teamIds: Iterable<string>, event: 'delivery' | 'event', data: unknown) {
-  const teams = new Set(teamIds);
-  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const l of listeners) if (teams.has(l.teamId)) write(l, frame);
-}
-
-/** An ingested upstream event, for the dashboard's live view; `teamIds` are the linked workspaces emit() serves. */
-export function notifyEvent(teamIds: string[], e: LiveEvent): void {
-  send(teamIds, 'event', e);
-}
-
-const NOTICE_STATUS = { succeeded: 'delivered', pending: 'retrying', failed: 'failed' } as const;
-
-/**
- * Sends a finished attempt to the open streams of the endpoint's workspace only. The worker claims deliveries of
- * enabled endpoints, and emit() queues only for endpoints whose events filter matches, so this needs no filter of its own.
- */
-export function notifyDelivery(
-  c: Pick<Claimed, 'id' | 'teamId' | 'endpointId' | 'eventType' | 'url' | 'description'>,
-  outcome: { statusCode: number | null; error: string | null },
-  status: keyof typeof NOTICE_STATUS,
-): void {
-  const notice: DeliveryNotice = {
-    deliveryId: c.id,
-    endpointId: c.endpointId,
-    eventType: c.eventType,
-    url: c.url,
-    description: c.description,
-    status: NOTICE_STATUS[status],
-    ...outcome,
-  };
-  send([c.teamId], 'delivery', notice);
-}
+type Listener = {
+  teamId: string;
+  /** The workspace link as of connect: only linked workspaces get upstream events. */
+  linked: boolean;
+  res: ServerResponse;
+  heartbeat: NodeJS.Timeout;
+};
 
 /**
  * `GET /api/webhooks/stream`: Server-Sent Events of the session workspace's webhook deliveries and upstream events
- * (no replay). `POST /api/webhooks/stream/test` pushes one synthetic `webhook.test` event to the caller's workspace.
+ * (no replay), fed by the event bus. `POST /api/webhooks/stream/test` pushes one synthetic `webhook.test` event to the
+ * caller's workspace. The open streams live in this plugin's closure: one registry per app.
  */
-export default async function webhookStreamRoutes(app: FastifyInstance) {
+export default async function webhookStreamRoutes(app: FastifyInstance, opts: StreamOptions) {
+  const { heartbeatMs = 25_000, maxMs = 10 * 60_000 } = opts;
+  const listeners = new Set<Listener>();
+
+  function write(l: Listener, chunk: string) {
+    if (!l.res.writableEnded && !l.res.destroyed) l.res.write(chunk);
+  }
+
+  function drop(l: Listener) {
+    clearInterval(l.heartbeat);
+    listeners.delete(l);
+    if (!l.res.writableEnded) l.res.end();
+  }
+
+  /** Sends one frame to the open streams of these workspaces only. */
+  function send(teamIds: Iterable<string>, frame: DashboardFrame) {
+    const teams = new Set(teamIds);
+    const chunk = `event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`;
+    for (const l of listeners) if (teams.has(l.teamId)) write(l, chunk);
+  }
+
+  const linkedTeams = () => [...listeners].filter((l) => l.linked).map((l) => l.teamId);
+  const unsubscribe = [
+    subscribe((e) => send(linkedTeams(), { event: 'event', data: e })),
+    // The worker claims deliveries of enabled endpoints, and emit() queues only for endpoints whose events filter
+    // matches, so a delivery needs no filter beyond its workspace.
+    subscribeDeliveries((d) => send([d.teamId], { event: 'delivery', data: d.notice })),
+  ];
+
   app.addHook('preClose', async () => {
+    for (const off of unsubscribe) off();
     for (const l of [...listeners]) drop(l);
   });
 
-  app.get('/webhooks/stream', { preHandler: app.requireSession }, (request, reply) => {
+  app.get('/webhooks/stream', { preHandler: app.requireSession }, async (request, reply) => {
+    const { teamId } = request.session;
+    const linked = await isTeamLinked(teamId);
     reply.hijack();
+    if (request.socket.destroyed) return; // gone during the link check
     const res = reply.raw;
     res.on('error', () => {}); // a write racing a dropped connection must not become an uncaught exception
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
     res.write(': ready\n\n');
-    const { heartbeatMs, maxMs } = streamTimings;
     const closeAt = Date.now() + maxMs;
     const listener: Listener = {
-      teamId: request.session.teamId,
+      teamId,
+      linked,
       res,
       heartbeat: setInterval(() => (Date.now() >= closeAt ? drop(listener) : write(listener, ': ping\n\n')), heartbeatMs),
     };
@@ -87,14 +83,14 @@ export default async function webhookStreamRoutes(app: FastifyInstance) {
   });
 
   app.post('/webhooks/stream/test', { preHandler: app.requireSession }, async (request, reply) => {
-    const e: LiveEvent = {
+    const e: GatewayEvent = {
       id: newId('evt'),
       type: 'webhook.test',
       accountId: null,
       ts: new Date().toISOString(),
-      payload: { message: 'Test event from the gateway' },
+      data: { message: 'Test event from the gateway' },
     };
-    send([request.session.teamId], 'event', e);
+    send([request.session.teamId], { event: 'event', data: e });
     return reply.status(202).send({ event: e });
   });
 }

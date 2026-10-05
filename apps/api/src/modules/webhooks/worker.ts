@@ -1,11 +1,12 @@
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIPv4 } from 'node:net';
 import { sql } from 'drizzle-orm';
+import type { DeliveryNotice } from '../../contracts.js';
 import { db } from '../../db/index.js';
 import { env } from '../../env.js';
+import { publishDelivery } from '../../lib/event-bus.js';
 import { limiter } from '../../lib/limiter.js';
 import { envelope, sign } from '../../lib/signature.js';
-import { notifyDelivery } from './stream.js';
 
 /** Delay before retry n (after the nth finished attempt); the last step repeats. */
 export const BACKOFF_SECONDS = [30, 120, 600, 3600, 21_600];
@@ -160,11 +161,11 @@ async function post(c: Claimed): Promise<{ statusCode: number | null; error: str
 export async function completeDelivery(
   c: Pick<Claimed, 'id' | 'endpointId' | 'leasedUntil'>,
   outcome: { statusCode: number | null; error: string | null },
-): Promise<'succeeded' | 'pending' | 'failed' | undefined> {
+): Promise<DeliveryNotice['status'] | undefined> {
   const ok = outcome.error === null;
   const backoff = sql`array[${sql.raw(BACKOFF_SECONDS.join(','))}]`;
   return db.transaction(async (tx) => {
-    const res = await tx.execute<{ status: 'succeeded' | 'pending' | 'failed' }>(sql`
+    const res = await tx.execute<{ status: DeliveryNotice['status'] }>(sql`
       update webhook_delivery set
         attempts = attempts + 1,
         last_attempt_at = now(),
@@ -195,8 +196,8 @@ export async function completeDelivery(
 const limit = limiter(CONCURRENCY);
 
 /**
- * One worker tick: claim a batch, POST up to CONCURRENCY at a time, record the outcomes and tell the workspace's
- * dashboard streams. The whole batch settles
+ * One worker tick: claim a batch, POST up to CONCURRENCY at a time, record the outcomes and publish each on the bus
+ * (for the workspace's dashboard streams). The whole batch settles
  * before this returns (so the job's overrun guard holds); then it throws if any completion write failed.
  * Returns the number of deliveries attempted.
  */
@@ -207,7 +208,9 @@ export async function deliverDue(): Promise<number> {
       limit(async () => {
         const outcome = await post(c);
         const status = await completeDelivery(c, outcome);
-        if (status) notifyDelivery(c, outcome, status);
+        if (!status) return;
+        const { id: deliveryId, teamId, endpointId, eventType, url, description } = c;
+        publishDelivery({ teamId, notice: { deliveryId, endpointId, eventType, url, description, status, ...outcome } });
       }),
     ),
   );
