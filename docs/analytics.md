@@ -80,6 +80,7 @@ however long after the cap it comes.
 | Id | Unit | Formula |
 |---|---|---|
 | `reply_time` | seconds | Median wait from the turn's first fan message to its reply, over `in_cap` turns only. Late, breached and pending turns are counted beside it, not in it |
+| `reply_time_p90` | seconds | 90th percentile of the same waits as `reply_time` (`in_cap` turns, same `n`), by linear interpolation between closest ranks. Late, breached and pending turns are counted beside it, not in it |
 | `reply_time_mean` | seconds | Mean wait from the turn's first fan message to its reply, over every replied turn (`in_cap` and `late`). Unreplied turns are left out. Comparable to Infloww's reply time |
 | `reply_time_mean_last` | seconds | As `reply_time_mean`, but timed from the last fan message before the reply. Infloww's other possible turn start ([definitions §8](spec/infloww-definitions.md#8-local-evidence-added-2026-10-05)) |
 | `reply_sla` | percent | Turns replied within `sla` (default 15 min), divided by turns that are not pending (replied, or breached). Breached turns count against it |
@@ -126,12 +127,16 @@ Its **status**, against `open_reply` (default 24 h) and `asOf`:
 |---|---|---|
 | `openers` | count | Openers sent in the range, with counts by kind and by status |
 | `opener_reply_rate` | percent | Openers `replied`, divided by openers `replied` or `no_reply`. Pending openers are counted beside it, not in it |
+| `opener_reply_rate_substantive` | percent | As `opener_reply_rate`, but only a fan message of `min_reply_chars` or more (default 15) is a reply, so "ok" is not |
 | `opener_fan_reply_time` | seconds | Median time from an opener to the fan's first message after it, over `replied` openers |
 
 Rows of an opener metric carry `value`, `n`, `openers`, `firstEver`, `reactivation`, `unknownKind`, `replied`,
-`noReply` and `pending`. CSV columns: `group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending`.
+`noReply`, `pending` and `massOrAutomatedGap` (openers whose gap held mass or automated messages, which did not reset
+it). CSV columns:
+`group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap`.
 A sample carries `openerMessageId`, `sentAt`, `kind`, `previousMessageId` and `previousAt` (the DM before it),
-`gapSeconds`, `massOrAutomatedInGap`, `fanReplyMessageId`, `fanReplyAt`, `fanReplySeconds` and `status`.
+`gapSeconds`, `massOrAutomatedInGap`, `fanReplyMessageId`, `fanReplyAt`, `fanReplySeconds` and `status`. For
+`opener_reply_rate_substantive`, the fan reply is the fan's first message of `min_reply_chars` or more.
 
 ## Scripts
 
@@ -150,15 +155,17 @@ A text is eligible only if the result has 4 or more words or 20 or more characte
 not collide. The hash is SHA-256 of the result, first 16 hex characters. It is stored on every outbound message as
 `text_hash`, with `normaliser_version`. Only hashes of the current version are compared.
 
-Being a script is decided over all stored messages of the account, not the range. The backfill and
-`analytics:rehash` record each script found in the `script` table. `GET /v1/stats/scripts` then lists those scripts
-with their sends in the range, so a script can show 1 send in a range when its other sends fall outside it.
+Being a script is decided over all stored messages of the account, not the range: the qualifying 30 days may fall
+outside the requested range. The backfill and `analytics:rehash` record each script found in the `script` table.
+`GET /v1/stats/scripts` then lists those scripts with their sends in the range, so a script can show 1 send in a
+range when its other sends fall outside it; `sendsAll` and `chatsAll` show the sends it qualified on.
 
 Per script:
 
 | Field | Meaning |
 |---|---|
 | `sends`, `chats` | Sends in the range, and the distinct chats they went to |
+| `sendsAll`, `chatsAll` | Sends and distinct chats over all stored history of the accounts in scope, in range or not: the sends being a script is decided on |
 | `firstSentAt`, `lastSentAt` | First and last send in the range |
 | `sequences`, `replied`, `noReply`, `pending` | Outbound sequences holding a send in the range, by status |
 | `replyRate` | `replied` divided by `replied` plus `noReply`, in percent; null when none is decided |

@@ -8,6 +8,8 @@ chat) with every fan username filled, 490 messages (463 inbound, 5 DM, 22 mass) 
 awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers and scripts unverified;
 [docs/analytics.md](../analytics.md)); 30-day live run 2026-09-06..2026-10-06: 259 requests, 12 min, 87 chats, 9150
 messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
+Follow-up 2026-10-06: p90 reply time, substantive opener reply rate, `massOrAutomatedGap` counts and script all-time
+totals shipped; openers and scripts still unverified (morning check pending).
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
