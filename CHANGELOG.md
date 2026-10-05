@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Webhook event `messages.deleted`, from OF's `chat_message_delete` socket frame (payload `{ id }`). It was
+  `upstream.chat_message_delete` before; a value that is not a message id still is. Mapping:
+  `docs/spec/plan-v6-ws-events.md`.
+
+### Changed
+
+- `posts.expired` is documented as firing for any post in the account's feed, not only its own: a socket capture
+  showed OF sends `post_expire` for other creators' posts.
+- `docs/webhooks.md`: `upstream.*` names and contents may change in any minor release.
+
+### Removed
+
+- The upstream no longer forwards counter frames made of numbers and flags only, such as
+  `{"hasSystemNotifications": …, "messages": …}`; they were sent as `upstream.hasSystemNotifications` and
+  `upstream.messages`.
+
 ## [2.1.0] - 2026-10-05
 
 v2.1 adds 41 named per-account operations of the reference API: rows 2.0 left open, and the content, promo and

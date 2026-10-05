@@ -1,0 +1,7 @@
+{
+  "event": "messages.deleted",
+  "account_id": "1001",
+  "payload": {
+    "id": "1012"
+  }
+}

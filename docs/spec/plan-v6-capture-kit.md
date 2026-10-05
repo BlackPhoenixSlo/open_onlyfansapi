@@ -245,6 +245,11 @@ Note the current setting first and restore it after.
    the rows under §1.2.
 3. When the mapping is merged, delete `~/of-captures/` and log out of onlyfans.com.
 
+**2026-10-05:** no per-row captures were produced, so all 72 rows (and the 10 post-probe rows) stay open. A 3-day
+log of inbound OF socket frames was mapped to the webhook events instead: `plan-v6-ws-events.md`.
+When that mapping is merged, delete `~/of-capture/` (singular: the frame log, and a session copy with cookies,
+under `state/`).
+
 ## Not capturable / parked (33 rows)
 
 - **22 *ref* rows** (plan-v6 §8, §9 Q3): the reference's own stored data, not an OF call.

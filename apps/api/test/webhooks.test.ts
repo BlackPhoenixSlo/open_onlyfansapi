@@ -170,6 +170,7 @@ describe('webhooks API', () => {
     expect(byStatus('emitted')).toEqual([
       'messages.received',
       'messages.sent',
+      'messages.deleted',
       'posts.expired',
       'accounts.connected',
       'accounts.reconnected',

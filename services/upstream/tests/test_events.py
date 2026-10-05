@@ -47,6 +47,12 @@ def test_post_expire_with_a_numeric_id_is_not_a_counter():
     assert ev["type"] == "posts.expired" and ev["payload"] == {"postId": 4440001}
 
 
+def test_chat_message_delete_is_messages_deleted():
+    [ev] = classify(ACCOUNT, frame("chat_message_delete"), now=NOW)
+    assert ev == {"id": "message.deleted:100001:5551234", "type": "messages.deleted", "account_id": ACCOUNT,
+                  "ts": "2026-10-02T12:30:00.123Z", "amount_cents": None, "payload": {"id": "5551234"}}
+
+
 # ─── payload contracts (fixtures/payloads) ─────────────────────────
 
 def _parent(path):
@@ -62,7 +68,8 @@ def _gaps(fixture_payload, payload):
 # What our OF frames (`fixtures/of_frames/`, reconstructions, not captures) lack against the reference
 # product's example: the payload is OF's message as it arrives, so these keys reach a client only when
 # OF's frame carries them. A real capture (plan-v4 §9 Q1) replaces the frames and shrinks these sets.
-# Our frame's fromUser is {id, _view}: every other key of the reference's 42-key fromUser is a gap.
+# Our frame's fromUser is {id, _view}: every other key of the reference's 42-key fromUser is a gap. A 2026-10-05
+# capture on a subscriber-side account (docs/spec/plan-v6-ws-events.md) saw all 42; creator-side is unverified.
 _FROM_USER = [k for k in payload_fixture("messages.received")["payload"]["fromUser"] if k != "id"]
 KNOWN_GAPS = {
     "messages.received": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.replyToMessage",
@@ -79,6 +86,12 @@ def test_message_payloads_against_the_fixture(event, of_frame, frame_id):
     [ev] = classify(ACCOUNT, frame(of_frame), now=NOW)
     assert (ev["type"], ev["id"]) == (event, frame_id)
     assert _gaps(payload_fixture(event)["payload"], ev["payload"]) == KNOWN_GAPS[event]
+
+
+def test_messages_deleted_matches_the_fixture():
+    fx = payload_fixture("messages.deleted")
+    [ev] = classify(1001, {"chat_message_delete": "1012"}, now=NOW)
+    assert (ev["type"], ev["id"], ev["payload"]) == (fx["event"], "message.deleted:1001:1012", fx["payload"])
 
 
 def test_frame_id_keeps_the_v4_name():
@@ -99,6 +112,13 @@ def test_noise_is_dropped():
     assert classify(ACCOUNT, {"online_status": {"200002": True}}, now=NOW) == []
     assert classify(ACCOUNT, {"unread_tips": 1}, now=NOW) == []
     assert classify(ACCOUNT, {"some_new_counter": 4}, now=NOW) == []
+    assert classify(ACCOUNT, frame("system_notifications"), now=NOW) == []
+    assert classify(ACCOUNT, {"hasSystemNotifications": False}, now=NOW) == []
+
+
+def test_a_non_numeric_counter_key_passes_through():
+    [ev] = classify(ACCOUNT, {"messages": {"anything": 1}}, now=NOW)
+    assert (ev["type"], ev["payload"]) == ("upstream.messages", {"anything": 1})
 
 
 def test_unknown_key_passes_through_raw():
@@ -110,7 +130,7 @@ def test_unknown_key_passes_through_raw():
 
 def test_unmapped_types_are_never_invented():
     # Tips, PPV unlocks and subscriptions stay unemitted until a real frame is captured.
-    for key in ("tip", "new_subscriber", "purchase"):
+    for key in ("tip", "new_subscriber", "purchase", "story_tips"):
         [ev] = classify(ACCOUNT, {key: {"amount": 5}}, now=NOW)
         assert ev["type"] == f"upstream.{key}"
 
@@ -119,6 +139,11 @@ def test_malformed_frames_yield_nothing():
     assert classify(ACCOUNT, {}, now=NOW) == []
     assert classify(ACCOUNT, {"api2_chat_message": {"text": "no id"}}, now=NOW) == []
     assert classify(ACCOUNT, {"post_expire": None}, now=NOW) == []
+
+
+def test_unparsable_chat_message_delete_passes_through():
+    [ev] = classify(ACCOUNT, {"chat_message_delete": "not-an-id"}, now=NOW)
+    assert (ev["type"], ev["id"], ev["payload"]) == ("upstream.chat_message_delete", None, "not-an-id")
 
 
 def test_dropped_keys_are_logged_once(caplog, monkeypatch):

@@ -3,9 +3,9 @@
 The only code that knows OF's WebSocket shapes. `classify` is pure apart from
 reading the clock when a frame carries no time of its own (`now` overrides it).
 Dropping noise is logged once per key, so losses stay visible.
-Mappings exist only for frames the lifted code has seen (`api2_chat_message`,
-`post_expire`); every other key, minus the noise below, is passed through as
-`upstream.<key>` with its raw value.
+Mappings exist only for frames a capture has shown (`api2_chat_message`, `post_expire`,
+`chat_message_delete`; docs/spec/plan-v6-ws-events.md); every other key, minus the noise below,
+is passed through as `upstream.<key>` with its raw value.
 
 Event names are internal (v4) here; `event()` builds the frame id from the internal name and
 publishes the public (v5) name in `type`. Payloads follow the reference product's example for
@@ -65,6 +65,7 @@ PUBLIC = {
     "subscription.expired": "subscriptions.expired",
     "account.session_expired": "accounts.session_expired",
     "post.expired": "posts.expired",
+    "message.deleted": "messages.deleted",
 }
 
 
@@ -127,7 +128,7 @@ def _chat_message(account_id: int, msg: Any, now: datetime) -> dict | None:
     return event("message.received", account_id, message_id, ts, {**msg, "fanData": _fan_data(ts)})
 
 
-MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire"})
+MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire", "chat_message_delete"})
 
 
 def _drop(keys: Any, why: str) -> None:
@@ -138,9 +139,8 @@ def _drop(keys: Any, why: str) -> None:
 
 
 def _counter_only(frame: dict) -> bool:
-    """Unread/priority counters arrive as frames of bare numbers: noise."""
-    return not MAPPED_KEYS & frame.keys() and all(
-        isinstance(v, (int, float)) and not isinstance(v, bool) for v in frame.values())
+    """Unread/priority counters arrive as frames of bare numbers and flags (`hasSystemNotifications`): noise."""
+    return not MAPPED_KEYS & frame.keys() and all(isinstance(v, (int, float)) for v in frame.values())
 
 
 def classify(account_id: int, frame: dict, *, now: datetime | None = None) -> list[dict]:
@@ -162,6 +162,9 @@ def classify(account_id: int, frame: dict, *, now: datetime | None = None) -> li
             post_id = _int(value)
             ev = (event("post.expired", account_id, post_id, iso(now), {"postId": post_id})
                   if post_id is not None else None)
+        elif key == "chat_message_delete" and _int(value) is not None:
+            message_id = _int(value)
+            ev = event("message.deleted", account_id, message_id, iso(now), {"id": str(message_id)})
         else:
             ev = event(f"upstream.{key}", account_id, None, iso(now), value)
         if ev is not None:

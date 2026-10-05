@@ -53,7 +53,7 @@ it validates. **Status** says whether this gateway sends the event:
 | `messages.received` | emitted | A connected account received a message | The OnlyFans message object, with `fromUser` |
 | `messages.sent` | emitted | A connected account sent a message | The OnlyFans message object, with `toUser` |
 | `messages.ppv.unlocked` | TBC | A fan unlocked a paid message (post unlocks arrive as `transactions.new`) | The OnlyFans notification, with `user` |
-| `messages.deleted` | TBC | A message was deleted | `{ id }` |
+| `messages.deleted` | emitted | A message in one of the account's chats was deleted | `{ id }` (the message id, as a string) |
 | `messages.liked` | TBC | A fan liked a message | `{ id }` |
 | `messages.unliked` | TBC | A fan unliked a message | `{ id }` |
 | `chat_queue.updated` | TBC | A mass-message queue made progress | The queue's state (`pending`, `total`, `isDone`, ...) |
@@ -65,7 +65,7 @@ it validates. **Status** says whether this gateway sends the event:
 | `users.online` | TBC | A fan came online | `{ fan, observed_at, ... }` |
 | `users.offline` | TBC | A fan went offline | Same as `users.online` |
 | `posts.liked` | TBC | A fan liked a post | The OnlyFans notification, with `user` |
-| `posts.expired` | emitted | A post of a connected account expired (ours; the reference API has no such event) | `{ postId }` |
+| `posts.expired` | emitted | A post in the account's feed expired, not only one of its own (ours; the reference API has no such event) | `{ postId }` |
 | `tips.received` | TBC | A fan tipped | The OnlyFans notification, with `amountGross`, `amountNet` and `user` |
 | `transactions.new` | TBC | A new earnings transaction | The transaction (`amount`, `net_amount`, `currency`, ...) |
 | `accounts.connected` | emitted | An account was connected for the first time (`connect.py`) | `{ state, progress, latestAuthAttempt }` |
@@ -85,7 +85,8 @@ upstream; amounts are OnlyFans' gross figures in cents, and the ledger behind `/
 
 When the upstream starts mapping a TBC type, its frames move from `upstream.<name>` to the catalogue name. An
 endpoint that relied on `upstream.*` for them then needs the catalogue name in its `events` filter (or an empty
-filter).
+filter). `upstream.*` names and contents are not a stable contract: any minor release may move one to a catalogue name
+or stop sending it.
 
 `accounts.reconnected` fires on every successful bootstrap of an account that already had a session, not only after
 a disconnect or an expired session.
@@ -93,7 +94,11 @@ a disconnect or an expired session.
 **Payload notes.** The payloads have the keys of the reference API's examples, but live OnlyFans frames carry fewer
 of them:
 
-- `fromUser` on a live `messages.received` frame has only `id`, and `messages.sent` has no `toUser`.
+- `messages.received`: observed on a subscriber-side account (a 3-day capture, docs/spec/plan-v6-ws-events.md), the
+  frame carried the reference's full 42-key `fromUser` and no `replyToMessage`; creator-side frames are
+  unverified. `messages.sent` was not observed; it is assumed to have no `toUser`.
+- `posts.expired`: in the same capture OnlyFans sent `post_expire` for posts of other creators in the account's
+  feed, at about 480 a day, so the event and its `/v1/stats` count are not limited to the account's own posts.
 - `fanData.available` is `false` and the `spending` figures are zero, because the gateway does not compute fan
   spending. `fanData.last_updated_at` is the message's time. Branch on `available` before using `spending`.
 
