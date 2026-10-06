@@ -79,14 +79,17 @@ again: there is no resume. A chat's coverage never moves back: a narrower re-run
 
 `--dry-run` makes the same requests but stores nothing (no claim, rows, coverage or script candidates) and writes the
 CSVs from what it read, for comparing a fresh re-read with the stored rows. Its `chats.csv` lists this run's walks only,
-and its `reply_times.csv` sees only the messages walked (back to each chat's boundary page).
+and its `reply_times.csv` sees only the messages walked (back to each chat's boundary page). Its incomplete-chats count
+comes from this run's walks only (no stored coverage is merged). `--team` is unchecked in a dry run: nothing checks
+that the workspace is linked or allowed the account.
 
 ## Request budget
 
 For one account-week: chat-list pages + for each chat active that week (its pages in the week + 1 boundary page) +
 one mass-history window per day from the day before `--from` to today (8 for last week, more for an older week) +
 transaction pages. With 1,000 active chats at about 2 pages each, that is roughly 2,000 requests, about 3.5 hours at
-the default cap. The limits:
+the default cap. Add 1 messages page per chat listed with `lastMessage: null`, and up to `QUIET_CHAT_PAGES` more list
+pages. The limits:
 
 | Variable | Default | Meaning |
 |---|---|---|

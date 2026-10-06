@@ -10,10 +10,9 @@ awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers 
 messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
 Follow-up 2026-10-06: p90 reply time, substantive opener reply rate, `massOrAutomatedGap` counts and script all-time
 totals shipped; openers and scripts still unverified (morning check pending).
-Completeness (6.1) checked on the last 7 days with `analytics:backfill --dry-run`: every per-chat count difference is
-explained (late arrivals, fan deletions, one chat-list gap for chats whose last message was deleted, now fixed, and
-one documented quiet-page miss) and the transactions check is vacuous (0 = 0); the Infloww diff and the morning
-verdict are still pending.
+Completeness (6.1) checked 2026-10-06 with `--dry-run`, messages 2026-09-29..10-06 and transactions 2026-09-06..10-06:
+per-chat differences explained (late arrivals, fan deletions), the deleted-last-message chat gap fixed in code (not
+re-run live), one documented quiet-page miss, transactions vacuous (0 = 0).
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
@@ -288,6 +287,7 @@ Acceptance, for one account and one past week:
 
 - each slice metric has a value and 20 samples the client confirms by hand in OF;
 - completeness: per-chat message counts match a fresh re-read, and the week's `tx` total matches `earn` for the same
-  days (Totals vs OF);
+  days (Totals vs OF). On 2026-10-06 the upstream's `/payouts/earning-statistics` and `/payouts/transactions?startDate=`
+  ignored the date range and returned all-time figures, so the backfill filters by date itself;
 - the Infloww diff has every difference explained or listed as unresolved;
 - a key from a second workspace sees none of it.

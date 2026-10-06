@@ -1,4 +1,4 @@
-// Reads one account's backfilled range from the analytics tables and writes the step 0 CSVs (analytics-csv.ts).
+// Reads one account's backfilled range from the analytics tables (or from a dry run's rows) and writes the step 0 CSVs (analytics-csv.ts).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq, gte, lt } from 'drizzle-orm';

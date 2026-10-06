@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
 import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
-import { backfill } from '../modules/analytics/backfill.js';
+import { backfill, type BackfillRows } from '../modules/analytics/backfill.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 
 const USAGE = 'usage: analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]';
@@ -54,8 +54,10 @@ try {
   const upstream = createUpstream({ url: env.UPSTREAM_URL, token: env.UPSTREAM_TOKEN, timeoutMs: env.UPSTREAM_TIMEOUT_MS });
   console.log(`backfilling account ${accountId} of workspace ${teamId}, ${from.toISOString()} to ${to.toISOString()}${dryRun ? ' (dry run: stores nothing)' : ''}`);
   if (automationFile) console.log(`automation texts: ${automationTexts.length} from ${automationFile}`);
-  const result = await backfill({ upstream, teamId, accountId, from, to, config: { automationTexts }, signal: stop.signal, dryRun });
-  console.log(`requests: ${result.requests}; stopped: ${result.stopped ? 'yes (partial: re-run to finish, rows upsert)' : 'no'}`);
+  const rows: BackfillRows | undefined = dryRun ? { messages: [], chats: [], transactions: [] } : undefined;
+  const result = await backfill({ upstream, teamId, accountId, from, to, config: { automationTexts }, signal: stop.signal, rows });
+  const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
+  console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
   console.log(
     `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
   );
@@ -63,7 +65,7 @@ try {
     `unmatched queue ids ${result.unmatchedQueueIds} (outbound sends with a queue id mass history does not list); ` +
       `incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`,
   );
-  const written = result.rows ? await writeRowsExport({ rows: result.rows, from, to, outDir }) : await writeExport({ teamId, accountId, from, to, outDir });
+  const written = rows ? await writeRowsExport({ rows, from, to, outDir }) : await writeExport({ teamId, accountId, from, to, outDir });
   console.log(
     `wrote ${outDir}: messages.csv ${written.messages}, chats.csv ${written.chats}, transactions.csv ${written.transactions}, reply_times.csv ${written.replyTimes} rows`,
   );

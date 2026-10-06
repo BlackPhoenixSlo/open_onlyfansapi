@@ -5,11 +5,11 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { apiKey, chatCoverage, messageFact, purchaseFact } from '../src/db/schema.js';
+import { apiKey, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
 import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS, readCsv } from '../src/cli/analytics-csv.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
-import { backfill, type BackfillOptions } from '../src/modules/analytics/backfill.js';
+import { backfill, type BackfillOptions, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
@@ -167,6 +167,7 @@ const counts = async () => ({
   messages: await db.$count(messageFact),
   coverage: await db.$count(chatCoverage),
   purchases: await db.$count(purchaseFact),
+  scripts: await db.$count(script),
 });
 
 beforeAll(async () => {
@@ -259,7 +260,7 @@ describe('analytics backfill', () => {
     fake.state.of!.messages[2001]![0]!.text = '<p>edited</p>';
     await backfill(opts());
     expect(await counts()).toEqual(first);
-    expect(first).toEqual({ messages: 12, coverage: 3, purchases: 3 });
+    expect(first).toMatchObject({ messages: 12, coverage: 3, purchases: 3 });
     const [edited] = await db.select().from(messageFact).where(eq(messageFact.messageId, 110));
     expect(edited!.raw.text).toBe('<p>edited</p>');
   });
@@ -389,7 +390,7 @@ describe('analytics backfill', () => {
     expect(result).toMatchObject({ stopped: true, requests: 10, chats: 1, transactions: 0 });
     expect(p.started).toHaveLength(10);
     // Chat 2001's walk was cut short, so it records no coverage.
-    expect(await counts()).toEqual({ messages: 6, coverage: 1, purchases: 0 });
+    expect(await counts()).toMatchObject({ messages: 6, coverage: 1, purchases: 0 });
   });
 
   it('backs off on 429 for Retry-After, then carries on', async () => {
@@ -519,12 +520,16 @@ describe('analytics CSV export', () => {
 
   it('dry run: makes the same requests, stores nothing, and writes the same CSVs as a stored run', async () => {
     const asOf = new Date('2026-09-02T21:00:00.000Z');
+    const before = await counts();
+    expect(before).toMatchObject({ messages: 0, coverage: 0, purchases: 0 });
     const start = fake.requests.length;
-    const { rows, ...dry } = await backfill(opts({ dryRun: true }));
+    const rows: BackfillRows = { messages: [], chats: [], transactions: [] };
+    // Workspace B cannot claim the account (see analytics tenancy): the dry run passing proves it claims nothing.
+    const dry = await backfill(opts({ teamId: teamB, rows }));
     const dryCalls = ofCalls(start);
-    expect(await counts()).toEqual({ messages: 0, coverage: 0, purchases: 0 });
+    expect(await counts()).toEqual(before); // no rows, coverage, purchases or scripts
     const dryDir = await mkdtemp(join(tmpdir(), 'analytics-'));
-    expect(await writeRowsExport({ rows: rows!, from: FROM, to: TO, outDir: dryDir, asOf })).toEqual({ messages: 11, chats: 3, transactions: 3, replyTimes: 5 });
+    expect(await writeRowsExport({ rows, from: FROM, to: TO, outDir: dryDir, asOf })).toEqual({ messages: 11, chats: 3, transactions: 3, replyTimes: 5 });
 
     const storedStart = fake.requests.length;
     expect(await backfill(opts())).toEqual(dry);
