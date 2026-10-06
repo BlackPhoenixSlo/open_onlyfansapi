@@ -10,6 +10,10 @@ awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers 
 messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
 Follow-up 2026-10-06: p90 reply time, substantive opener reply rate, `massOrAutomatedGap` counts and script all-time
 totals shipped; openers and scripts still unverified (morning check pending).
+Completeness (6.1) checked on the last 7 days with `analytics:backfill --dry-run`: every per-chat count difference is
+explained (late arrivals, fan deletions, one chat-list gap for chats whose last message was deleted, now fixed, and
+one documented quiet-page miss) and the transactions check is vacuous (0 = 0); the Infloww diff and the morning
+verdict are still pending.
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
