@@ -257,9 +257,11 @@ gateway to see its text and time: `GET /v1/<account>/chats/<chat id>/messages/<m
 2. They must not be different offers: a different price, number or media means the normaliser merged too much.
 3. Note texts you know are one script but appear as separate hashes (an edit, a typo): the normaliser splits too
    much there.
-4. A script with 1 send in the range is expected when its other sends fall outside the range: compare `sends` with
-   `sendsAll` and `chatsAll` in `GET /v1/stats/scripts`; a hash with `sendsAll` of 5 or more is a script that happens
-   to have one send here (see [Scripts](#scripts)).
+4. A script with 1 send in the range is expected when its other sends fall outside the range: in
+   `GET /v1/stats/scripts` its `sendsAll` and `chatsAll` are then higher than `sends` and `chats`. With a key over
+   all accounts a script has `sendsAll` of at least 5 and `chatsAll` of at least 3 (detection needs that on one
+   account); lower all-time counts there are a wrong row. A key limited to some accounts may see less
+   (see [Scripts](#scripts)).
 
 **After.** Nothing flips `verified` yet; that is a later step. Send the notes to the developer. A wrong row needs its
 chat id, message id and what OF shows, so the rule can be fixed and the CLIs re-run.

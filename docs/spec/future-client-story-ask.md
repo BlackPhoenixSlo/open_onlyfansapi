@@ -9,9 +9,7 @@ awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers 
 [docs/analytics.md](../analytics.md)); 30-day live run 2026-09-06..2026-10-06: 259 requests, 12 min, 87 chats, 9150
 messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
 Follow-up 2026-10-06: p90 reply time, substantive opener reply rate, `massOrAutomatedGap` counts and script all-time
-totals shipped; openers and scripts still unverified (morning check pending). Pass of 2026-10-06 (later): no
-morning verdict file, so no `verified` flag flipped; checklist and catalogue wording tidied; Infloww diff still
-awaits the client's export.
+totals shipped; openers and scripts still unverified (morning check pending).
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
