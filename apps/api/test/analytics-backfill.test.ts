@@ -315,6 +315,15 @@ describe('analytics backfill', () => {
     expect(await backfill(opts())).toMatchObject({ chats: 3 });
   });
 
+  it('walks a chat whose last message was deleted (lastMessage null)', async () => {
+    const of = fake.state.of!;
+    of.messages[2006] = [msg(602, '09-02T11:00', 2006), msg(601, '09-02T10:00', ACCOUNT)]; // its newer last message is gone
+    of.chats.splice(3, 0, { withUser: { id: 2006, username: 'fan_six' }, lastMessage: null });
+    expect(await backfill(opts())).toMatchObject({ chats: 4 });
+    const stored = await db.select().from(messageFact).where(eq(messageFact.chatId, 2006)).orderBy(messageFact.messageId);
+    expect(stored.map((r) => r.messageId)).toEqual([601, 602]);
+  });
+
   it.each([
     ['nextOffset', false],
     ['the chats returned, without nextOffset', true],

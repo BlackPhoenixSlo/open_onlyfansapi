@@ -104,7 +104,7 @@ type Raw = Record<string, unknown>;
  * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set).
  */
 export type FakeOf = {
-  chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } }[];
+  chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } | null }[];
   messages: Record<number, Raw[]>;
   mass: (Raw & { id: number; date: string })[];
   transactions: (Raw & { createdAt: string })[];

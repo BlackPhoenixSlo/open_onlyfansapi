@@ -61,7 +61,8 @@ OF answers about 10 chats a page (sometimes 17 to 19) whatever the `limit`, so t
 `nextOffset` (by the number of chats returned when it is missing) until `hasMore` is false or a page adds no new
 chat. The list is not strictly newest first: pinned and unread chats come first and older chats appear mid-list. So
 one page with no chat active since `--from` does not end it; two such pages in a row do (`QUIET_CHAT_PAGES`). An
-active chat listed after two quiet pages in a row is missed.
+active chat listed after two quiet pages in a row is missed. OF lists a chat whose latest message was deleted with
+`lastMessage: null`; such a chat counts as active and is walked, so its other messages are read.
 
 It prints the request count and whether it was stopped, then two checks:
 

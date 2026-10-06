@@ -240,7 +240,8 @@ type Chat = { id: number; username: string | null; name: string | null; customNa
  * Chats (the fan's id and username, `skip_users=none` so OF sends the full `withUser`), most recent first. Pages by
  * the page's `nextOffset` (else by the chats it returned: OF's pages are short whatever the limit) until `hasMore` is
  * false, a page adds no new chat, or QUIET_CHAT_PAGES pages in a row have no chat active since `from`: the order is
- * not strictly recent (a pinned or unread chat can come first, an older one mid-list).
+ * not strictly recent (a pinned or unread chat can come first, an older one mid-list). A chat with `lastMessage: null`
+ * (its latest message deleted) counts as active.
  */
 async function listChats(get: Get, from: number): Promise<Chat[]> {
   const chats: Chat[] = [];
@@ -256,7 +257,9 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
       if (!Number.isFinite(id) || seen.has(id)) continue; // no fan, or a repeat
       seen.add(id);
       fresh++;
-      const lastAt = time((chat.lastMessage as Raw | undefined)?.createdAt);
+      // `lastMessage: null`: OF's answer when the chat's latest message was deleted. Walked and counted active, so
+      // its other messages are read and it never ends the list early.
+      const lastAt = chat.lastMessage === null ? from : time((chat.lastMessage as Raw | undefined)?.createdAt);
       if (!(lastAt >= from)) continue; // no messages, or quiet since before the range
       chats.push({ id, username: username(chat.withUser), name: field(chat.withUser, 'name'), customName: field(chat.withUser, 'displayName') });
       active++;
