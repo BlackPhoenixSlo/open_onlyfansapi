@@ -68,6 +68,7 @@ GET settings
 GET settings/blocked-countries
 GET settings/drm
 GET settings/social-media-buttons
+GET settings/welcome-message
 GET statistics/overview
 GET statistics/reach/profile-visitors
 GET statistics/statements/earnings
