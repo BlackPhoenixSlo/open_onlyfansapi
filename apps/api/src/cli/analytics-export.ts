@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { and, asc, eq, gte, lt } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../db/schema.js';
-import { replyTimes } from '../modules/analytics/turns.js';
-import { exportFiles } from './analytics-csv.js';
+import type { BackfillRows } from '../modules/analytics/backfill.js';
+import { fanTurns, replyTimes } from '../modules/analytics/turns.js';
+import { exportFiles, type ExportData } from './analytics-csv.js';
 
 /** The client's automation texts (`analytics:backfill --automation`): one per line, blank lines ignored. */
 export async function readAutomationTexts(file: string): Promise<string[]> {
@@ -68,10 +69,29 @@ export async function writeExport(opts: { teamId: string; accountId: number; fro
     .where(and(eq(purchaseFact.teamId, teamId), eq(purchaseFact.accountId, accountId), gte(purchaseFact.createdAt, from), lt(purchaseFact.createdAt, to)))
     .orderBy(asc(purchaseFact.createdAt), asc(purchaseFact.txId));
   const turns = await replyTimes(teamId, accountId, from, to, opts.asOf);
+  return writeFiles(opts.outDir, { messages, chats, transactions, turns });
+}
 
-  await mkdir(opts.outDir, { recursive: true });
-  for (const [name, content] of Object.entries(exportFiles({ messages, chats, transactions, turns }))) {
-    await writeFile(join(opts.outDir, name), content);
+/**
+ * The same four CSVs from the rows a dry run read (`analytics:backfill --dry-run`) instead of the database: chats
+ * are this run's walks only, and reply times see only the messages walked (back to each chat's boundary page).
+ */
+export async function writeRowsExport(opts: { rows: BackfillRows; from: Date; to: Date; outDir: string; asOf?: Date }) {
+  const { rows, from, to } = opts;
+  const inRange = (t: Date) => t >= from && t < to;
+  const messages = rows.messages.filter((m) => inRange(m.createdAt)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.messageId - b.messageId);
+  const chats = [...rows.chats].sort((a, b) => a.chatId - b.chatId);
+  const transactions = rows.transactions
+    .filter((t) => inRange(t.createdAt))
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.txId < b.txId ? -1 : a.txId > b.txId ? 1 : 0));
+  const turns = fanTurns(rows.messages, { asOf: opts.asOf ?? new Date() }).filter((t) => inRange(t.inboundAt));
+  return writeFiles(opts.outDir, { messages, chats, transactions, turns });
+}
+
+async function writeFiles(outDir: string, data: ExportData) {
+  await mkdir(outDir, { recursive: true });
+  for (const [name, content] of Object.entries(exportFiles(data))) {
+    await writeFile(join(outDir, name), content);
   }
-  return { messages: messages.length, chats: chats.length, transactions: transactions.length, replyTimes: turns.length };
+  return { messages: data.messages.length, chats: data.chats.length, transactions: data.transactions.length, replyTimes: data.turns.length };
 }

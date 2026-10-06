@@ -7,7 +7,7 @@ import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream, UpstreamResponse } from '../../lib/upstream.js';
 import { backfillConfig, type BackfillConfig } from './config.js';
-import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type Raw } from './derive.js';
+import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type DerivedMessage, type DerivedPurchase, type Raw } from './derive.js';
 import { syncScripts } from './scripts.js';
 import { claimAccount } from './workspace.js';
 
@@ -28,6 +28,15 @@ export type BackfillOptions = {
   config?: Partial<BackfillConfig>;
   /** Aborting ends the run at once (a request in flight finishes), keeping the rows already stored. */
   signal?: AbortSignal;
+  /** Store nothing (no claim, rows, coverage or script sync): the rows read are returned in `rows` instead. */
+  dryRun?: boolean;
+};
+
+/** What a dry run read: every message walked (both sides of the range), each chat's walk, the range's transactions. */
+export type BackfillRows = {
+  messages: DerivedMessage[];
+  chats: { chatId: number; fanUsername: string | null; oldestMessageId: number | null; oldestAt: Date | null; reachedStart: boolean; walkedAt: Date }[];
+  transactions: DerivedPurchase[];
 };
 
 export type BackfillResult = {
@@ -45,6 +54,8 @@ export type BackfillResult = {
   unmatchedQueueIds: number;
   /** Chats whose walk stopped on a page with no new id before reaching back to `from` (nor to the chat's start). */
   incompleteChats: number;
+  /** Dry run only. */
+  rows?: BackfillRows;
 };
 
 /** One account at a time across the process (spec §6.1). */
@@ -106,7 +117,8 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   const to = opts.to.getTime();
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
   const cfg = backfillConfig(opts.config);
-  await claimAccount(teamId, accountId);
+  const sink: BackfillRows | null = opts.dryRun ? { messages: [], chats: [], transactions: [] } : null;
+  if (!sink) await claimAccount(teamId, accountId);
 
   const result: BackfillResult = {
     stopped: false,
@@ -180,18 +192,19 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
 
     const unmatched = new Set<number>();
     for (const chat of await listChats(get, from)) {
-      const walk = await walkChat(get, ctx, teamId, chat, from, massFrom);
+      const walk = await walkChat(get, ctx, teamId, chat, from, massFrom, sink);
       result.messages += walk.messages;
       for (const q of walk.unmatchedQueueIds) unmatched.add(q);
       result.unmatchedQueueIds = unmatched.size;
       if (walk.incomplete) result.incompleteChats++;
       result.chats++;
     }
-    result.transactions = await readTransactions(get, teamId, accountId, from, to);
+    result.transactions = await readTransactions(get, teamId, accountId, from, to, sink);
   } catch (err) {
     if (!signal?.aborted) throw err;
     result.stopped = true;
   }
+  if (sink) return { ...result, rows: sink };
   await syncScripts(teamId, accountId);
   return result;
 }
@@ -261,7 +274,8 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
  * reaching before `from` (the boundary page). Messages before `massFrom` (the boundary page's tail) were derived
  * without their mass history, so they are only inserted, never updated: a later run that read it is not undone.
  * Merges coverage: it never moves back. Returns the messages stored, the queue ids from `massFrom` on that mass
- * history does not list, and whether the stored coverage still falls short of `from`.
+ * history does not list, and whether the stored coverage still falls short of `from`. With `sink` (dry run), the
+ * rows and this walk's own coverage go there instead of the database.
  */
 async function walkChat(
   get: Get,
@@ -270,6 +284,7 @@ async function walkChat(
   chat: Chat,
   from: number,
   massFrom: number,
+  sink: BackfillRows | null,
 ): Promise<{ messages: number; unmatchedQueueIds: number[]; incomplete: boolean }> {
   const chatId = chat.id;
   const seen = new Set<string | number>();
@@ -296,13 +311,14 @@ async function walkChat(
       const fan = Number((r.raw.fromUser as Raw | undefined)?.id) === chatId ? r.raw.fromUser : r.raw.toUser;
       fanUsername ??= username(fan);
     }
-    if (covered.length) {
+    if (sink) sink.messages.push(...rows.map(({ teamId: _t, accountId: _a, raw: _r, fetchedAt: _f, ...d }) => d));
+    else if (covered.length) {
       await db
         .insert(messageFact)
         .values(covered)
         .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
     }
-    if (tail.length) await db.insert(messageFact).values(tail).onConflictDoNothing();
+    if (!sink && tail.length) await db.insert(messageFact).values(tail).onConflictDoNothing();
     for (const r of rows) {
       if (!oldest || r.messageId < oldest.id) oldest = { id: r.messageId, at: r.createdAt };
     }
@@ -324,6 +340,11 @@ async function walkChat(
     reachedStart,
     walkedAt: new Date(),
   };
+  if (sink) {
+    sink.chats.push(coverage);
+    const incomplete = !coverage.reachedStart && coverage.oldestAt !== null && coverage.oldestAt.getTime() > from;
+    return { messages: seen.size, unmatchedQueueIds: [...unmatched], incomplete };
+  }
   // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.
   const older = sql`(${chatCoverage.oldestMessageId} is null or excluded.oldest_message_id < ${chatCoverage.oldestMessageId})`;
   const [merged] = await db
@@ -347,8 +368,8 @@ async function walkChat(
   return { messages: seen.size, unmatchedQueueIds: [...unmatched], incomplete };
 }
 
-/** The range's transactions (newest first from OF), stopping at the first page reaching before `from`. */
-async function readTransactions(get: Get, teamId: string, accountId: number, from: number, to: number): Promise<number> {
+/** The range's transactions (newest first from OF), stopping at the first page reaching before `from`; to `sink` on a dry run. */
+async function readTransactions(get: Get, teamId: string, accountId: number, from: number, to: number, sink: BackfillRows | null): Promise<number> {
   const seen = new Set<string>();
   let stored = 0;
   for (let offset = 0; ; offset += PAGE) {
@@ -358,13 +379,14 @@ async function readTransactions(get: Get, teamId: string, accountId: number, fro
     const rows = list
       .map((raw) => ({ teamId, accountId, ...derivePurchase(raw), raw }))
       .filter((r) => r.createdAt.getTime() >= from && r.createdAt.getTime() < to);
-    if (rows.length) {
+    if (sink) sink.transactions.push(...rows.map(({ teamId: _t, accountId: _a, raw: _r, ...d }) => d));
+    else if (rows.length) {
       await db
         .insert(purchaseFact)
         .values(rows)
         .onConflictDoUpdate({ target: [purchaseFact.accountId, purchaseFact.txId], set: updateAll(purchaseFact, ['accountId', 'txId']) });
-      stored += rows.length;
     }
+    stored += rows.length;
     if (!hasMore(page) || list.some((tx) => time(tx.createdAt) < from)) break;
   }
   return stored;

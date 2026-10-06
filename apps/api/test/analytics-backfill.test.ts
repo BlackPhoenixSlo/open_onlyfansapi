@@ -7,7 +7,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { apiKey, chatCoverage, messageFact, purchaseFact } from '../src/db/schema.js';
 import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS, readCsv } from '../src/cli/analytics-csv.js';
-import { accountTeam, readAutomationTexts, writeExport } from '../src/cli/analytics-export.js';
+import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
 import { backfill, type BackfillOptions } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
@@ -506,6 +506,25 @@ describe('analytics CSV export', () => {
       ['2003', '2026-09-02T08:00:00.000Z', '2026-09-02T09:00:00.000Z', '3600', 'in_cap', 'false', 'false'],
       ['2003', '2026-09-02T20:00:00.000Z', '', '', 'pending', 'false', 'false'],
     ]);
+  });
+
+  it('dry run: makes the same requests, stores nothing, and writes the same CSVs as a stored run', async () => {
+    const asOf = new Date('2026-09-02T21:00:00.000Z');
+    const start = fake.requests.length;
+    const { rows, ...dry } = await backfill(opts({ dryRun: true }));
+    const dryCalls = ofCalls(start);
+    expect(await counts()).toEqual({ messages: 0, coverage: 0, purchases: 0 });
+    const dryDir = await mkdtemp(join(tmpdir(), 'analytics-'));
+    expect(await writeRowsExport({ rows: rows!, from: FROM, to: TO, outDir: dryDir, asOf })).toEqual({ messages: 11, chats: 3, transactions: 3, replyTimes: 5 });
+
+    const storedStart = fake.requests.length;
+    expect(await backfill(opts())).toEqual(dry);
+    expect(ofCalls(storedStart)).toEqual(dryCalls);
+    const dir = await mkdtemp(join(tmpdir(), 'analytics-'));
+    await writeExport({ teamId: teamA, accountId: ACCOUNT, from: FROM, to: TO, outDir: dir, asOf });
+    for (const name of ['messages.csv', 'chats.csv', 'transactions.csv', 'reply_times.csv']) {
+      expect(await readFile(join(dryDir, name), 'utf8')).toBe(await readFile(join(dir, name), 'utf8'));
+    }
   });
 
   it('reads the automation texts file: one per line, blank lines ignored', async () => {

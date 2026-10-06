@@ -11,7 +11,7 @@ Three commands, all run from the repo root:
 | Command | What it does |
 |---|---|
 | `pnpm --filter @gateway/api analytics:claim --team <teamId> --account <id>` | Records that the account belongs to the workspace |
-| `pnpm --filter @gateway/api analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>]` | Backfills the range, then writes four CSVs to `<dir>` |
+| `pnpm --filter @gateway/api analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]` | Backfills the range, then writes four CSVs to `<dir>` |
 | `pnpm --filter @gateway/api analytics:diff --ours <dir> --infloww <file.csv> [--tz <offset>]` | Compares the CSVs with an Infloww export |
 
 In the container, run `node dist/cli/analytics-<name>.js` with the same arguments (`docker compose exec gateway …`),
@@ -75,6 +75,10 @@ Then the row count of each file. Last, stopped or not, it records the account's 
 ([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
 again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
 `reached_start` an earlier run reached.
+
+`--dry-run` makes the same requests but stores nothing (no claim, rows, coverage or script candidates) and writes the
+CSVs from what it read, for comparing a fresh re-read with the stored rows. Its `chats.csv` lists this run's walks only,
+and its `reply_times.csv` sees only the messages walked (back to each chat's boundary page).
 
 ## Request budget
 
