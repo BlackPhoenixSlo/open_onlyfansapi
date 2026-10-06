@@ -112,7 +112,7 @@ const TURN_DEFINITIONS = {
   reply_time_substantive: {
     name: 'Substantive reply time (median)',
     description:
-      'As reply_time, but only a DM of min_reply_chars or more (text after tag strip) ends a fan turn, so "one sec babe" does not stop the clock.',
+      'As reply_time, but only a DM of min_reply_chars or more (after the text normaliser) ends a fan turn, so "one sec babe" does not stop the clock.',
     unit: 'seconds',
     windows: ['reply_cap', 'sla', 'min_reply_chars'],
     substantive: true,
