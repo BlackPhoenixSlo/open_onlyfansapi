@@ -9,6 +9,10 @@ import {
   statsBackfillStarted,
   statsConfigGetResponse,
   statsConfigResponse,
+  statsFans,
+  statsFansQuery,
+  statsMessages,
+  statsMessagesQuery,
   statsMetricList,
   statsMetricQuery,
   statsMetricSeries,
@@ -43,6 +47,7 @@ import { connectedAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
+import { csvSafeText, MESSAGE_EXPORT_COLUMNS, scopedFans, scopedMessages } from '../analytics/messages.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
@@ -75,8 +80,9 @@ const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.en
 const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
 
 /**
- * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6) and `/v1/stats/backfill`: reply time, reply SLA, openers and
- * script candidates over the workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
+ * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6), `/v1/stats/fans`, `/v1/stats/messages` and
+ * `/v1/stats/backfill`: reply time, reply SLA, openers, script candidates and the stored messages per fan over the
+ * workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -149,6 +155,39 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       items: items.slice(0, query.limit),
     };
   });
+
+  r.get('/stats/fans', { schema: { tags, querystring: statsFansQuery, response: { 200: statsFans } } }, async (request) => {
+    const { actor, query } = request;
+    const cfg = await getStatsConfig(actor.teamId);
+    const span = range(query, cfg.timezone);
+    const asOf = new Date();
+    const items = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit);
+    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, items };
+  });
+
+  /** `format=csv` sends every message in the range (no `limit`), UTF-8 with a BOM so Excel reads emoji and accents. */
+  const messagesOrCsv = z.union([statsMessages, z.string()]);
+  r.get(
+    '/stats/messages',
+    { schema: { tags, querystring: statsMessagesQuery, response: { 200: messagesOrCsv } } },
+    async (request, reply) => {
+      const { actor, query } = request;
+      const cfg = await getStatsConfig(actor.teamId);
+      const span = range(query, cfg.timezone);
+      const asOf = new Date();
+      const csv = query.format === 'csv';
+      const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span, chatId: query.chatId, direction: query.direction };
+      const items = await scopedMessages(scope, csv ? undefined : query.limit);
+      if (csv) {
+        const name = ['messages', query.chatId, query.direction, span.fromDay, span.toDay].filter((x) => x !== undefined).join('_');
+        return reply
+          .type('text/csv; charset=utf-8')
+          .header('content-disposition', `attachment; filename="${name}.csv"`)
+          .send(`\uFEFF${toCsv(MESSAGE_EXPORT_COLUMNS, items.map((m) => snakeCase({ ...m, text: csvSafeText(m.text) })))}`);
+      }
+      return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, items };
+    },
+  );
 
   r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => {
     const { teamId } = request.actor;

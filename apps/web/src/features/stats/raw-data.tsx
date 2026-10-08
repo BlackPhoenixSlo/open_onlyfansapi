@@ -1,12 +1,12 @@
 import type { StatsMetric, StatsMetricRow } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { NoData, Skeleton } from '@/features/stats/cards';
+import { downloadCsv } from '@/features/stats/fans';
 import { formatPercent, formatWait } from '@/features/stats/series';
 import { type StatsRange, statsMetricPath, statsMetricQuery } from '@/lib/api';
 
@@ -55,23 +55,10 @@ export function RawData({
   });
   const columns = COUNT_COLUMNS.filter(([key]) => series.data?.rows.some((r) => r[key] !== undefined));
 
-  async function downloadCsv() {
+  function exportCsv() {
     if (!metric || !range) return;
-    // A plain link would not send `x-dashboard`, so the session would not authorise it.
-    const res = await fetch(statsMetricPath(metric, { ...range, groupBy: 'day' }, 'csv'), {
-      headers: { 'x-dashboard': '1' },
-      credentials: 'include',
-    });
-    if (!res.ok) {
-      toast.error(`CSV export failed (${res.status})`);
-      return;
-    }
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${metric}-${series.data?.from ?? range.from}-${series.data?.to ?? range.to}-by-day.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url));
+    const name = `${metric}-${series.data?.from ?? range.from}-${series.data?.to ?? range.to}-by-day.csv`;
+    void downloadCsv(statsMetricPath(metric, { ...range, groupBy: 'day' }, 'csv'), name);
   }
 
   return (
@@ -95,7 +82,7 @@ export function RawData({
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline" disabled={!series.data?.rows.length} onClick={downloadCsv}>
+            <Button variant="outline" disabled={!series.data?.rows.length} onClick={exportCsv}>
               Export CSV
             </Button>
           </div>

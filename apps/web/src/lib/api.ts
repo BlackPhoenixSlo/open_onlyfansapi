@@ -10,6 +10,7 @@ import type {
   Overview,
   StatsBackfillRun,
   StatsConfig,
+  StatsFans,
   StatsFreshness,
   StatsGroupBy,
   StatsMetric,
@@ -197,6 +198,16 @@ export const statsScriptsQuery = (params: StatsRange) =>
     queryKey: ['stats', 'scripts', params],
     queryFn: () => api<StatsScripts>(`/v1/stats/scripts?${qs(params)}`),
   });
+
+export const statsFansQuery = (params: StatsRange) =>
+  queryOptions({
+    queryKey: ['stats', 'fans', params],
+    queryFn: () => api<StatsFans>(`/v1/stats/fans?${qs(params)}`),
+  });
+
+/** The stored messages as CSV; `direction: 'in'` = the fans' messages only. */
+export const statsMessagesCsvPath = (params: StatsRange & { chatId?: number; direction: 'in' | 'all' }) =>
+  `/v1/stats/messages?${qs({ ...params, format: 'csv' })}`;
 
 /** The account's last analytics backfill run (`POST /v1/stats/backfill`), or `idle`. */
 export const statsBackfillQuery = (accountId: number) =>

@@ -24,7 +24,7 @@ const freePort = () =>
   });
 
 type Param = { name: string; in: string; required?: boolean; schema?: unknown };
-const STATS_PATHS = ['/v1/stats', '/v1/stats/backfill', '/v1/stats/config', '/v1/stats/metrics', '/v1/stats/metrics/{id}', '/v1/stats/metrics/{id}/samples', '/v1/stats/scripts'];
+const STATS_PATHS = ['/v1/stats', '/v1/stats/backfill', '/v1/stats/config', '/v1/stats/fans', '/v1/stats/messages', '/v1/stats/metrics', '/v1/stats/metrics/{id}', '/v1/stats/metrics/{id}/samples', '/v1/stats/scripts'];
 const WEBHOOK_PATHS = [
   '/v1/webhooks',
   '/v1/webhooks/events',

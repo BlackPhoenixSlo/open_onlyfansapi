@@ -622,3 +622,79 @@ export const statsScripts = z.object({
   items: z.array(statsScript),
 });
 export type StatsScripts = z.infer<typeof statsScripts>;
+
+/** `GET /v1/stats/fans`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
+export const statsFansQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(200),
+});
+export type StatsFansQuery = z.input<typeof statsFansQuery>;
+
+/** One fan (chat) with a stored message in the range; counts are over the range. Times are ISO. */
+export const statsFan = z.object({
+  accountId: z.number().int(),
+  /** The fan's user id (OF's chat id). */
+  chatId: z.number().int(),
+  /** From the chat list; null when not seen. */
+  fanUsername: z.string().nullable(),
+  fanMessages: z.number().int(),
+  /** DMs: outbound, not mass, not automated. */
+  creatorMessages: z.number().int(),
+  massMessages: z.number().int(),
+  firstAt: z.string(),
+  lastAt: z.string(),
+});
+export type StatsFan = z.infer<typeof statsFan>;
+
+export const statsFans = z.object({
+  timezone: z.string(),
+  configVersion: z.number().int(),
+  asOf: z.string(),
+  from: z.string(),
+  to: z.string(),
+  /** Latest message first. */
+  items: z.array(statsFan),
+});
+export type StatsFans = z.infer<typeof statsFans>;
+
+/** `GET /v1/stats/messages`: the stored messages, `direction=in` for the fans' messages only. `limit` caps JSON only; CSV holds the whole range. */
+export const statsMessagesQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  chatId: z.coerce.number().int().positive().optional(),
+  direction: z.enum(['in', 'out', 'all']).default('all'),
+  format: z.enum(['json', 'csv']).default('json'),
+  limit: z.coerce.number().int().min(1).max(5000).default(1000),
+});
+export type StatsMessagesQuery = z.input<typeof statsMessagesQuery>;
+
+export const statsMessage = z.object({
+  accountId: z.number().int(),
+  chatId: z.number().int(),
+  fanUsername: z.string().nullable(),
+  messageId: z.number().int(),
+  createdAt: z.string(),
+  direction: z.enum(['inbound', 'outbound']),
+  /** The message as plain text (tags stripped, HTML unescaped, whitespace collapsed); empty when it has none. */
+  text: z.string(),
+  priceCents: z.number().int(),
+  isTip: z.boolean(),
+  mediaCount: z.number().int(),
+  isMass: z.boolean(),
+  isAutomated: z.boolean(),
+});
+export type StatsMessage = z.infer<typeof statsMessage>;
+
+export const statsMessages = z.object({
+  timezone: z.string(),
+  configVersion: z.number().int(),
+  asOf: z.string(),
+  from: z.string(),
+  to: z.string(),
+  /** By account, chat, time and message id. */
+  items: z.array(statsMessage),
+});
+export type StatsMessages = z.infer<typeof statsMessages>;

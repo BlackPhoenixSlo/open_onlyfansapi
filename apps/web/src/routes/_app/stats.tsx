@@ -10,6 +10,7 @@ import { ChartCard, Empty, ErrorCard, Kpi, NoData, Skeleton } from '@/features/s
 import { COLORS, Chart } from '@/features/stats/chart';
 import { BackfillNotice } from '@/features/stats/BackfillNotice';
 import { HowToRead } from '@/features/stats/explainers';
+import { FansCard } from '@/features/stats/fans';
 import { CustomRange, Segmented, day } from '@/features/stats/range';
 import { RawData } from '@/features/stats/raw-data';
 import { ScriptCard } from '@/features/stats/scripts';
@@ -344,6 +345,8 @@ function Stats() {
           )}
         </CardContent>
       </Card>
+
+      <FansCard range={range} />
 
       <details className="group rounded-xl border bg-card p-4">
         <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">

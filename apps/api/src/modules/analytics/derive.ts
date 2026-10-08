@@ -28,6 +28,13 @@ export function normaliseText(html: string): string {
     .trim();
 }
 
+/** A message's text for reading and export: as `normaliseText` (tags, HTML, whitespace) but case and characters kept. */
+export function plainText(html: string): string {
+  return unescapeHtml(html.replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const sha16 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 /** SHA-256 of the normalised text (no name replacement), first 16 hex; null when nothing is left. Matches welcome and automation texts. */
