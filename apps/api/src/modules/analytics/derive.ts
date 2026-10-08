@@ -28,9 +28,16 @@ export function normaliseText(html: string): string {
     .trim();
 }
 
-/** A message's text for reading and export: as `normaliseText` (tags, HTML, whitespace) but case and characters kept. */
+/** An HTML tag and its name; a `>` inside a quoted attribute value does not end it. */
+const TAG = /<\/?([a-z][a-z0-9]*)(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+const BLOCK_TAGS = new Set(['p', 'div', 'br', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+/**
+ * A message's text, verbatim but plain, for reading and export: a block or break tag becomes a space, any other tag
+ * (`<b>`, `<a>`, `<span>`…) nothing, so `lo<b>ve</b>` stays one word; HTML unescaped, whitespace collapsed, case kept.
+ */
 export function plainText(html: string): string {
-  return unescapeHtml(html.replace(/<[^>]*>/g, ' '))
+  return unescapeHtml(html.replace(TAG, (_tag, name: string) => (BLOCK_TAGS.has(name.toLowerCase()) ? ' ' : '')))
     .replace(/\s+/g, ' ')
     .trim();
 }

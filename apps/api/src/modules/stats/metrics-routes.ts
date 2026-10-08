@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -22,7 +23,7 @@ import {
   statsScriptsQuery,
   type StatsConfig,
 } from '../../contracts.js';
-import { toCsv } from '../../cli/analytics-csv.js';
+import { csvField, toCsv } from '../../cli/analytics-csv.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { assertWriteScope } from '../../plugins/actor.js';
@@ -47,7 +48,7 @@ import { connectedAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
-import { csvSafeText, MESSAGE_EXPORT_COLUMNS, scopedFans, scopedMessages } from '../analytics/messages.js';
+import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } from '../analytics/messages.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
@@ -161,11 +162,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
     const asOf = new Date();
-    const items = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit);
-    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, items };
+    const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit);
+    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...fans };
   });
 
-  /** `format=csv` sends every message in the range (no `limit`), UTF-8 with a BOM so Excel reads emoji and accents. */
+  /** `format=csv` streams every message in the range (no `limit`), queried in keyset batches, as plain UTF-8 with LF. */
   const messagesOrCsv = z.union([statsMessages, z.string()]);
   r.get(
     '/stats/messages',
@@ -175,17 +176,23 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const cfg = await getStatsConfig(actor.teamId);
       const span = range(query, cfg.timezone);
       const asOf = new Date();
-      const csv = query.format === 'csv';
       const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span, chatId: query.chatId, direction: query.direction };
-      const items = await scopedMessages(scope, csv ? undefined : query.limit);
-      if (csv) {
+      if (query.format === 'csv') {
         const name = ['messages', query.chatId, query.direction, span.fromDay, span.toDay].filter((x) => x !== undefined).join('_');
+        async function* lines() {
+          yield toCsv(MESSAGE_EXPORT_COLUMNS, []);
+          for await (const batch of messageBatches(scope)) {
+            yield batch.map((m) => snakeCase(m)).map((row) => MESSAGE_EXPORT_COLUMNS.map((c) => csvField(row[c])).join(',') + '\n').join('');
+          }
+        }
         return reply
           .type('text/csv; charset=utf-8')
           .header('content-disposition', `attachment; filename="${name}.csv"`)
-          .send(`\uFEFF${toCsv(MESSAGE_EXPORT_COLUMNS, items.map((m) => snakeCase({ ...m, text: csvSafeText(m.text) })))}`);
+          // A stream skips the serializer; the schema's string stands for the CSV in the OpenAPI document.
+          .send(Readable.from(lines()) as unknown as string);
       }
-      return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, items };
+      const page = await scopedMessages(scope, query.limit);
+      return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...page };
     },
   );
 

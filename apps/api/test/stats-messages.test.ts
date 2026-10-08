@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
+import { messageExport } from '../src/modules/analytics/messages.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
 import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -39,21 +40,27 @@ const of = (messages: FakeOf['messages'], usernames: Record<number, string> = {}
   welcome: { id: '7001', template: 'reply_on_subscribe', text: '<p>welcome!</p>', media: [] },
 });
 
-/** Account 1001: fan 3001 (@fan_a) with a message before the range, fan 3002 (no username). Account 1002: fan 4001. */
+/**
+ * Account 1001: fan 3001 (@fan_a) with a message before the range and two at the same instant; fan 3002 (@fan_b, but
+ * its coverage row is moved to workspace B below); 3003 only got the welcome message and a mass message. Account 1002:
+ * fan 4001 (@fan_c, its coverage row deleted below).
+ */
 const DATA_A1 = of(
   {
     3001: [
-      msg(4, '09-02T10:00', 3001, { text: '<p>=cmd, "quoted"</p>', price: 5, isTip: true }),
+      msg(8, '09-02T10:00', 3001, { text: '<p title="1 > 0">lo<b>ve</b> &#39;u&#x27;</p>' }),
+      msg(4, '09-02T10:00', 3001, { text: '<p>-_- @name +1, "quoted"</p>', price: 5, isTip: true }),
       msg(3, '09-02T09:00', A1, { queueId: 900, isFromQueue: true }),
       msg(2, '09-01T10:05', A1, { text: '<p>Hello <b>You</b></p>', mediaCount: 2 }),
       msg(1, '09-01T10:00', 3001, { text: '<p>Hey &amp; hi 😊</p>' }),
       msg(5, '08-20T10:00', 3001),
     ],
     3002: [msg(7, '09-03T08:30', A1), msg(6, '09-03T08:00', 3002, { text: null })],
+    3003: [msg(32, '09-02T09:00', A1, { queueId: 900, isFromQueue: true }), msg(31, '09-01T08:00', A1, { text: '<p>welcome!</p>' })],
   },
-  { 3001: 'fan_a' },
+  { 3001: 'fan_a', 3002: 'fan_b' },
 );
-const DATA_A2 = of({ 4001: [msg(22, '09-01T22:20', A2), msg(21, '09-01T22:00', 4001)] });
+const DATA_A2 = of({ 4001: [msg(22, '09-01T22:20', A2), msg(21, '09-01T22:00', 4001)] }, { 4001: 'fan_c' });
 
 let cookieA: string;
 let keyA: string;
@@ -62,7 +69,8 @@ let keyB: string;
 
 const get = (url: string, key = keyA) => app.inject({ method: 'GET', url, headers: bearer(key) });
 const RANGE = 'from=2026-09-01&to=2026-09-04';
-const HEADER = '﻿account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_tip,media_count,is_mass,is_automated\n';
+const HEADER = 'account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_tip,media_count,is_mass,is_automated\n';
+const ALL_IDS = [1, 2, 3, 4, 8, 6, 7, 31, 32, 21, 22];
 const fans = async (q: string, key = keyA) => {
   const res = await get(`/v1/stats/fans?${q}`, key);
   expect(res.statusCode).toBe(200);
@@ -73,6 +81,7 @@ const messageIds = async (q: string, key = keyA) => {
   expect(res.statusCode).toBe(200);
   return (res.json().items as { messageId: number }[]).map((m) => m.messageId);
 };
+const csvIds = (body: string) => body.split('\n').slice(1, -1).map((line) => Number(line.split(',')[3]));
 
 beforeAll(async () => {
   await resetDb();
@@ -91,6 +100,9 @@ beforeAll(async () => {
   await claimAndBackfill({ ...run, accountId: A1 });
   fake.state.of = DATA_A2;
   await claimAndBackfill({ ...run, accountId: A2 });
+  // Another workspace's coverage row for the chat must not name the fan; a chat with no coverage row has no name.
+  await pool.query('UPDATE chat_coverage SET team_id = $1 WHERE account_id = $2 AND chat_id = 3002', [b.teamId, A1]);
+  await pool.query('DELETE FROM chat_coverage WHERE account_id = $1 AND chat_id = 4001', [A2]);
 });
 afterAll(async () => {
   await app.close();
@@ -99,17 +111,24 @@ afterAll(async () => {
 });
 
 describe('stats fans', () => {
-  it('counts fan, creator and mass messages per fan in the range, latest message first', async () => {
+  it('splits each fan\'s messages into fan, DM, mass and automated; latest fan message first, silent fans last', async () => {
     const res = await get(`/v1/stats/fans?${RANGE}`);
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-04' });
+    expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-04', total: 4 });
+    const fan = (accountId: number, chatId: number, fanUsername: string | null, counts: number[], firstAt: string, lastAt: string, lastFanAt: string | null) => {
+      const [fanMessages, dmMessages, massMessages, automatedMessages] = counts;
+      const iso = (t: string | null) => (t ? `2026-${t}:00.000Z` : null);
+      return { accountId, chatId, fanUsername, fanMessages, dmMessages, massMessages, automatedMessages, firstAt: iso(firstAt), lastAt: iso(lastAt), lastFanAt: iso(lastFanAt) };
+    };
     expect(body.items).toEqual([
-      { accountId: A1, chatId: 3002, fanUsername: null, fanMessages: 1, creatorMessages: 1, massMessages: 0, firstAt: '2026-09-03T08:00:00.000Z', lastAt: '2026-09-03T08:30:00.000Z' },
-      { accountId: A1, chatId: 3001, fanUsername: 'fan_a', fanMessages: 2, creatorMessages: 1, massMessages: 1, firstAt: '2026-09-01T10:00:00.000Z', lastAt: '2026-09-02T10:00:00.000Z' },
-      { accountId: A2, chatId: 4001, fanUsername: null, fanMessages: 1, creatorMessages: 1, massMessages: 0, firstAt: '2026-09-01T22:00:00.000Z', lastAt: '2026-09-01T22:20:00.000Z' },
+      fan(A1, 3002, null, [1, 1, 0, 0], '09-03T08:00', '09-03T08:30', '09-03T08:00'), // coverage row is workspace B's
+      fan(A1, 3001, 'fan_a', [3, 1, 1, 0], '09-01T10:00', '09-02T10:00', '09-02T10:00'),
+      fan(A2, 4001, null, [1, 1, 0, 0], '09-01T22:00', '09-01T22:20', '09-01T22:00'), // no coverage row
+      fan(A1, 3003, null, [0, 0, 1, 1], '09-01T08:00', '09-02T09:00', null), // later lastAt than 4001, but no fan message
     ]);
-    expect(await fans(`${RANGE}&limit=1`)).toEqual([[A1, 3002]]);
+    const limited = (await get(`/v1/stats/fans?${RANGE}&limit=1`)).json();
+    expect([limited.total, limited.items.map((f: { chatId: number }) => f.chatId)]).toEqual([4, [3002]]);
     expect(await fans('from=2026-08-01&to=2026-08-31')).toEqual([[A1, 3001]]);
   });
 });
@@ -118,25 +137,32 @@ describe('stats messages', () => {
   it('returns the plain-text messages by account, chat and time, with the money and kind columns', async () => {
     const res = await get(`/v1/stats/messages?${RANGE}&accountId=${A1}&chatId=3001`);
     expect(res.statusCode).toBe(200);
+    const m = { accountId: A1, chatId: 3001, fanUsername: 'fan_a', priceCents: 0, isTip: false, mediaCount: 0, isMass: false, isAutomated: false };
+    expect(res.json()).toMatchObject({ truncated: false });
     expect(res.json().items).toEqual([
-      { accountId: A1, chatId: 3001, fanUsername: 'fan_a', messageId: 1, createdAt: '2026-09-01T10:00:00.000Z', direction: 'inbound', text: 'Hey & hi 😊', priceCents: 0, isTip: false, mediaCount: 0, isMass: false, isAutomated: false },
-      { accountId: A1, chatId: 3001, fanUsername: 'fan_a', messageId: 2, createdAt: '2026-09-01T10:05:00.000Z', direction: 'outbound', text: 'Hello You', priceCents: 0, isTip: false, mediaCount: 2, isMass: false, isAutomated: false },
-      { accountId: A1, chatId: 3001, fanUsername: 'fan_a', messageId: 3, createdAt: '2026-09-02T09:00:00.000Z', direction: 'outbound', text: 'ok', priceCents: 0, isTip: false, mediaCount: 0, isMass: true, isAutomated: false },
-      { accountId: A1, chatId: 3001, fanUsername: 'fan_a', messageId: 4, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: '=cmd, "quoted"', priceCents: 500, isTip: true, mediaCount: 0, isMass: false, isAutomated: false },
+      { ...m, messageId: 1, createdAt: '2026-09-01T10:00:00.000Z', direction: 'inbound', text: 'Hey & hi 😊' },
+      { ...m, messageId: 2, createdAt: '2026-09-01T10:05:00.000Z', direction: 'outbound', text: 'Hello You', mediaCount: 2 },
+      { ...m, messageId: 3, createdAt: '2026-09-02T09:00:00.000Z', direction: 'outbound', text: 'ok', isMass: true },
+      { ...m, messageId: 4, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: '-_- @name +1, "quoted"', priceCents: 500, isTip: true },
+      { ...m, messageId: 8, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: "love 'u'" },
     ]);
-    expect(await messageIds(RANGE)).toEqual([1, 2, 3, 4, 6, 7, 21, 22]);
-    expect(await messageIds(`${RANGE}&limit=3`)).toEqual([1, 2, 3]);
+    const other = (await get(`/v1/stats/messages?${RANGE}&chatId=3002`)).json().items;
+    expect(other.map((x: { fanUsername: string | null }) => x.fanUsername)).toEqual([null, null]);
+    expect(await messageIds(RANGE)).toEqual(ALL_IDS);
+    const cut = (await get(`/v1/stats/messages?${RANGE}&limit=3`)).json();
+    expect([cut.truncated, cut.items.map((x: { messageId: number }) => x.messageId)]).toEqual([true, [1, 2, 3]]);
+    expect((await get(`/v1/stats/messages?${RANGE}&limit=${ALL_IDS.length}`)).json().truncated).toBe(false);
   });
 
   it('filters by direction: in is the fan messages only, out the creator side', async () => {
-    expect(await messageIds(`${RANGE}&direction=in`)).toEqual([1, 4, 6, 21]);
-    expect(await messageIds(`${RANGE}&direction=out`)).toEqual([2, 3, 7, 22]);
+    expect(await messageIds(`${RANGE}&direction=in`)).toEqual([1, 4, 8, 6, 21]);
+    expect(await messageIds(`${RANGE}&direction=out`)).toEqual([2, 3, 7, 31, 32, 22]);
     expect(await messageIds(`${RANGE}&direction=in&chatId=3002`)).toEqual([6]);
     const bad = await get(`/v1/stats/messages?${RANGE}&direction=fans`);
     expect([bad.statusCode, bad.json().error.code]).toEqual([400, 'validation_error']);
   });
 
-  it('writes the whole range as Excel-safe CSV, ignoring limit', async () => {
+  it('writes plain UTF-8 CSV with the text verbatim, ignoring limit', async () => {
     const res = await get(`/v1/stats/messages?${RANGE}&accountId=${A1}&chatId=3001&direction=in&format=csv&limit=1`);
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
@@ -144,10 +170,23 @@ describe('stats messages', () => {
     expect(res.body).toBe(
       HEADER +
         '1001,3001,fan_a,1,2026-09-01T10:00:00.000Z,inbound,Hey & hi 😊,0,false,0,false,false\n' +
-        `1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"'=cmd, ""quoted""",500,true,0,false,false\n`,
+        '1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"-_- @name +1, ""quoted""",500,true,0,false,false\n' +
+        "1001,3001,fan_a,8,2026-09-02T10:00:00.000Z,inbound,love 'u',0,false,0,false,false\n",
     );
-    const all = await get(`/v1/stats/messages?${RANGE}&format=csv`);
-    expect(all.body.split('\n').length).toBe(1 + 8 + 1);
+  });
+
+  it('streams the whole range in keyset batches, joining across a boundary between messages of the same instant', async () => {
+    const before = messageExport.batchSize;
+    messageExport.batchSize = 4; // batches [1 2 3 4] [8 6 7 31] [32 21 22]: 4 and 8 share a created_at
+    try {
+      const res = await get(`/v1/stats/messages?${RANGE}&format=csv&limit=1`);
+      expect(res.body.startsWith(HEADER)).toBe(true);
+      expect(csvIds(res.body)).toEqual(ALL_IDS);
+      messageExport.batchSize = ALL_IDS.length; // a full last batch ends with one empty query
+      expect(csvIds((await get(`/v1/stats/messages?${RANGE}&format=csv`)).body)).toEqual(ALL_IDS);
+    } finally {
+      messageExport.batchSize = before;
+    }
   });
 });
 
@@ -159,14 +198,17 @@ describe('stats fans and messages scoping', () => {
     for (const path of ['fans', 'messages']) {
       const denied = await get(`/v1/stats/${path}?${RANGE}&accountId=${A1}`, limitedKeyA);
       expect([denied.statusCode, denied.json().error.code]).toEqual([403, 'account_not_allowed']);
+      const csv = await get(`/v1/stats/${path}?${RANGE}&accountId=${A1}&format=csv`, limitedKeyA);
+      expect(csv.statusCode).toBe(403);
     }
     const session = await app.inject({ method: 'GET', url: `/v1/stats/fans?${RANGE}`, headers: dashboard(cookieA) });
-    expect(session.json().items).toHaveLength(3);
+    expect(session.json().items).toHaveLength(4);
   });
 
   it("a second workspace's key sees none of the first's messages", async () => {
     for (const q of [RANGE, `${RANGE}&accountId=${A1}`]) {
-      expect(await fans(q, keyB)).toEqual([]);
+      const res = (await get(`/v1/stats/fans?${q}`, keyB)).json();
+      expect([res.total, res.items]).toEqual([0, []]);
       expect(await messageIds(q, keyB)).toEqual([]);
       expect((await get(`/v1/stats/messages?${q}&format=csv`, keyB)).body).toBe(HEADER);
     }

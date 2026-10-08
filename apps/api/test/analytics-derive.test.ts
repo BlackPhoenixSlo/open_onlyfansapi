@@ -9,6 +9,7 @@ import {
   NORMALISER_VERSION,
   normaliseScript,
   normaliseText,
+  plainText,
   scriptHash,
   textHash,
   txFan,
@@ -28,6 +29,24 @@ describe('analytics normaliser', () => {
     expect(textHash('<p>Hi there</p>')).toBe(textHash('hi   THERE'));
     expect(textHash('<p> </p>')).toBeNull();
     expect(textHash(undefined)).toBeNull();
+  });
+});
+
+describe('plain text', () => {
+  it('strips inline tags to nothing, so a word split by <b> stays one word', () => {
+    expect(plainText('lo<b>ve</b> <i>you</i> <strong>so</strong> <em>much</em> <a href="x">ok</a><span>!</span> <u>u</u><s>s</s>')).toBe('love you so much ok! us');
+  });
+
+  it('turns block and break tags into one space', () => {
+    expect(plainText('<p>one</p><p>two</p>three<br>four<br />five<div>six</div><ul><li>a</li><li>b</li></ul><h2>T</h2>')).toBe('one two three four five six a b T');
+  });
+
+  it('reads a > inside a quoted attribute value as part of the tag', () => {
+    expect(plainText(`<p title="1 > 0">Hi</p><span data-x='a>b'>there</span>`)).toBe('Hi there');
+  });
+
+  it('decodes numeric and the common named entities, keeps case, and leaves a literal <3', () => {
+    expect(plainText('It&#39;s &#x27;Ok&#X27; &amp; &lt;3 &gt; &quot;x&quot; &apos;y&apos;&nbsp;Z &copy;')).toBe(`It's 'Ok' & <3 > "x" 'y' Z &copy;`);
   });
 });
 

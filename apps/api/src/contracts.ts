@@ -632,7 +632,7 @@ export const statsFansQuery = z.object({
 });
 export type StatsFansQuery = z.input<typeof statsFansQuery>;
 
-/** One fan (chat) with a stored message in the range; counts are over the range. Times are ISO. */
+/** One fan (chat) with a stored message in the range; the counts split the range's messages, so they sum to all of them. Times are ISO. */
 export const statsFan = z.object({
   accountId: z.number().int(),
   /** The fan's user id (OF's chat id). */
@@ -640,11 +640,15 @@ export const statsFan = z.object({
   /** From the chat list; null when not seen. */
   fanUsername: z.string().nullable(),
   fanMessages: z.number().int(),
-  /** DMs: outbound, not mass, not automated. */
-  creatorMessages: z.number().int(),
+  /** Outbound, not mass, not automated. */
+  dmMessages: z.number().int(),
   massMessages: z.number().int(),
+  /** Outbound, automated, not mass. */
+  automatedMessages: z.number().int(),
   firstAt: z.string(),
   lastAt: z.string(),
+  /** The fan's newest message in the range; null when the fan wrote nothing in it. */
+  lastFanAt: z.string().nullable(),
 });
 export type StatsFan = z.infer<typeof statsFan>;
 
@@ -654,7 +658,9 @@ export const statsFans = z.object({
   asOf: z.string(),
   from: z.string(),
   to: z.string(),
-  /** Latest message first. */
+  /** Fans in scope before `limit`; more than `items` when the list is cut. */
+  total: z.number().int(),
+  /** Latest fan message first (fans who wrote nothing last), then latest message. */
   items: z.array(statsFan),
 });
 export type StatsFans = z.infer<typeof statsFans>;
@@ -694,6 +700,8 @@ export const statsMessages = z.object({
   asOf: z.string(),
   from: z.string(),
   to: z.string(),
+  /** `limit` cut the list: more messages match. */
+  truncated: z.boolean(),
   /** By account, chat, time and message id. */
   items: z.array(statsMessage),
 });
