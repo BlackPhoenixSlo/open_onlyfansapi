@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
-import { RunAnalytics, SessionExpiredBadge } from '@/features/accounts/RunAnalytics';
+import { RunAnalytics } from '@/features/accounts/RunAnalytics';
+import { SessionExpiredBadge } from '@/features/accounts/status-badge';
 import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });

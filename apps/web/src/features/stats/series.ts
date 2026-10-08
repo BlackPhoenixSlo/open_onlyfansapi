@@ -22,10 +22,37 @@ export const HOURS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, 
 /** Rows by their `group`, for filling the gaps of a sparse series. */
 export const byGroup = (rows: StatsMetricRow[] | undefined) => new Map((rows ?? []).map((r) => [r.group, r]));
 
+type Rows = StatsMetricRow[] | undefined;
+
+/** Median and 90th percentile reply time for each day of `span`; null on a day without data. */
+export function replySeries(span: string[], median: Rows, p90: Rows) {
+  const m = byGroup(median);
+  const p = byGroup(p90);
+  return span.map((d) => ({ day: d, median: m.get(d)?.value ?? null, p90: p.get(d)?.value ?? null }));
+}
+
+/** The SLA percent for each day of `span`; null on a day without data. */
+export function slaSeries(span: string[], rows: Rows) {
+  const sla = byGroup(rows);
+  return span.map((d) => ({ day: d, sla: sla.get(d)?.value ?? null }));
+}
+
+/** Opener outcomes for each day of `span`; 0 on a day without data. */
+export function openerSeries(span: string[], rows: Rows) {
+  const op = byGroup(rows);
+  return span.map((d) => ({ day: d, replied: op.get(d)?.replied ?? 0, noReply: op.get(d)?.noReply ?? 0, pending: op.get(d)?.pending ?? 0 }));
+}
+
+/** The median for each of the 24 hours; null on an hour without data. */
+export function hourSeries(rows: Rows) {
+  const hour = byGroup(rows);
+  return HOURS.map((h) => ({ hour: h, median: hour.get(h)?.value ?? null }));
+}
+
 type CountKey = { [K in keyof StatsMetricRow]-?: StatsMetricRow[K] extends number | undefined ? K : never }[keyof StatsMetricRow];
 
 export const sum = (rows: StatsMetricRow[] | undefined, key: CountKey) =>
-  (rows ?? []).reduce((total, r) => total + ((r[key] as number | undefined) ?? 0), 0);
+  (rows ?? []).reduce((total, r) => total + (r[key] ?? 0), 0);
 
 /** `part / whole` in percent; null when `whole` is 0. */
 export const percent = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
@@ -72,5 +99,5 @@ export function formatAgo(iso: string, now = Date.now()): string {
 }
 
 /** The Stats page's live line: the newest message event and the count of the last 24 hours. */
-export const liveLine = (f: StatsFreshness, now = Date.now()) =>
+export const liveLine = (f: Pick<StatsFreshness, 'lastLiveAt' | 'liveEvents24h'>, now = Date.now()) =>
   f.lastLiveAt ? `Live: last message event ${formatAgo(f.lastLiveAt, now)} · ${f.liveEvents24h} events last 24h` : 'Live: no events yet';

@@ -3,22 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SessionExpiredBadge } from '@/features/accounts/status-badge';
 import { api, statsBackfillQuery } from '@/lib/api';
 
 const DAYS = 30;
-const busy = (run: StatsBackfillRun | undefined) => run?.status === 'queued' || run?.status === 'running';
+type BusyRun = Exclude<StatsBackfillRun, { status: 'idle' }> & { status: 'queued' | 'running' };
+const busy = (run: StatsBackfillRun | undefined): run is BusyRun => run?.status === 'queued' || run?.status === 'running';
 const retries = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'retry' : 'retries'}` : '');
-
-/** OF refused the account's session (upstream status or a run's 401): the owner must re-connect it. */
-export function SessionExpiredBadge({ title }: { title?: string }) {
-  return (
-    <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400" title={title}>
-      Session expired · re-connect
-    </Badge>
-  );
-}
 
 /** Claims the account for this workspace and backfills its last 30 days in the background, polling every 3 s while it runs. */
 export function RunAnalytics({ accountId }: { accountId: number }) {
@@ -35,7 +27,7 @@ export function RunAnalytics({ accountId }: { accountId: number }) {
   });
   const data = run.data;
 
-  if (data && (data.status === 'queued' || data.status === 'running')) {
+  if (busy(data)) {
     return (
       <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />
