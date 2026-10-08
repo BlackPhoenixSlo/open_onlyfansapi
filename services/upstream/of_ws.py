@@ -33,7 +33,7 @@ from typing import AsyncIterator
 
 import websockets
 
-from of_client import OFAPIError, OFClient
+from of_client import OFAPIError, OFClient, session_refused
 
 log = logging.getLogger("of-ws")
 
@@ -49,23 +49,8 @@ DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 
 
 class SessionExpired(Exception):
-    """OF refused the session (401/403, or 400 "Wrong user", on /users/me).
+    """/users/me said the session is dead (`of_client.session_refused`).
     Reconnecting cannot fix it; a new session must be captured."""
-
-
-def session_refused(resp) -> bool:
-    """OF's answer for a dead session on any request: 401, or 400 with OF's
-    error code 301 ("Wrong user")."""
-    status = getattr(resp, "status_code", None)
-    if status == 401:
-        return True
-    if status != 400:
-        return False
-    try:
-        err = resp.json().get("error")
-    except Exception:  # no JSON body: an ordinary 400
-        return False
-    return isinstance(err, dict) and err.get("code") == 301
 
 
 class OFWebSocket:
@@ -98,9 +83,9 @@ class OFWebSocket:
         IP — OF would see "same user-id from two distinct IPs at once" and
         flag it as a shared-session anomaly.
 
-        Raises `SessionExpired` when /users/me answers 401/403 or 400 "Wrong
-        user" — the session
-        is dead, so retrying would loop forever.
+        Raises `SessionExpired` when /users/me says the session is dead
+        (`session_refused`), so retrying would loop forever; any other OF
+        error on /users/me reconnects with backoff.
         """
         backoff = RECONNECT_MIN_S
         while not self._stop.is_set():
@@ -111,8 +96,8 @@ class OFWebSocket:
                 try:
                     await asyncio.to_thread(self._refresh_auth)
                 except OFAPIError as e:
-                    status = getattr(e.response, "status_code", None)
-                    if status == 403 or session_refused(e.response):
+                    if session_refused(e.response, users_me=True):
+                        status = getattr(e.response, "status_code", None)
                         raise SessionExpired(f"/users/me answered {status}") from e
                     raise
                 assert self._ws_url and self._token

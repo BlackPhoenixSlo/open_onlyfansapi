@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import of_ws
+from of_client import OFAPIError, session_refused
 from of_ws import RECONNECT_MIN_S, OFWebSocket
 
 HELLO = json.dumps({"connected": True})  # OF's handshake reply
@@ -113,13 +114,36 @@ def test_cancelling_events_cancels_the_pending_recv(monkeypatch, no_pinger):
     asyncio.run(main())
 
 
-def test_wrong_user_on_users_me_raises_session_expired():
-    from of_client import OFAPIError
+def of_reply(status, body=None, content_type="application/json"):
+    def json_():
+        if body is None:
+            raise ValueError("no JSON body")
+        return body
+    return SimpleNamespace(status_code=status, headers={"content-type": content_type}, json=json_)
 
-    body = {"error": {"code": 301, "message": "Wrong user."}}
-    resp = SimpleNamespace(status_code=400, json=lambda: body)
+
+WRONG_USER = {"error": {"code": 301, "message": "Wrong user."}}
+
+
+@pytest.mark.parametrize(("resp", "rest", "users_me"), [
+    (of_reply(401), True, True),
+    (of_reply(400, WRONG_USER), True, True),
+    (of_reply(400, {"error": {"code": 0, "message": "Bad request"}}), False, False),
+    (of_reply(400, content_type="text/html"), False, False),
+    (of_reply(403, {"error": {"code": 0}}, "application/json; charset=utf-8"), False, True),
+    (of_reply(403, content_type="text/html"), False, False),  # Cloudflare / flagged proxy IP
+    (of_reply(500), False, False),
+    (None, False, False),
+])
+def test_session_refused(resp, rest, users_me):
+    assert session_refused(resp) is rest
+    assert session_refused(resp, users_me=True) is users_me
+
+
+@pytest.mark.parametrize("resp", [of_reply(401), of_reply(400, WRONG_USER), of_reply(403, {"error": {}})])
+def test_a_dead_session_on_users_me_raises_session_expired(resp):
     client = fake_client()
-    client.me = lambda: (_ for _ in ()).throw(OFAPIError("400", response=resp))
+    client.me = lambda: (_ for _ in ()).throw(OFAPIError(str(resp.status_code), response=resp))
 
     async def main():
         async for _ in OFWebSocket(client).events():
@@ -127,3 +151,36 @@ def test_wrong_user_on_users_me_raises_session_expired():
 
     with pytest.raises(of_ws.SessionExpired):
         asyncio.run(main())
+
+
+def test_a_non_json_403_on_users_me_reconnects(monkeypatch, no_pinger):
+    monkeypatch.setattr(of_ws.websockets, "connect", FakeConnect([FakeSocket([HELLO], block=True)]))
+    replies = [OFAPIError("403", response=of_reply(403, content_type="text/html"))]
+    client = fake_client()
+    me = client.me
+
+    def flaky_me():
+        if replies:
+            raise replies.pop(0)
+        return me()
+
+    client.me = flaky_me
+    waits = []
+
+    async def no_sleep(aw, timeout):  # the backoff wait: record it, skip it
+        aw.close()
+        waits.append(timeout)
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(of_ws.asyncio, "wait_for", no_sleep)
+
+    async def main():
+        ws = OFWebSocket(client)
+        gen = ws.events()
+        first = await anext(gen)
+        ws.stop()
+        await gen.aclose()
+        return first
+
+    assert asyncio.run(main()) == {"connected": True}
+    assert waits == [RECONNECT_MIN_S]

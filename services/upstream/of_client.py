@@ -59,6 +59,25 @@ class OFAPIError(Exception):
         self.response = response
 
 
+def session_refused(resp, *, users_me: bool = False) -> bool:
+    """OF's answer for a dead session: 401, or 400 with OF's error code 301 ("Wrong user"), on any
+    request; on /users/me (`users_me`) also a 403 with OF's JSON body. An HTML or other 403 is
+    Cloudflare or a flagged proxy IP, which a reconnect (or a new proxy) may fix."""
+    status = getattr(resp, "status_code", None)
+    if status == 401:
+        return True
+    if status == 403:
+        ctype = (getattr(resp, "headers", None) or {}).get("content-type") or ""
+        return users_me and "json" in ctype.lower()
+    if status != 400:
+        return False
+    try:
+        err = resp.json().get("error")
+    except Exception:  # no JSON body: an ordinary 400
+        return False
+    return isinstance(err, dict) and err.get("code") == 301
+
+
 def _wrap_text_as_p(text: str) -> str:
     """OF web's chat textarea is a rich-text editor that always emits a
     `<p>…</p>` wrapper. Plain-text sends to fans work without wrapping,

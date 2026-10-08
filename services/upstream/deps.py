@@ -11,8 +11,7 @@ from fastapi import Depends, Header, Request
 
 import accounts
 import client_pool
-from of_client import OFClient
-from of_ws import session_refused
+from of_client import OFClient, session_refused
 
 
 class ApiError(Exception):
@@ -48,6 +47,7 @@ def account_client(
         raise ApiError(409, "no_session") from e
     if supervisor.require_proxy and not getattr(client, "proxy_url", None):
         raise ApiError(409, "proxy_required")  # never fall back to this host's IP
+    request.state.of_account_id = aid  # read by note_of_response
     return client
 
 
@@ -56,7 +56,8 @@ Client = Annotated[OFClient, Depends(account_client)]
 
 def note_of_response(request: Request, resp: object) -> None:
     """OF answered this account's request with a dead-session reply (401, or 400 "Wrong
-    user"): mark the account session_expired, which announces it once."""
-    raw = (request.headers.get("x-of-proxy-account-id") or "").strip()
-    if _ACCOUNT_ID.fullmatch(raw) and session_refused(resp):
-        request.app.state.supervisor.mark_expired(str(int(raw)))
+    user"): mark the account session_expired, which announces it once. Only requests that
+    went through `account_client` carry an account."""
+    aid = getattr(request.state, "of_account_id", None)
+    if aid and session_refused(resp):
+        request.app.state.supervisor.mark_expired(aid)

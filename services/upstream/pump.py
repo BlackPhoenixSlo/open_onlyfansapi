@@ -22,7 +22,7 @@ import accounts
 import client_pool
 import events
 import proxies
-from of_ws import OFWebSocket, SessionExpired, session_refused
+from of_ws import OFWebSocket, SessionExpired
 
 log = logging.getLogger("upstream.pump")
 
@@ -145,19 +145,6 @@ class _Pump:
     key: Key
 
 
-def _expired(exc: SessionExpired) -> bool:
-    """A real session expiry: 401, 400 "Wrong user", or a 403 with OF's JSON body. An HTML
-    or other 403 is Cloudflare or a flagged proxy IP, which a restart (or a new proxy) may fix."""
-    resp = getattr(exc.__cause__, "response", None)
-    status = getattr(resp, "status_code", None)
-    if session_refused(resp):
-        return True
-    if status == 403:
-        ctype = (getattr(resp, "headers", None) or {}).get("content-type") or ""
-        return "json" in ctype.lower()
-    return status is None  # no response to inspect: trust of_ws
-
-
 class Supervisor:
     def __init__(self, hub: Hub, *, require_proxy: bool = True,
                  source: FrameSource = of_frames,
@@ -266,11 +253,7 @@ class Supervisor:
                 for ev in out:
                     self.hub.publish(ev)
             log.warning("frame source ended account=%s", aid)
-        except SessionExpired as e:
-            if not _expired(e):
-                log.warning("account=%s: OF refused the session (%s) without OF's JSON body; "
-                            "likely Cloudflare or the proxy IP, retrying on the next reconcile", aid, e)
-                return
+        except SessionExpired:
             self.mark_expired(aid, key)
         except Exception:  # restarted by the next reconcile
             log.exception("pump failed account=%s", aid)

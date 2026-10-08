@@ -1,5 +1,4 @@
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 from conftest import frame, key_paths, make_account, new_session, payload_fixture
@@ -7,7 +6,6 @@ from conftest import frame, key_paths, make_account, new_session, payload_fixtur
 import client_pool
 import proxies
 import pump
-from of_client import OFAPIError
 from of_ws import SessionExpired
 from pump import Supervisor
 
@@ -51,15 +49,6 @@ def supervisor(hub=None, **kw):
     src = FakeSource()
     kw.setdefault("client_factory", FakeClient)
     return Supervisor(hub or FakeHub(), source=src, **kw), src
-
-
-def expired_by(status, content_type="application/json"):
-    """SessionExpired as of_ws raises it: from the OFAPIError of /users/me."""
-    resp = SimpleNamespace(status_code=status, headers={"content-type": content_type})
-    try:
-        raise SessionExpired(f"/users/me answered {status}") from OFAPIError(str(status), response=resp)
-    except SessionExpired as e:
-        return e
 
 
 @pytest.fixture
@@ -138,7 +127,7 @@ def test_session_expiry_stops_the_pump_until_a_new_session(evicted):
         make_account("100001")
         await sup.reconcile()
         await settle()
-        src.feeds[0].put_nowait(expired_by(401))
+        src.feeds[0].put_nowait(SessionExpired("/users/me answered 401"))
         await settle()
         assert sup.status("100001") == sup.blocker("100001") == "session_expired"
         [ev] = hub.frames
@@ -170,47 +159,12 @@ def test_a_stale_pump_does_not_announce_expiry(evicted):
         await sup.reconcile()
         await settle()
         new_session("100001", bump=5)  # a new session lands before the old pump's 401 arrives
-        src.feeds[0].put_nowait(expired_by(401))
+        src.feeds[0].put_nowait(SessionExpired("/users/me answered 401"))
         await settle()
         assert hub.frames == []
         await sup.reconcile()
         await settle()
         assert sup.status("100001") == "connecting" and src.starts == ["100001", "100001"]
-        await sup.stop()
-
-    asyncio.run(main())
-
-
-def test_json_403_expires_the_session(evicted):
-    async def main():
-        hub = FakeHub()
-        sup, src = supervisor(hub)
-        make_account("100001")
-        await sup.reconcile()
-        await settle()
-        src.feeds[0].put_nowait(expired_by(403, "application/json; charset=utf-8"))
-        await settle()
-        assert sup.status("100001") == "session_expired"
-        assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
-        await sup.stop()
-
-    asyncio.run(main())
-
-
-def test_html_403_is_not_an_expiry(evicted):
-    async def main():
-        hub = FakeHub()
-        sup, src = supervisor(hub)
-        make_account("100001")
-        await sup.reconcile()
-        await settle()
-        src.feeds[0].put_nowait(expired_by(403, "text/html"))  # Cloudflare / flagged proxy IP
-        await settle()
-        assert hub.frames == []
-        assert sup.status("100001") == "connecting"
-        await sup.reconcile()  # the next reconcile restarts it
-        await settle()
-        assert src.starts == ["100001", "100001"]
         await sup.stop()
 
     asyncio.run(main())
@@ -283,24 +237,14 @@ def test_removed_account_stops_its_pump(evicted, monkeypatch):
     asyncio.run(main())
 
 
-def wrong_user():
-    """SessionExpired from /users/me's 400 `{"error":{"code":301,"message":"Wrong user."}}`."""
-    body = {"error": {"code": 301, "message": "Wrong user."}}
-    resp = SimpleNamespace(status_code=400, headers={"content-type": "application/json"}, json=lambda: body)
-    try:
-        raise SessionExpired("/users/me answered 400") from OFAPIError("400", response=resp)
-    except SessionExpired as e:
-        return e
-
-
-def test_wrong_user_expires_the_session_once(evicted):
+def test_an_expiry_is_announced_once_per_session(evicted):
     async def main():
         hub = FakeHub()
         sup, src = supervisor(hub)
         make_account("100001")
         await sup.reconcile()
         await settle()
-        src.feeds[0].put_nowait(wrong_user())
+        src.feeds[0].put_nowait(SessionExpired("/users/me answered 400"))
         await settle()
         assert sup.status("100001") == "session_expired"
         assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
@@ -311,11 +255,3 @@ def test_wrong_user_expires_the_session_once(evicted):
         await sup.stop()
 
     asyncio.run(main())
-
-
-def test_a_plain_400_is_not_an_expiry():
-    resp = SimpleNamespace(status_code=400, json=lambda: {"error": {"code": 0, "message": "Bad request"}})
-    try:
-        raise SessionExpired("x") from OFAPIError("400", response=resp)
-    except SessionExpired as e:
-        assert not pump._expired(e)
