@@ -101,7 +101,8 @@ type Raw = Record<string, unknown>;
  * paths echo like any `/of/*`). Lists are newest first. Like OF: chat-list pages hold at most `chatPageCap` (10)
  * chats however large `limit` is and carry `nextOffset` (unless `noNextOffset`), `withUser` is only `{ _view, id }`
  * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
- * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set).
+ * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set), then
+ * `badGateway` that many 502.
  */
 export type FakeOf = {
   chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } | null }[];
@@ -115,6 +116,7 @@ export type FakeOf = {
   stuckChats?: number[];
   rateLimit?: number;
   retryAfter?: string;
+  badGateway?: number;
 };
 
 /** `YYYY-MM-DD HH:MM:SS` (UTC) → epoch ms. */
@@ -214,6 +216,10 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
         state.of.rateLimit--;
         if (state.of.retryAfter !== undefined) reply.header('retry-after', state.of.retryAfter);
         return reply.status(429).send({ error: 'RATE_LIMITED' });
+      }
+      if (state.of.badGateway) {
+        state.of.badGateway--;
+        return reply.status(502).send({ error: 'PROXY_ERROR' });
       }
       const data = serveOf(state.of, request.url.split('?')[0]!, request.query as Record<string, string | undefined>);
       if (data !== undefined) return reply.type('application/json').send(JSON.stringify(data));

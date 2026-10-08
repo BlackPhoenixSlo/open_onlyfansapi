@@ -8,6 +8,7 @@ import { db, pool } from '../src/db/index.js';
 import { apiKey, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
 import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS, readCsv } from '../src/cli/analytics-csv.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
+import { AppError } from '../src/lib/errors.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
 import { backfill, type BackfillOptions, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
@@ -202,6 +203,7 @@ describe('analytics backfill', () => {
     expect(result).toEqual({
       stopped: false,
       requests: 13,
+      retries: 0,
       chats: 3,
       messages: 12,
       broadcasts: 3,
@@ -441,6 +443,55 @@ describe('analytics backfill', () => {
     expect(p.started[1]! - p.started[0]!).toBe(6000); // the 1 s response, then the 5 s delay
     stop.abort();
     expect(await run).toMatchObject({ stopped: true });
+  });
+
+  it('retries a 502 after 1 s, then carries on', async () => {
+    fakeClock();
+    Object.assign(fake.state.of!, { badGateway: 1 });
+    const start = fake.requests.length;
+    const p = probe();
+    const run = backfill(opts({ upstream: p.upstream }));
+    await until(() => p.answered() === 1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(p.started).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await until(() => p.started.length === 2);
+    expect(p.started[1]! - p.started[0]!).toBe(1000);
+    vi.useRealTimers();
+    expect(await run).toMatchObject({ requests: 14, retries: 1, messages: 12 });
+    expect(ofCalls(start).slice(0, 2)).toEqual([ofCalls(start)[0], ofCalls(start)[0]]); // the same window, retried
+  });
+
+  it('fails the run on the 4th 502 in a row, after waits of 1, 3 and 9 s', async () => {
+    fakeClock();
+    Object.assign(fake.state.of!, { badGateway: 4 });
+    const p = probe();
+    const run = backfill(opts({ upstream: p.upstream }));
+    const failed = expect(run).rejects.toThrow(/answered 502 to GET \/mass-messaging\/overview/);
+    for (const [i, wait] of [1000, 3000, 9000].entries()) {
+      await until(() => p.answered() === i + 1);
+      await vi.advanceTimersByTimeAsync(wait);
+      await until(() => p.started.length === i + 2);
+    }
+    expect(p.started.slice(1).map((t, i) => t - p.started[i]!)).toEqual([1000, 3000, 9000]);
+    vi.useRealTimers();
+    await failed;
+    expect(p.started).toHaveLength(4);
+  });
+
+  it('retries a network error, and does not retry a 4xx', async () => {
+    const down: Upstream = { ...upstream, forward: async () => Promise.reject(new AppError(502, 'upstream_unavailable', 'The upstream is unreachable')) };
+    await expect(backfill(opts({ upstream: down, config: { pageDelayMs: 0, transientDelaysMs: [0, 0] } }))).rejects.toMatchObject({ code: 'upstream_unavailable' });
+    let calls = 0;
+    const gone: Upstream = {
+      ...upstream,
+      forward: async () => {
+        calls++;
+        return { status: 404, ok: false, headers: new Headers(), body: Buffer.from('{}') };
+      },
+    };
+    await expect(backfill(opts({ upstream: gone }))).rejects.toThrow(/answered 404/);
+    expect(calls).toBe(1);
   });
 
   it('fails the run after maxRetries 429s in a row', async () => {

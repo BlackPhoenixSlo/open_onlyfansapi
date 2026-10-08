@@ -8,6 +8,7 @@ import { api, statsBackfillQuery } from '@/lib/api';
 
 const DAYS = 30;
 const busy = (run: StatsBackfillRun | undefined) => run?.status === 'queued' || run?.status === 'running';
+const retries = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'retry' : 'retries'}` : '');
 
 /** Claims the account for this workspace and backfills its last 30 days in the background, polling every 3 s while it runs. */
 export function RunAnalytics({ accountId }: { accountId: number }) {
@@ -40,13 +41,18 @@ export function RunAnalytics({ accountId }: { accountId: number }) {
       </Button>
       {data?.status === 'done' && (
         <span className="text-muted-foreground">
-          Done ·{' '}
+          Done{retries(data.retries)} ·{' '}
           <Link to="/stats" search={{ accountId }} className="text-foreground underline">
             view Stats
           </Link>
         </span>
       )}
-      {data?.status === 'error' && <span className="text-destructive">{data.error}</span>}
+      {data?.status === 'error' && (
+        <span className="text-destructive">
+          {data.error}
+          {retries(data.retries)}
+        </span>
+      )}
     </div>
   );
 }

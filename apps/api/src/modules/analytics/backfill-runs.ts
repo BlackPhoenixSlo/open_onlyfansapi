@@ -18,6 +18,7 @@ type Run = {
   startedAt: Date;
   finishedAt: Date | null;
   requests: number;
+  retries: number;
   chats: number;
   messages: number;
   error: string | null;
@@ -54,6 +55,7 @@ export function startBackfillRun(opts: { upstream: Upstream; teamId: string; acc
     startedAt: new Date(),
     finishedAt: null,
     requests: 0,
+    retries: 0,
     chats: 0,
     messages: 0,
     error: null,
@@ -66,9 +68,9 @@ export function startBackfillRun(opts: { upstream: Upstream; teamId: string; acc
     from,
     to,
     claimed: true,
-    onProgress: (r) => Object.assign(run, { status: 'running', requests: r.requests, chats: r.chats, messages: r.messages }),
+    onProgress: (r) => Object.assign(run, { status: 'running', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages }),
   }).then(
-    (r) => Object.assign(run, { status: 'done', requests: r.requests, chats: r.chats, messages: r.messages, finishedAt: new Date() }),
+    (r) => Object.assign(run, { status: 'done', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages, finishedAt: new Date() }),
     (err: unknown) => Object.assign(run, { status: 'error', error: err instanceof Error ? err.message : String(err), finishedAt: new Date() }),
   );
   return run.runId;

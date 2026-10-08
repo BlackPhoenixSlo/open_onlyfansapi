@@ -419,8 +419,10 @@ export const statsBackfillRun = z.union([
     to: z.string(),
     startedAt: z.string(),
     finishedAt: z.string().nullable(),
-    /** Upstream requests made, 429s included. */
+    /** Upstream requests made, 429s and retries included. */
     requests: z.number().int(),
+    /** Retries after a transient upstream failure (502, 503, 504 or a network error). */
+    retries: z.number().int(),
     /** Chats walked. */
     chats: z.number().int(),
     /** Messages stored. */

@@ -18,6 +18,8 @@ export type BackfillConfig = {
   backoffMaxMs: number;
   /** Retries of one request after a 429; the next 429 (the 9th in a row by default) fails the run. */
   maxRetries: number;
+  /** Waits before each retry of one request after a 502, 503, 504 or network error; once used up, the next fails the run. */
+  transientDelaysMs: number[];
   /** Outbound texts the client's automations send (Infloww automations, bots): matches are `automation`. */
   automationTexts: string[];
 };
@@ -29,6 +31,7 @@ export function backfillConfig(over: Partial<BackfillConfig> = {}): BackfillConf
     backoffBaseMs: 1000,
     backoffMaxMs: env.ANALYTICS_BACKOFF_MAX_MS,
     maxRetries: 8,
+    transientDelaysMs: [1000, 3000, 9000],
     automationTexts: [],
     ...over,
   };

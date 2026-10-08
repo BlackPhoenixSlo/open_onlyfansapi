@@ -3,6 +3,7 @@ import { getTableColumns, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
+import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream, UpstreamResponse } from '../../lib/upstream.js';
@@ -46,8 +47,10 @@ export type BackfillRows = {
 export type BackfillResult = {
   /** The signal ended the run early. */
   stopped: boolean;
-  /** Upstream requests made, 429s included. */
+  /** Upstream requests made, 429s and retries included. */
   requests: number;
+  /** Retries after a transient failure (502, 503, 504 or a network error); 429 backoffs are not counted. */
+  retries: number;
   chats: number;
   messages: number;
   broadcasts: number;
@@ -59,6 +62,9 @@ export type BackfillResult = {
   /** Chats whose walk stopped on a page with no new id before reaching back to `from` (nor to the chat's start). */
   incompleteChats: number;
 };
+
+/** Statuses retried with `transientDelaysMs`: a proxy or gateway error at the upstream, or the upstream unreachable. */
+const TRANSIENT = new Set([502, 503, 504]);
 
 /** One account at a time across the process (spec §6.1). */
 const oneAtATime = limiter(1);
@@ -106,7 +112,8 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
  * (the walks store messages on both sides of the range) and the welcome template (both feed the derived columns),
  * then chats newest first and each chat's messages newest first down to the range start, then the range's
  * transactions. Rows upsert on `(account_id, message_id)` and `(account_id, tx_id)`, so a re-run never double
- * counts. Paced and capped per account within the run, backs off on 429, and stops when `signal` aborts. Ends by
+ * counts. Paced and capped per account within the run, backs off on 429, retries transient failures (502, 503, 504,
+ * network errors) up to `transientDelaysMs.length` times, and stops when `signal` aborts. Ends by
  * syncing the account's script candidates (`syncScripts`), stopped or not.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
@@ -125,6 +132,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   const result: BackfillResult = {
     stopped: false,
     requests: 0,
+    retries: 0,
     chats: 0,
     messages: 0,
     broadcasts: 0,
@@ -154,10 +162,13 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   }
 
   async function get(path: string): Promise<unknown> {
-    for (let attempt = 0; ; attempt++) {
+    let limited = 0;
+    let transient = 0;
+    for (;;) {
       signal?.throwIfAborted();
       await pace();
-      let res: UpstreamResponse;
+      let res: UpstreamResponse | null = null;
+      let failure: AppError | null = null;
       try {
         res = await upstream.forward({
           accountId,
@@ -165,17 +176,28 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
           method: 'GET',
           headers: { accept: 'application/json', 'x-request-id': newId('req') },
         });
+      } catch (err) {
+        // A network error or timeout (502 `upstream_unavailable`, 504 `upstream_timeout`) is transient; anything else is not.
+        if (!(err instanceof AppError && TRANSIENT.has(err.statusCode))) throw err;
+        failure = err;
       } finally {
         lastDone = Date.now();
         result.requests++;
         opts.onProgress?.(result);
       }
-      if (res.status === 429 && attempt < cfg.maxRetries) {
-        await sleep(retryDelay(res.headers.get('retry-after'), attempt, cfg), undefined, { signal });
+      if (TRANSIENT.has(failure?.statusCode ?? res!.status) && transient < cfg.transientDelaysMs.length) {
+        result.retries++;
+        opts.onProgress?.(result);
+        await sleep(cfg.transientDelaysMs[transient++]!, undefined, { signal });
         continue;
       }
-      if (!res.ok) throw new Error(`backfill: the upstream answered ${res.status} to GET ${path}`);
-      return JSON.parse(res.body.toString('utf8')) as unknown;
+      if (failure) throw failure;
+      if (res!.status === 429 && limited < cfg.maxRetries) {
+        await sleep(retryDelay(res!.headers.get('retry-after'), limited++, cfg), undefined, { signal });
+        continue;
+      }
+      if (!res!.ok) throw new Error(`backfill: the upstream answered ${res!.status} to GET ${path}`);
+      return JSON.parse(res!.body.toString('utf8')) as unknown;
     }
   }
 

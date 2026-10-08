@@ -75,10 +75,21 @@ describe('POST /v1/stats/backfill', () => {
       await sleep(100);
       run = (await status(dashboard(owner.cookie))).json();
     }
-    expect(run).toMatchObject({ status: 'done', runId, chats: 1, messages: 2, error: null });
+    expect(run).toMatchObject({ status: 'done', runId, retries: 0, chats: 1, messages: 2, error: null });
     expect(run.requests).toBeGreaterThan(4);
     expect(run.finishedAt).not.toBeNull();
     expect(await db.$count(messageFact, eq(messageFact.teamId, owner.teamId))).toBe(2);
+  });
+
+  it('retries a transient 502 and records it on the run', async () => {
+    fake.state.of = { ...ofData(), rateLimit: 0, badGateway: 1 };
+    expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
+    let run = (await status(dashboard(owner.cookie))).json();
+    while (run.status === 'queued' || run.status === 'running') {
+      await sleep(100);
+      run = (await status(dashboard(owner.cookie))).json();
+    }
+    expect(run).toMatchObject({ status: 'done', retries: 1, chats: 1, messages: 2, error: null });
   });
 
   it('404s an account the workspace has not connected, 403s one outside a key allowlist or with a read key', async () => {
