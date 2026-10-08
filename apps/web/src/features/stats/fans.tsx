@@ -29,6 +29,9 @@ export async function downloadCsv(path: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url));
 }
 
+/** OF amounts are US dollars. */
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
 /** The fans with messages in the range, latest fan message first, and their stored messages as CSV. */
 export function FansCard({ range }: { range?: StatsRange }) {
   const fans = useQuery({ ...statsFansQuery(range ?? {}), enabled: range !== undefined });
@@ -77,6 +80,8 @@ export function FansCard({ range }: { range?: StatsRange }) {
                   <TableHead>Fan</TableHead>
                   <TableHead className="text-right">Fan msgs</TableHead>
                   <TableHead className="text-right">DMs</TableHead>
+                  <TableHead className="text-right" title="PPVs bought / sent (not mass)">PPV</TableHead>
+                  <TableHead className="text-right">Tips</TableHead>
                   <TableHead>Last fan msg</TableHead>
                   <TableHead />
                 </TableRow>
@@ -87,6 +92,8 @@ export function FansCard({ range }: { range?: StatsRange }) {
                     <TableCell className="font-medium">{f.fanUsername ? `@${f.fanUsername}` : f.chatId}</TableCell>
                     <TableCell className="text-right">{f.fanMessages}</TableCell>
                     <TableCell className="text-right">{f.dmMessages}</TableCell>
+                    <TableCell className="text-right">{f.ppvSent ? `${f.ppvOpened}/${f.ppvSent}` : '—'}</TableCell>
+                    <TableCell className="text-right">{f.tips ? `${f.tips} · ${money(f.tipCents)}` : '—'}</TableCell>
                     <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
                     <TableCell className="text-right">
                       <Button

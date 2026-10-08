@@ -645,6 +645,14 @@ export const statsFan = z.object({
   massMessages: z.number().int(),
   /** Outbound, automated, not mass. */
   automatedMessages: z.number().int(),
+  /** PPVs sent: outbound, not mass, priced. */
+  ppvSent: z.number().int(),
+  /** Of `ppvSent`, those the fan bought (OF's `isOpened`). */
+  ppvOpened: z.number().int(),
+  /** The fan's tip messages. */
+  tips: z.number().int(),
+  /** Their amounts (OF's `tipAmount`), in cents. */
+  tipCents: z.number().int(),
   firstAt: z.string(),
   lastAt: z.string(),
   /** The fan's newest message in the range; null when the fan wrote nothing in it. */
@@ -687,10 +695,30 @@ export const statsMessage = z.object({
   /** The message as plain text (tags stripped, HTML unescaped, whitespace collapsed); empty when it has none. */
   text: z.string(),
   priceCents: z.number().int(),
+  /** OF's `isFree`. */
+  isFree: z.boolean(),
+  /** OF's `isOpened`: on a priced message, the fan bought it. */
+  isOpened: z.boolean(),
   isTip: z.boolean(),
+  /** The tip's amount (OF's `tipAmount`) in cents; 0 when not a tip. */
+  tipCents: z.number().int(),
+  /** All media (OF's `mediaCount`). */
   mediaCount: z.number().int(),
+  /** Media by type; `gifs` also counts a GIPHY gif, which is not in `mediaCount`. */
+  photos: z.number().int(),
+  videos: z.number().int(),
+  gifs: z.number().int(),
+  audios: z.number().int(),
+  /** Some media is shown free before purchase (OF's `previews`). */
+  hasPreview: z.boolean(),
   isMass: z.boolean(),
   isAutomated: z.boolean(),
+  /** Replies to another message (OF's `replyToMessage`). */
+  isReply: z.boolean(),
+  /** OF's `isLiked`: the other side liked it. */
+  isLiked: z.boolean(),
+  /** When an unsend (`messages.deleted`) marked it; null = not deleted. */
+  deletedAt: z.string().nullable(),
 });
 export type StatsMessage = z.infer<typeof statsMessage>;
 

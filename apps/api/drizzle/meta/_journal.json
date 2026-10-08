@@ -85,6 +85,13 @@
       "when": 1791242852909,
       "tag": "0011_scripts_trim",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791497674378,
+      "tag": "0012_message_deleted_at",
+      "breakpoints": true
     }
   ]
 }

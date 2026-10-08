@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, max, min, sql } from 'drizzle-orm
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact } from '../../db/schema.js';
 import type { StatsFan, StatsMessage } from '../../contracts.js';
-import { plainText } from './derive.js';
+import { messageDetail, plainText } from './derive.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`, `GET /v1/stats/messages`): read from `message_fact` of the
 // workspace's own rows, with the fan's username from `chat_coverage`.
@@ -16,10 +16,21 @@ export const MESSAGE_EXPORT_COLUMNS = [
   'direction',
   'text',
   'price_cents',
+  'is_free',
+  'is_opened',
   'is_tip',
+  'tip_cents',
   'media_count',
+  'photos',
+  'videos',
+  'gifs',
+  'audios',
+  'has_preview',
   'is_mass',
   'is_automated',
+  'is_reply',
+  'is_liked',
+  'deleted_at',
 ] as const;
 
 type Scope = { teamId: string; accountIds: number[] | null; from: Date; to: Date };
@@ -40,10 +51,13 @@ const coverage = and(
 
 /**
  * One row per fan with a message in `[from, to)`: latest fan message first (fans who wrote nothing in the range
- * last), then latest message, at most `limit`; `total` counts them all.
+ * last), then latest message, at most `limit`; `total` counts them all. Deleted (unsent) messages count. The PPV and
+ * tip counts read `raw` as `messageDetail` does.
  */
 export async function scopedFans(scope: Scope, limit: number): Promise<{ total: number; items: StatsFan[] }> {
   const outbound = sql`${messageFact.direction} = 'outbound'`;
+  const ppv = sql`${outbound} and not ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
+  const tip = sql`${messageFact.direction} = 'inbound' and ${messageFact.isTip}`;
   const lastAt = max(messageFact.createdAt);
   const lastFanAt = sql<Date | null>`max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound')`.mapWith(messageFact.createdAt);
   const rows = await db
@@ -55,6 +69,10 @@ export async function scopedFans(scope: Scope, limit: number): Promise<{ total: 
       dmMessages: sql<number>`(count(*) filter (where ${outbound} and not ${messageFact.isMass} and not ${messageFact.isAutomated}))::int`,
       massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
       automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
+      ppvSent: sql<number>`(count(*) filter (where ${ppv}))::int`,
+      ppvOpened: sql<number>`(count(*) filter (where ${ppv} and ${messageFact.raw}->>'isOpened' = 'true'))::int`,
+      tips: sql<number>`(count(*) filter (where ${tip}))::int`,
+      tipCents: sql<number>`coalesce(sum(case when jsonb_typeof(${messageFact.raw}->'tipAmount') = 'number' then round((${messageFact.raw}->>'tipAmount')::numeric * 100) end) filter (where ${tip}), 0)::int`,
       firstAt: min(messageFact.createdAt),
       lastAt,
       lastFanAt,
@@ -94,12 +112,13 @@ async function messagePage(scope: MessageScope, after: Cursor | null, limit: num
       messageId: messageFact.messageId,
       createdAt: messageFact.createdAt,
       direction: messageFact.direction,
-      text: sql<string | null>`${messageFact.raw}->>'text'`,
       priceCents: messageFact.priceCents,
       isTip: messageFact.isTip,
       mediaCount: messageFact.mediaCount,
       isMass: messageFact.isMass,
       isAutomated: messageFact.isAutomated,
+      deletedAt: messageFact.deletedAt,
+      raw: messageFact.raw,
     })
     .from(messageFact)
     .leftJoin(chatCoverage, coverage)
@@ -118,10 +137,12 @@ async function messagePage(scope: MessageScope, after: Cursor | null, limit: num
   return { rows, last: rows.at(-1) ?? null };
 }
 
-const toMessage = ({ createdAt, text, ...r }: Awaited<ReturnType<typeof messagePage>>['rows'][number]): StatsMessage => ({
+const toMessage = ({ createdAt, deletedAt, raw, ...r }: Awaited<ReturnType<typeof messagePage>>['rows'][number]): StatsMessage => ({
   ...r,
+  ...messageDetail(raw),
   createdAt: createdAt.toISOString(),
-  text: text ? plainText(text) : '',
+  text: typeof raw.text === 'string' ? plainText(raw.text) : '',
+  deletedAt: deletedAt?.toISOString() ?? null,
 });
 
 /** The first `limit` messages in `[from, to)`, by account, chat, time and message id; `truncated` when more match. */

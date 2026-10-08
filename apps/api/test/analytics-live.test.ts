@@ -5,6 +5,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { messageFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
+import { dbStore } from '../src/modules/analytics/backfill.js';
 import { ingestFrame, type EventFrame } from '../src/modules/events/ingest.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
@@ -59,11 +60,13 @@ const facts = () => db.select().from(messageFact).orderBy(asc(messageFact.messag
 const derived = (rows: Awaited<ReturnType<typeof facts>>) => rows.map(({ fetchedAt: _f, raw: _r, ...d }) => d);
 
 let readKey: string;
+let teamId: string;
 
 beforeAll(async () => {
   await resetDb();
   const a = await signUp(app, 'analytics-live@example.test');
   await linkTeam(a.teamId);
+  teamId = a.teamId;
   readKey = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [ACCOUNT] })).secret;
   fake.state.of = {
     chats: [{ withUser: FAN, lastMessage: { id: 110, createdAt: outbound.createdAt } }],
@@ -102,13 +105,38 @@ describe('analytics live updates', () => {
     expect(log.error).not.toHaveBeenCalled();
   });
 
-  it('a row already stored is kept; messages.deleted removes it', async () => {
+  it('a row already stored is kept; messages.deleted marks it deleted and keeps it', async () => {
     const before = await facts();
+    expect(before.map((r) => r.deletedAt)).toEqual([null, null]);
     await ingestFrame({ ...messageFrame({ ...inbound, text: '<p>changed</p>' }), id: 'test:replay' }, log);
     expect(await facts()).toEqual(before);
 
+    const t0 = Date.now();
     await ingestFrame(frame('messages.deleted', { id: String(inbound.id) }), log);
-    expect((await facts()).map((r) => r.messageId)).toEqual([outbound.id]);
+    await ingestFrame(frame('messages.deleted', { id: '999' }), log); // unknown: no row
+    const after = await facts();
+    expect(after.map((r) => r.messageId)).toEqual([inbound.id, outbound.id]);
+    const deletedAt = after[0]!.deletedAt!;
+    expect(deletedAt.getTime()).toBeGreaterThanOrEqual(t0 - 5);
+    expect(after.map(({ deletedAt: _d, ...r }) => r)).toEqual(before.map(({ deletedAt: _d, ...r }) => r));
+    // A second delete keeps the first mark.
+    await ingestFrame(frame('messages.deleted', { id: String(inbound.id) }), log);
+    expect((await facts())[0]!.deletedAt).toEqual(deletedAt);
+  });
+
+  it('a backfill that reads a deleted message again clears the mark, on either upsert', async () => {
+    const mark = () => pool.query('UPDATE message_fact SET deleted_at = now() WHERE message_id = $1', [inbound.id]);
+    const deletedAt = async () => (await facts()).find((r) => r.messageId === inbound.id)!.deletedAt;
+    await mark();
+    await claimAndBackfill({ upstream, teamId, accountId: ACCOUNT, from: new Date(Date.now() - 86_400_000), to: new Date(), config: { pageDelayMs: 0 } });
+    expect(await deletedAt()).toBeNull();
+
+    // A boundary message older than the mass window is only inserted, never re-derived, but is un-deleted too.
+    await mark();
+    const { teamId: _t, accountId: _a, deletedAt: _d, ...walked } = (await facts()).find((r) => r.messageId === inbound.id)!;
+    await dbStore(teamId, ACCOUNT).messages([], [{ ...walked, priceCents: 999 }]);
+    const [row] = (await facts()).filter((r) => r.messageId === inbound.id);
+    expect([row!.deletedAt, row!.priceCents]).toEqual([null, walked.priceCents]);
   });
 
   it('an outbound message with a queueId counts as mass until a backfill re-derives it', async () => {

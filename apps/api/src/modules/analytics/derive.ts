@@ -107,6 +107,44 @@ export function mediaKey(media: unknown): string | null {
   return ids.length ? ids.join(',') : null;
 }
 
+export type MessageDetail = {
+  /** OF's `isOpened`: on a priced message, the fan bought (unlocked) it. */
+  isOpened: boolean;
+  isFree: boolean;
+  /** `tipAmount` in cents on a tip (`isTip`), else 0. */
+  tipCents: number;
+  photos: number;
+  videos: number;
+  /** `media[].type` `gif`, plus 1 for a GIPHY gif (`giphyId`), which OF does not count in `mediaCount`. */
+  gifs: number;
+  audios: number;
+  /** `previews` (the media ids shown free before purchase) is not empty. */
+  hasPreview: boolean;
+  /** The message replies to another (`replyToMessage`). */
+  isReply: boolean;
+  /** OF's `isLiked`: the other side liked it. */
+  isLiked: boolean;
+};
+
+/** Per-message detail for the export, read from OF's raw message object; absent or malformed fields read as false / 0. */
+export function messageDetail(raw: Raw): MessageDetail {
+  const media = Array.isArray(raw.media) ? (raw.media as unknown[]) : [];
+  const ofType = (type: string) => media.filter((m) => (m as Raw | null)?.type === type).length;
+  const isTip = raw.isTip === true;
+  return {
+    isOpened: raw.isOpened === true,
+    isFree: raw.isFree === true,
+    tipCents: isTip && typeof raw.tipAmount === 'number' && Number.isFinite(raw.tipAmount) ? Math.round(raw.tipAmount * 100) : 0,
+    photos: ofType('photo'),
+    videos: ofType('video'),
+    gifs: ofType('gif') + (typeof raw.giphyId === 'string' && raw.giphyId !== '' ? 1 : 0),
+    audios: ofType('audio'),
+    hasPreview: Array.isArray(raw.previews) && raw.previews.length > 0,
+    isReply: raw.replyToMessage !== null && typeof raw.replyToMessage === 'object',
+    isLiked: raw.isLiked === true,
+  };
+}
+
 export type DeriveContext = {
   accountId: number;
   /** Mass history: broadcast queue id → sentCount. */

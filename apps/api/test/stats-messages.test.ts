@@ -23,6 +23,11 @@ const msg = (id: number, at: string, from: number, over: Record<string, unknown>
   fromUser: { id: from },
   text: '<p>ok</p>',
   price: 0,
+  isFree: true,
+  isOpened: false,
+  isLiked: false,
+  previews: [],
+  giphyId: null,
   isTip: false,
   mediaCount: 0,
   media: [],
@@ -40,22 +45,26 @@ const of = (messages: FakeOf['messages'], usernames: Record<number, string> = {}
   welcome: { id: '7001', template: 'reply_on_subscribe', text: '<p>welcome!</p>', media: [] },
 });
 
+const media = (id: number, type: string) => ({ id, type, canView: true, hasError: false, isReady: true, files: {} });
+const ppv = (price: number, isOpened: boolean) => ({ price, isFree: false, isOpened, canPurchaseReason: isOpened ? 'opened' : '' });
+
 /**
- * Account 1001: fan 3001 (@fan_a) with a message before the range and two at the same instant; fan 3002 (@fan_b, but
- * its coverage row is moved to workspace B below); 3003 only got the welcome message and a mass message. Account 1002:
- * fan 4001 (@fan_c, its coverage row deleted below).
+ * Account 1001: fan 3001 (@fan_a) with a message before the range and two at the same instant (a tip, and a liked GIPHY
+ * reply that is deleted below), a bought PPV and a mass PPV; fan 3002 (@fan_b, but its coverage row is moved to
+ * workspace B below) with an unbought PPV; 3003 only got the welcome message and a mass message. Account 1002: fan
+ * 4001 (@fan_c, its coverage row deleted below).
  */
 const DATA_A1 = of(
   {
     3001: [
-      msg(8, '09-02T10:00', 3001, { text: '<p title="1 > 0">lo<b>ve</b> &#39;u&#x27;</p>' }),
-      msg(4, '09-02T10:00', 3001, { text: '<p>-_- @name +1, "quoted"</p>', price: 5, isTip: true }),
-      msg(3, '09-02T09:00', A1, { queueId: 900, isFromQueue: true }),
-      msg(2, '09-01T10:05', A1, { text: '<p>Hello <b>You</b></p>', mediaCount: 2 }),
+      msg(8, '09-02T10:00', 3001, { text: '<p title="1 > 0">lo<b>ve</b> &#39;u&#x27;</p>', giphyId: 'g1', isLiked: true, replyToMessage: { id: 2 } }),
+      msg(4, '09-02T10:00', 3001, { text: '<p>-_- @name +1, "quoted"</p>', isTip: true, tipAmount: 5 }),
+      msg(3, '09-02T09:00', A1, { queueId: 900, isFromQueue: true, ...ppv(10, true) }),
+      msg(2, '09-01T10:05', A1, { text: '<p>Hello <b>You</b></p>', ...ppv(12.5, true), mediaCount: 2, media: [media(51, 'photo'), media(52, 'video')], previews: [51] }),
       msg(1, '09-01T10:00', 3001, { text: '<p>Hey &amp; hi 😊</p>' }),
       msg(5, '08-20T10:00', 3001),
     ],
-    3002: [msg(7, '09-03T08:30', A1), msg(6, '09-03T08:00', 3002, { text: null })],
+    3002: [msg(7, '09-03T08:30', A1, { ...ppv(3, false), mediaCount: 1, media: [media(53, 'audio')] }), msg(6, '09-03T08:00', 3002, { text: null })],
     3003: [msg(32, '09-02T09:00', A1, { queueId: 900, isFromQueue: true }), msg(31, '09-01T08:00', A1, { text: '<p>welcome!</p>' })],
   },
   { 3001: 'fan_a', 3002: 'fan_b' },
@@ -69,7 +78,9 @@ let keyB: string;
 
 const get = (url: string, key = keyA) => app.inject({ method: 'GET', url, headers: bearer(key) });
 const RANGE = 'from=2026-09-01&to=2026-09-04';
-const HEADER = 'account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_tip,media_count,is_mass,is_automated\n';
+const HEADER =
+  'account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_free,is_opened,is_tip,tip_cents,media_count,photos,videos,gifs,audios,has_preview,is_mass,is_automated,is_reply,is_liked,deleted_at\n';
+const DELETED_AT = '2026-09-03T12:00:00.000Z';
 const ALL_IDS = [1, 2, 3, 4, 8, 6, 7, 31, 32, 21, 22];
 const fans = async (q: string, key = keyA) => {
   const res = await get(`/v1/stats/fans?${q}`, key);
@@ -103,6 +114,8 @@ beforeAll(async () => {
   // Another workspace's coverage row for the chat must not name the fan; a chat with no coverage row has no name.
   await pool.query('UPDATE chat_coverage SET team_id = $1 WHERE account_id = $2 AND chat_id = 3002', [b.teamId, A1]);
   await pool.query('DELETE FROM chat_coverage WHERE account_id = $1 AND chat_id = 4001', [A2]);
+  // An unsent message stays, marked.
+  await pool.query('UPDATE message_fact SET deleted_at = $1 WHERE account_id = $2 AND message_id = 8', [DELETED_AT, A1]);
 });
 afterAll(async () => {
   await app.close();
@@ -117,15 +130,31 @@ describe('stats fans', () => {
     const body = res.json();
     expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-04', total: 4 });
     const fan = (accountId: number, chatId: number, fanUsername: string | null, counts: number[], firstAt: string, lastAt: string, lastFanAt: string | null) => {
-      const [fanMessages, dmMessages, massMessages, automatedMessages] = counts;
+      const [fanMessages, dmMessages, massMessages, automatedMessages, ppvSent, ppvOpened, tips, tipCents] = counts;
       const iso = (t: string | null) => (t ? `2026-${t}:00.000Z` : null);
-      return { accountId, chatId, fanUsername, fanMessages, dmMessages, massMessages, automatedMessages, firstAt: iso(firstAt), lastAt: iso(lastAt), lastFanAt: iso(lastFanAt) };
+      return {
+        accountId,
+        chatId,
+        fanUsername,
+        fanMessages,
+        dmMessages,
+        massMessages,
+        automatedMessages,
+        ppvSent,
+        ppvOpened,
+        tips,
+        tipCents,
+        firstAt: iso(firstAt),
+        lastAt: iso(lastAt),
+        lastFanAt: iso(lastFanAt),
+      };
     };
     expect(body.items).toEqual([
-      fan(A1, 3002, null, [1, 1, 0, 0], '09-03T08:00', '09-03T08:30', '09-03T08:00'), // coverage row is workspace B's
-      fan(A1, 3001, 'fan_a', [3, 1, 1, 0], '09-01T10:00', '09-02T10:00', '09-02T10:00'),
-      fan(A2, 4001, null, [1, 1, 0, 0], '09-01T22:00', '09-01T22:20', '09-01T22:00'), // no coverage row
-      fan(A1, 3003, null, [0, 0, 1, 1], '09-01T08:00', '09-02T09:00', null), // later lastAt than 4001, but no fan message
+      fan(A1, 3002, null, [1, 1, 0, 0, 1, 0, 0, 0], '09-03T08:00', '09-03T08:30', '09-03T08:00'), // coverage row is workspace B's
+      // The deleted message 8 still counts; the mass PPV 3 is not a PPV sent.
+      fan(A1, 3001, 'fan_a', [3, 1, 1, 0, 1, 1, 1, 500], '09-01T10:00', '09-02T10:00', '09-02T10:00'),
+      fan(A2, 4001, null, [1, 1, 0, 0, 0, 0, 0, 0], '09-01T22:00', '09-01T22:20', '09-01T22:00'), // no coverage row
+      fan(A1, 3003, null, [0, 0, 1, 1, 0, 0, 0, 0], '09-01T08:00', '09-02T09:00', null), // later lastAt than 4001, but no fan message
     ]);
     const limited = (await get(`/v1/stats/fans?${RANGE}&limit=1`)).json();
     expect([limited.total, limited.items.map((f: { chatId: number }) => f.chatId)]).toEqual([4, [3002]]);
@@ -134,18 +163,41 @@ describe('stats fans', () => {
 });
 
 describe('stats messages', () => {
-  it('returns the plain-text messages by account, chat and time, with the money and kind columns', async () => {
+  it('returns the plain-text messages by account, chat and time, with the money, media, kind and deleted columns', async () => {
     const res = await get(`/v1/stats/messages?${RANGE}&accountId=${A1}&chatId=3001`);
     expect(res.statusCode).toBe(200);
-    const m = { accountId: A1, chatId: 3001, fanUsername: 'fan_a', priceCents: 0, isTip: false, mediaCount: 0, isMass: false, isAutomated: false };
+    const m = {
+      accountId: A1,
+      chatId: 3001,
+      fanUsername: 'fan_a',
+      priceCents: 0,
+      isFree: true,
+      isOpened: false,
+      isTip: false,
+      tipCents: 0,
+      mediaCount: 0,
+      photos: 0,
+      videos: 0,
+      gifs: 0,
+      audios: 0,
+      hasPreview: false,
+      isMass: false,
+      isAutomated: false,
+      isReply: false,
+      isLiked: false,
+      deletedAt: null,
+    };
+    const bought = { priceCents: 1250, isFree: false, isOpened: true, mediaCount: 2, photos: 1, videos: 1, hasPreview: true };
     expect(res.json()).toMatchObject({ truncated: false });
     expect(res.json().items).toEqual([
       { ...m, messageId: 1, createdAt: '2026-09-01T10:00:00.000Z', direction: 'inbound', text: 'Hey & hi 😊' },
-      { ...m, messageId: 2, createdAt: '2026-09-01T10:05:00.000Z', direction: 'outbound', text: 'Hello You', mediaCount: 2 },
-      { ...m, messageId: 3, createdAt: '2026-09-02T09:00:00.000Z', direction: 'outbound', text: 'ok', isMass: true },
-      { ...m, messageId: 4, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: '-_- @name +1, "quoted"', priceCents: 500, isTip: true },
-      { ...m, messageId: 8, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: "love 'u'" },
+      { ...m, messageId: 2, createdAt: '2026-09-01T10:05:00.000Z', direction: 'outbound', text: 'Hello You', ...bought },
+      { ...m, messageId: 3, createdAt: '2026-09-02T09:00:00.000Z', direction: 'outbound', text: 'ok', isMass: true, priceCents: 1000, isFree: false, isOpened: true },
+      { ...m, messageId: 4, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: '-_- @name +1, "quoted"', isTip: true, tipCents: 500 },
+      { ...m, messageId: 8, createdAt: '2026-09-02T10:00:00.000Z', direction: 'inbound', text: "love 'u'", gifs: 1, isReply: true, isLiked: true, deletedAt: DELETED_AT },
     ]);
+    const unbought = (await get(`/v1/stats/messages?${RANGE}&chatId=3002&direction=out`)).json().items;
+    expect(unbought).toMatchObject([{ messageId: 7, priceCents: 300, isFree: false, isOpened: false, mediaCount: 1, audios: 1 }]);
     const other = (await get(`/v1/stats/messages?${RANGE}&chatId=3002`)).json().items;
     expect(other.map((x: { fanUsername: string | null }) => x.fanUsername)).toEqual([null, null]);
     expect(await messageIds(RANGE)).toEqual(ALL_IDS);
@@ -169,9 +221,9 @@ describe('stats messages', () => {
     expect(res.headers['content-disposition']).toBe('attachment; filename="messages_3001_in_2026-09-01_2026-09-04.csv"');
     expect(res.body).toBe(
       HEADER +
-        '1001,3001,fan_a,1,2026-09-01T10:00:00.000Z,inbound,Hey & hi 😊,0,false,0,false,false\n' +
-        '1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"-_- @name +1, ""quoted""",500,true,0,false,false\n' +
-        "1001,3001,fan_a,8,2026-09-02T10:00:00.000Z,inbound,love 'u',0,false,0,false,false\n",
+        '1001,3001,fan_a,1,2026-09-01T10:00:00.000Z,inbound,Hey & hi 😊,0,true,false,false,0,0,0,0,0,0,false,false,false,false,false,\n' +
+        '1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"-_- @name +1, ""quoted""",0,true,false,true,500,0,0,0,0,0,false,false,false,false,false,\n' +
+        `1001,3001,fan_a,8,2026-09-02T10:00:00.000Z,inbound,love 'u',0,true,false,false,0,0,0,0,1,0,false,false,false,true,true,${DELETED_AT}\n`,
     );
   });
 

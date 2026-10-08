@@ -139,8 +139,9 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
 /**
  * The analytics tables of workspace `teamId`, which must own the account (`claimAccount` or `assignAccount` first).
  * Messages from `massFrom` on upsert on `(account_id, message_id)`; older ones were derived without their mass
- * history, so they are only inserted, never updated: a later run that read it is not undone. Coverage merges: it
- * never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's script candidates.
+ * history, so they are only inserted, never updated: a later run that read it is not undone. A message read again
+ * exists upstream, so either way its `deleted_at` is cleared. Coverage merges: it never moves back. Transactions
+ * upsert on `(account_id, tx_id)`. `finish` syncs the account's script candidates.
  */
 export function dbStore(teamId: string, accountId: number): BackfillStore {
   const owned = { teamId, accountId };
@@ -152,7 +153,13 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
           .values(covered.map((r) => ({ ...owned, ...r })))
           .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
       }
-      if (tail.length) await db.insert(messageFact).values(tail.map((r) => ({ ...owned, ...r }))).onConflictDoNothing();
+      // `updateAll` above clears `deleted_at` too: the derived rows have none.
+      if (tail.length) {
+        await db
+          .insert(messageFact)
+          .values(tail.map((r) => ({ ...owned, ...r })))
+          .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: { deletedAt: null } });
+      }
     },
     async coverage(walk) {
       // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.

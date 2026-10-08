@@ -68,8 +68,14 @@ Messages are stored per fan in `message_fact`, keyed by account and fan (`chat_i
 and for the live message events received while the gateway was connected; a range never backfilled, or events missed
 while it was down, are not there. `raw` keeps OF's message object (text, sender, price, media metadata); the media
 files themselves are not stored. The retention jobs purge only the request log, webhook deliveries and the event
-ledger, never the analytics tables. A `messages.deleted` event removes the message's row. `fanUsername` comes from
-the chat list a backfill walks, so it is null for a chat only seen live until a backfill walks it.
+ledger, never the analytics tables. `fanUsername` comes from the chat list a backfill walks, so it is null for a chat
+only seen live until a backfill walks it.
+
+**Unsent messages.** A `messages.deleted` event (the fan or the creator unsent the message) keeps the row and sets
+`message_fact.deleted_at` to the time the gateway applied the event (migration `0012`); a second event keeps the
+first time, and an event for a message not stored does nothing. A backfill that reads the message again (so it still
+exists upstream) clears the mark. Deleted messages stay in everything else: the fans list counts, reply time,
+openers and scripts (the message was sent and seen); the export shows `deletedAt`.
 
 The owner reports Infloww's fan-reply export is poor. To export the fans' own messages, call
 `GET /v1/stats/messages?from=2026-09-01&to=2026-09-30&direction=in&format=csv`, with `accountId` and `chatId` to narrow
@@ -82,11 +88,34 @@ message as plain text: block and break tags (`p`, `div`, `br`, `li`, `tr`, `h1` 
 and case is kept. The CSV holds the whole range, without `limit`: it is streamed, read from the database 2000 rows
 at a time.
 
+Each message carries, as JSON fields (CSV columns in snake_case, in this order): `accountId`, `chatId`, `fanUsername`,
+`messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text`, `priceCents`, `isFree`, `isOpened`, `isTip`,
+`tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `isReply`,
+`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). The detail fields are read from OF's stored message
+object (`raw`) when the export runs, so no backfill is needed for messages already stored:
+
+| Field | OF field | Notes |
+|---|---|---|
+| `priceCents` | `price` (dollars) | Stored column; a PPV is an outbound message with a price. |
+| `isFree` | `isFree` | |
+| `isOpened` | `isOpened` | On a priced message, the fan bought it (OF's `canPurchaseReason` is then `opened`). OF reports it false on free messages. |
+| `isTip`, `tipCents` | `isTip`, `tipAmount` (dollars) | A tip message has `price` 0 and the amount in `tipAmount`; `tipCents` is 0 when not a tip or `tipAmount` is not a number. |
+| `mediaCount` | `mediaCount`, else `media` length | Stored column. |
+| `photos`, `videos`, `gifs`, `audios` | `media[].type` (`photo`, `video`, `gif`, `audio`) | Counts only; the files are not stored. A GIPHY gif (`giphyId` set) adds 1 to `gifs` and is not in `mediaCount`, as in OF. Other types count only in `mediaCount`. |
+| `hasPreview` | `previews` | Not empty: some media ids are shown free before purchase. |
+| `isReply` | `replyToMessage` | An object: the message quotes another. |
+| `isLiked` | `isLiked` | The other side liked it (on an outbound message, the fan). |
+
+`GET /v1/stats/fans` adds per fan, over the same range: `ppvSent` (outbound, not mass, priced), `ppvOpened` (of those,
+`isOpened`), `tips` (the fan's tip messages) and `tipCents` (their `tipAmount`). The Fans card shows PPV as
+bought/sent and Tips as count and amount. These come from the message objects in the chat, not from transactions:
+a PPV bought or a tip sent outside the stored messages is not in them.
+
 ## Live updates
 
 Between backfills, the upstream's `messages.received` and `messages.sent` events for a claimed account (one with an
 `account_workspace` row) add the message's `message_fact` row, derived with the backfill's own mapper, and
-`messages.deleted` removes it. Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
+`messages.deleted` marks it deleted ([unsent messages](#stored-messages-and-export)). Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
 its event socket (OF's own socket, then one hop to the gateway, usually seconds); events missed while the gateway is
 down or reconnecting are not replayed, so a backfill is still the complete view. Only `message_fact` changes live,
 and a row already stored is kept. The live mapper has no mass history, welcome message or automation texts, so an
@@ -251,7 +280,8 @@ curl -X PUT -H "Authorization: Bearer $API_KEY" -H "content-type: application/js
 
 1. **Migrate.** `pnpm db:migrate` applies `0009_stats_config` (table `stats_config`), `0010_scripts` (table `script`,
    `message_fact.normaliser_version`, `chat_coverage.fan_name` and `fan_custom_name`) and `0011_scripts_trim` (drops
-   unused `script` columns).
+   unused `script` columns). `0012_message_deleted_at` adds the nullable `message_fact.deleted_at`; existing rows
+   stay not deleted, and rows a live `messages.deleted` removed before it are gone.
 2. **Rehash once per account.** Rows stored before `0010` have a null `normaliser_version` and an older
    `text_hash`, so scripts leave them out. For each claimed account run
    `pnpm --filter @gateway/api analytics:rehash --account <id>`. It is safe to run again: a second run updates

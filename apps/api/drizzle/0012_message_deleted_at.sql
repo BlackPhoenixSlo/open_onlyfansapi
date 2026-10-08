@@ -1,0 +1,1 @@
+ALTER TABLE "message_fact" ADD COLUMN "deleted_at" timestamp (3) with time zone;

@@ -7,6 +7,7 @@ import {
   derivePurchase,
   fanNames,
   isScriptEligible,
+  messageDetail,
   NORMALISER_VERSION,
   normaliseScript,
   normaliseText,
@@ -161,6 +162,49 @@ describe('analytics derived columns', () => {
   it('reads price, tip and media', () => {
     const d = deriveMessage(msg({ price: 19.99, isTip: true, mediaCount: 2, media: [{ id: 20 }, { id: 3 }] }), 2001, ctx);
     expect(d).toMatchObject({ priceCents: 1999, isTip: true, mediaCount: 2, mediaKey: '3,20' });
+  });
+
+  // Shaped like stored OF message objects: a bought PPV, a tip, a GIPHY gif, a gif upload, a liked voice-note reply.
+  const media = (id: number, type: string) => ({ id, type, canView: true, hasError: false, isReady: true, duration: 0, files: {}, createdAt: null });
+  const ofMsg = (over: Record<string, unknown>) => ({
+    ...msg({}),
+    responseType: 'message',
+    giphyId: null,
+    lockedText: false,
+    isFree: true,
+    price: 0,
+    isMediaReady: true,
+    mediaCount: 0,
+    media: [],
+    previews: [],
+    isTip: false,
+    isOpened: false,
+    isLiked: false,
+    canPurchase: false,
+    canPurchaseReason: '',
+    ...over,
+  });
+  const none = { isOpened: false, isFree: true, tipCents: 0, photos: 0, videos: 0, gifs: 0, audios: 0, hasPreview: false, isReply: false, isLiked: false };
+
+  it('reads PPV, tip, media types, preview, reply and like from the raw message', () => {
+    const ppv = ofMsg({ isFree: false, price: 25, isOpened: true, canPurchaseReason: 'opened', mediaCount: 3, media: [media(1, 'photo'), media(2, 'photo'), media(3, 'video')], previews: [1] });
+    expect(messageDetail(ppv)).toEqual({ ...none, isFree: false, isOpened: true, photos: 2, videos: 1, hasPreview: true });
+    const unbought = ofMsg({ isFree: false, price: 25, canPurchase: true, mediaCount: 1, media: [media(4, 'video')] });
+    expect(messageDetail(unbought)).toEqual({ ...none, isFree: false, videos: 1 });
+    const tip = ofMsg({ fromUser: { id: 2001 }, isTip: true, tipAmount: 15, tipText: '', text: 'for you' });
+    expect(messageDetail(tip)).toEqual({ ...none, tipCents: 1500 });
+    expect(messageDetail(ofMsg({ tipAmount: 15 })).tipCents).toBe(0); // not a tip
+    expect(messageDetail(ofMsg({ isTip: true, tipAmount: '15' })).tipCents).toBe(0); // not a number
+    expect(messageDetail(ofMsg({ giphyId: 'abc123' }))).toEqual({ ...none, gifs: 1 }); // not in mediaCount
+    expect(messageDetail(ofMsg({ mediaCount: 1, media: [media(5, 'gif')] }))).toEqual({ ...none, gifs: 1 });
+    const reply = ofMsg({ mediaCount: 1, media: [media(6, 'audio')], isLiked: true, replyToMessage: ofMsg({ id: 0 }) });
+    expect(messageDetail(reply)).toEqual({ ...none, audios: 1, isReply: true, isLiked: true });
+  });
+
+  it('reads absent or malformed raw fields as false and 0', () => {
+    expect(messageDetail({})).toEqual({ ...none, isFree: false });
+    expect(messageDetail({ media: 'x', previews: null, replyToMessage: null, isOpened: 'true', giphyId: '' })).toEqual({ ...none, isFree: false });
+    expect(messageDetail({ media: [null, { type: 'other' }] })).toEqual({ ...none, isFree: false });
   });
 
   it('takes the transaction fan from user.id, else a numeric profile link in the description', () => {

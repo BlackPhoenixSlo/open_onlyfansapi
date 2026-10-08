@@ -185,6 +185,8 @@ export const messageFact = pgTable(
     normaliserVersion: integer('normaliser_version'),
     raw: jsonb('raw').$type<Record<string, unknown>>().notNull(),
     fetchedAt: analyticsAt('fetched_at').notNull(),
+    /** When a `messages.deleted` event (an unsend) marked the message; null = not deleted. A backfill that re-reads it clears it. */
+    deletedAt: analyticsAt('deleted_at'),
   },
   (t) => [
     primaryKey({ columns: [t.accountId, t.messageId] }),

@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { and, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import type { StatsFreshness, WebhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
 import { accountWorkspace, chatCoverage, event, messageFact } from '../../db/schema.js';
@@ -49,23 +49,27 @@ const insertMessage: Apply = async (teamId, accountId, payload) => {
   if (row) await db.insert(messageFact).values(row).onConflictDoNothing();
 };
 
-const removeMessage: Apply = async (teamId, accountId, payload) => {
+/** Marks the message's row deleted (an unsend) at the time the event is applied; the row stays. An unknown message is ignored; a mark is kept. */
+const markDeleted: Apply = async (teamId, accountId, payload) => {
   const messageId = int((payload as Raw | null)?.id);
   if (messageId === null) return;
-  await db.delete(messageFact).where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.messageId, messageId)));
+  await db
+    .update(messageFact)
+    .set({ deletedAt: new Date() })
+    .where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.messageId, messageId), isNull(messageFact.deletedAt)));
 };
 
 const APPLY = {
   'messages.received': insertMessage,
   'messages.sent': insertMessage,
-  'messages.deleted': removeMessage,
+  'messages.deleted': markDeleted,
 } satisfies Partial<Record<WebhookEventType, Apply>>;
 const applies = (type: string): type is keyof typeof APPLY => Object.hasOwn(APPLY, type);
 
 /**
  * Applies one ingested event to the analytics store when its account is claimed (`account_workspace`); otherwise
  * does nothing. `messages.received` / `messages.sent` insert the message's row (`insertMessage`); `messages.deleted`
- * removes it. Never throws: a failure is logged once with the event id.
+ * marks it deleted (`markDeleted`). Never throws: a failure is logged once with the event id.
  */
 export async function applyLiveEvent(eventId: string, type: string, accountId: number, payload: unknown, log: FastifyBaseLogger): Promise<void> {
   if (!applies(type)) return;
