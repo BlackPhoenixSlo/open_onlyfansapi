@@ -76,6 +76,8 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
 
 ## 4. Connect one real model
 
+> Local dev login (exists only in the local Postgres): `dev@localhost.test` / `gateway-dev-2026`, owner of org `dev-iyogpp`. Not an env var: the hygiene test rejects unknown keys in `.env.example`.
+
 1. **Sign up.** Open the dashboard and register. Open the verification link, which is in the API log when there is no SMTP. A
    workspace is created.
 2. **Link the workspace.** Copy `<slug>` from **Settings**, then run `pnpm --filter @gateway/api link-team <slug>`. It prints
