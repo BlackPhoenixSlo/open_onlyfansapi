@@ -127,7 +127,9 @@ A 429 waits for `Retry-After`, or 1 s doubling per retry, never longer than the 
 the next 429 (the 9th in a row) fails the run; what was stored stays. A 502, 503, 504 or network error (a
 transient proxy failure) is retried up to 3 times after 1 s, 3 s and 9 s, each attempt counting against the hourly
 cap; the 4th failure in a row fails the run, other 4xx fail it at once, and the dashboard shows the run's retries
-("Done · 2 retries"). One account is read at a time. The hourly cap counts one run's
+("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF session expired
+for account <id>: re-connect it in Accounts" (`errorCode: session_expired`), and the account shows "Session expired ·
+re-connect". One account is read at a time. The hourly cap counts one run's
 requests only (each run, in its own process, starts from zero), so two runs back to back can reach twice the cap
 within an hour: leave an hour between them, or lower the cap.
 

@@ -102,7 +102,7 @@ type Raw = Record<string, unknown>;
  * chats however large `limit` is and carry `nextOffset` (unless `noNextOffset`), `withUser` is only `{ _view, id }`
  * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
  * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set), then
- * `badGateway` that many 502.
+ * `badGateway` that many 502; `unauthorized` answers every request 401, as the upstream does once OF refuses the session.
  */
 export type FakeOf = {
   chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } | null }[];
@@ -117,6 +117,7 @@ export type FakeOf = {
   rateLimit?: number;
   retryAfter?: string;
   badGateway?: number;
+  unauthorized?: boolean;
 };
 
 /** `YYYY-MM-DD HH:MM:SS` (UTC) → epoch ms. */
@@ -217,6 +218,7 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
         if (state.of.retryAfter !== undefined) reply.header('retry-after', state.of.retryAfter);
         return reply.status(429).send({ error: 'RATE_LIMITED' });
       }
+      if (state.of.unauthorized) return reply.status(401).send({ error: { code: 'of_error', status: 401 } });
       if (state.of.badGateway) {
         state.of.badGateway--;
         return reply.status(502).send({ error: 'PROXY_ERROR' });

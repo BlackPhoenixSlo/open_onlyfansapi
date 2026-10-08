@@ -428,6 +428,8 @@ export const statsBackfillRun = z.union([
     /** Messages stored. */
     messages: z.number().int(),
     error: z.string().nullable(),
+    /** `session_expired`: OF answered 401, so the account must be re-connected before a run can work. */
+    errorCode: z.enum(['session_expired']).nullable(),
   }),
 ]);
 export type StatsBackfillRun = z.infer<typeof statsBackfillRun>;

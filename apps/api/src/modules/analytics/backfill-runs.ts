@@ -22,6 +22,7 @@ type Run = {
   chats: number;
   messages: number;
   error: string | null;
+  errorCode: 'session_expired' | null;
 };
 
 const runs = new Map<number, Run>();
@@ -59,6 +60,7 @@ export function startBackfillRun(opts: { upstream: Upstream; teamId: string; acc
     chats: 0,
     messages: 0,
     error: null,
+    errorCode: null,
   };
   runs.set(accountId, run);
   backfill({
@@ -71,7 +73,13 @@ export function startBackfillRun(opts: { upstream: Upstream; teamId: string; acc
     onProgress: (r) => Object.assign(run, { status: 'running', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages }),
   }).then(
     (r) => Object.assign(run, { status: 'done', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages, finishedAt: new Date() }),
-    (err: unknown) => Object.assign(run, { status: 'error', error: err instanceof Error ? err.message : String(err), finishedAt: new Date() }),
+    (err: unknown) =>
+      Object.assign(run, {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        errorCode: err instanceof AppError && err.code === 'session_expired' ? 'session_expired' : null,
+        finishedAt: new Date(),
+      }),
   );
   return run.runId;
 }

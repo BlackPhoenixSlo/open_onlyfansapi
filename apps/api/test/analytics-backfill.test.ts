@@ -494,6 +494,22 @@ describe('analytics backfill', () => {
     expect(calls).toBe(1);
   });
 
+  it('names an expired OF session when the upstream answers 401', async () => {
+    let calls = 0;
+    const expired: Upstream = {
+      ...upstream,
+      forward: async () => {
+        calls++;
+        return { status: 401, ok: false, headers: new Headers(), body: Buffer.from('{"error":{"code":"of_error","status":401}}') };
+      },
+    };
+    await expect(backfill(opts({ upstream: expired }))).rejects.toMatchObject({
+      code: 'session_expired',
+      message: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts`,
+    });
+    expect(calls).toBe(1);
+  });
+
   it('fails the run after maxRetries 429s in a row', async () => {
     Object.assign(fake.state.of!, { rateLimit: 3, retryAfter: '0' });
     await expect(backfill(opts({ config: { pageDelayMs: 0, maxRetries: 2 } }))).rejects.toThrow(/answered 429/);

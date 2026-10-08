@@ -196,6 +196,9 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
         await sleep(retryDelay(res!.headers.get('retry-after'), limited++, cfg), undefined, { signal });
         continue;
       }
+      if (res!.status === 401) {
+        throw new AppError(401, 'session_expired', `OF session expired for account ${accountId}: re-connect it in Accounts`);
+      }
       if (!res!.ok) throw new Error(`backfill: the upstream answered ${res!.status} to GET ${path}`);
       return JSON.parse(res!.body.toString('utf8')) as unknown;
     }

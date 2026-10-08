@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
-import { RunAnalytics } from '@/features/accounts/RunAnalytics';
+import { RunAnalytics, SessionExpiredBadge } from '@/features/accounts/RunAnalytics';
 import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
@@ -68,8 +68,13 @@ function Accounts() {
                 <TableCell>{a.label ?? '—'}</TableCell>
                 <TableCell className="font-mono">{a.id}</TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{a.status}</Badge>
+                  {a.status === 'session_expired' ? (
+                    <SessionExpiredBadge title="OnlyFans refused this account's session. Use Connect account with a fresh cURL for the same account." />
+                  ) : (
+                    <Badge variant="secondary">{a.status}</Badge>
+                  )}
                 </TableCell>
+                {/* Only an active account can run; a session_expired one shows no Run analytics until it is re-connected. */}
                 <TableCell>{a.status === 'active' && <RunAnalytics accountId={a.id} />}</TableCell>
               </TableRow>
             ))}

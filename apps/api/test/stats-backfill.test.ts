@@ -116,4 +116,15 @@ describe('POST /v1/stats/backfill', () => {
     expect(res.json().error.code).toBe('account_workspace_conflict');
     expect((await status(dashboard(other.cookie))).json()).toEqual({ status: 'idle' });
   });
+
+  it('records an expired OF session on the run', async () => {
+    fake.state.of = { ...ofData(), rateLimit: 0, unauthorized: true };
+    expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
+    let run = (await status(dashboard(owner.cookie))).json();
+    while (run.status === 'queued' || run.status === 'running') {
+      await sleep(100);
+      run = (await status(dashboard(owner.cookie))).json();
+    }
+    expect(run).toMatchObject({ status: 'error', errorCode: 'session_expired', error: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts` });
+  });
 });
