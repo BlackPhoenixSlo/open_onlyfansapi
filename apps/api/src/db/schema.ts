@@ -143,8 +143,9 @@ export const event = pgTable(
   ],
 );
 
-// Analytics store (docs/spec/future-client-story-ask.md §4.3), filled by the backfill only. Every row carries the
-// workspace that owns its account, and every query filters on it. OF ids are bigint: message ids pass int4.
+// Analytics store (docs/spec/future-client-story-ask.md §4.3), filled by the backfill; live message events also write
+// `message_fact`. Every row carries the workspace that owns its account, and every query filters on it. OF ids are
+// bigint: message ids pass int4.
 
 const analyticsTeamId = () =>
   text('team_id')

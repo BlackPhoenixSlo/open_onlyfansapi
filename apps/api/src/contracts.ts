@@ -388,6 +388,18 @@ export const statsConfig = z.object({
 });
 export type StatsConfig = z.infer<typeof statsConfig>;
 export const statsConfigResponse = z.object({ config: statsConfig });
+/** How fresh the stats are (docs/analytics.md, Live updates). Times are ISO; null = none yet. */
+export const statsFreshness = z.object({
+  /** The newest `messages.received` / `messages.sent` event for the workspace's claimed accounts. */
+  lastLiveAt: z.string().nullable(),
+  /** The last backfill chat walk. */
+  lastBackfillAt: z.string().nullable(),
+  /** Message events in the last 24 hours. */
+  liveEvents24h: z.number().int(),
+});
+export type StatsFreshness = z.infer<typeof statsFreshness>;
+/** `GET /v1/stats/config`: the config and the stats' freshness. */
+export const statsConfigGetResponse = statsConfigResponse.extend({ freshness: statsFreshness });
 
 /** `PUT /v1/stats/config`: only the given fields change. */
 export const putStatsConfigBody = z.object({

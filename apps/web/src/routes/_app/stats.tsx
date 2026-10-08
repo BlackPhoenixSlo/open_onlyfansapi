@@ -22,6 +22,7 @@ import {
   formatPercent,
   formatWait,
   formatWindow,
+  liveLine,
   percent,
   sum,
   todayIn,
@@ -179,6 +180,11 @@ function Stats() {
           {cfg ? `timezone ${cfg.timezone} · config v${cfg.version}` : 'loading config…'}
           {replyDay.data && ` · as of ${new Date(replyDay.data.asOf).toLocaleString()}`}
         </p>
+        {config.data && (
+          <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
+            {liveLine(config.data.freshness)}
+          </p>
+        )}
       </div>
 
       {config.isError && <ErrorCard message={config.error.message} />}

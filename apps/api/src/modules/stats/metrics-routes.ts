@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   putStatsConfigBody,
+  statsConfigGetResponse,
   statsConfigResponse,
   statsMetricList,
   statsMetricQuery,
@@ -35,6 +36,7 @@ import {
   type MetricId,
 } from '../analytics/metrics.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
+import { freshness } from '../analytics/live.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
@@ -141,8 +143,9 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     };
   });
 
-  r.get('/stats/config', { schema: { tags, response: { 200: statsConfigResponse } } }, async (request) => ({
+  r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => ({
     config: await getStatsConfig(request.actor.teamId),
+    freshness: await freshness(request.actor.teamId, scopedAccounts(request.actor, undefined)),
   }));
 
   r.put('/stats/config', { schema: { tags, body: putStatsConfigBody, response: { 200: statsConfigResponse } } }, async (request) => ({

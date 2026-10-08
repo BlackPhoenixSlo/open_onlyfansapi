@@ -1,4 +1,4 @@
-import type { StatsMetricRow } from '@api/contracts';
+import type { StatsFreshness, StatsMetricRow } from '@api/contracts';
 
 const DAY_MS = 86_400_000;
 
@@ -61,3 +61,16 @@ export function formatWindow(seconds: number): string {
 }
 
 export const formatPercent = (x: number | null | undefined) => (x === null || x === undefined ? '—' : `${x.toFixed(1)}%`);
+
+/** How long ago an ISO time was: `just now`, `5m ago`, `2h ago`, `3d ago`. */
+export function formatAgo(iso: string, now = Date.now()): string {
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86_400)}d ago`;
+}
+
+/** The Stats page's live line: the newest message event and the count of the last 24 hours. */
+export const liveLine = (f: StatsFreshness, now = Date.now()) =>
+  f.lastLiveAt ? `Live: last message event ${formatAgo(f.lastLiveAt, now)} · ${f.liveEvents24h} events last 24h` : 'Live: no events yet';

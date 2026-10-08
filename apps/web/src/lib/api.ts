@@ -8,6 +8,7 @@ import type {
   LogStatus,
   Overview,
   StatsConfig,
+  StatsFreshness,
   StatsGroupBy,
   StatsMetric,
   StatsMetricSeries,
@@ -164,7 +165,7 @@ export type StatsRange = { from?: string; to?: string; accountId?: number };
 
 export const statsConfigQuery = queryOptions({
   queryKey: ['stats', 'config'],
-  queryFn: () => api<{ config: StatsConfig }>('/v1/stats/config'),
+  queryFn: () => api<{ config: StatsConfig; freshness: StatsFreshness }>('/v1/stats/config'),
 });
 
 export const statsMetricsQuery = queryOptions({

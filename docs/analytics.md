@@ -2,7 +2,8 @@
 
 Steps 1 to 3 of the [client stats ask](spec/future-client-story-ask.md#6-first-slice-account-and-shift-performance):
 reply time and reply SLA, openers, and script candidates, computed from the analytics store that the
-[step 0 backfill](analytics-backfill.md) fills. Nothing is computed at ingest. Each request reads the stored messages
+[step 0 backfill](analytics-backfill.md) fills, plus live message events (see [Live updates](#live-updates)). Nothing
+is computed at ingest. Each request reads the stored messages
 and applies the workspace's current windows, so a changed window applies to all history at once.
 
 Every metric is `verified: false`. The formulas are built and tested, but nobody has checked them by hand in OF or
@@ -19,7 +20,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/metrics` | The catalogue: each metric's `id`, `name`, formula in words (`description`), `unit` (`seconds`, `percent`, `count`), `groupings`, the config `windows` it reads, and `verified` |
 | `GET /v1/stats/metrics/:id` | One metric as rows, one per group with at least one turn or opener. `format=csv` sends the same rows as `text/csv` |
 | `GET /v1/stats/metrics/:id/samples` | Up to 20 turns or openers behind the metric's value, oldest first, with message ids and times to check in OF |
-| `GET /v1/stats/config` | The workspace's windows and timezone. The first read creates the default row |
+| `GET /v1/stats/config` | The workspace's windows and timezone, and `freshness` ([Live updates](#live-updates)). The first read creates the default row |
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
 
@@ -50,6 +51,20 @@ Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a d
 - **Key allowlist.** A key with an account allowlist sees only those accounts; a key without one sees all of its
   workspace's accounts. `accountId` outside the allowlist is `403 account_not_allowed`.
 - **Write scope.** `PUT /v1/stats/config` with a read-only key is `403 insufficient_scope`.
+
+## Live updates
+
+Between backfills, the upstream's `messages.received` and `messages.sent` events for a claimed account (one with an
+`account_workspace` row) add the message's `message_fact` row, derived with the backfill's own mapper, and
+`messages.deleted` removes it. Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
+its event socket (OF's own socket, then one hop to the gateway, usually seconds); events missed while the gateway is
+down or reconnecting are not replayed, so a backfill is still the complete view. Only `message_fact` changes live,
+and a row already stored is kept. The live mapper has no mass history, welcome message or automation texts, so an
+outbound message with a `queueId` counts as mass and none counts as automated until a backfill over its range
+re-derives the row. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
+on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
+the event ledger), `liveEvents24h` and `lastBackfillAt` (the last backfill chat walk), over the claimed accounts in
+the key's scope; the Stats page shows the first two under its header.
 
 ## Terms
 

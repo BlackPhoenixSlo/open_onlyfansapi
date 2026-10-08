@@ -6,6 +6,7 @@ import { db } from '../../db/index.js';
 import { event, teamBackend } from '../../db/schema.js';
 import { publish } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
+import { applyLiveEvent } from '../analytics/live.js';
 import { emit } from '../webhooks/service.js';
 
 /** Frames waiting for ingest; more are dropped. */
@@ -59,8 +60,9 @@ const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Er
 
 /**
  * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then a webhook
- * `emit()` per linked workspace. Its `evt_` id is the ledger id, the bus id and the deliveries' idempotency key.
- * A failed ledger insert is logged; the event is still published but not emitted.
+ * `emit()` per linked workspace, then the analytics store's live update (`applyLiveEvent`, which never throws). Its
+ * `evt_` id is the ledger id, the bus id and the deliveries' idempotency key. A failed ledger insert is logged; the
+ * event is still published but not emitted nor applied.
  */
 export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Promise<void> {
   const { type, account_id: accountId } = frame;
@@ -89,7 +91,7 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
         log.error({ err: cause(err), type, teamId: t.teamId }, 'webhook emit failed'),
       ),
     ),
-  );
+  );  await applyLiveEvent(id, type, accountId, data, log);
 }
 
 /**
