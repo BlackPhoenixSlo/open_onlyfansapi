@@ -39,14 +39,14 @@ import {
   zonedToday,
   type MetricId,
 } from '../analytics/metrics.js';
-import { connectedAccounts } from '../accounts/routes.js';
-import { backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
+import { connectedAccounts } from '../accounts/service.js';
+import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
-import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
+import { assertAccountAllowed, DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
@@ -150,17 +150,19 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     };
   });
 
-  r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => ({
-    config: await getStatsConfig(request.actor.teamId),
-    freshness: await freshness(request.actor.teamId, scopedAccounts(request.actor, undefined)),
-  }));
+  r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => {
+    const { teamId } = request.actor;
+    const [config, fresh] = await Promise.all([getStatsConfig(teamId), freshness(teamId, scopedAccounts(request.actor, undefined))]);
+    return { config, freshness: fresh };
+  });
 
   r.post(
     '/stats/backfill',
     { schema: { tags, body: statsBackfillBody, response: { 202: statsBackfillStarted } } },
     async (request, reply) => {
       const { actor, body } = request;
-      scopedAccounts(actor, body.accountId);
+      assertAccountAllowed(actor, body.accountId);
+      assertBackfillIdle(body.accountId);
       const connected = await connectedAccounts(app.upstream, actor, request.id);
       if (!connected.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
       await assignAccount(actor.teamId, body.accountId);
@@ -178,7 +180,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
 
   r.get('/stats/backfill', { schema: { tags, querystring: statsBackfillQuery, response: { 200: statsBackfillRun } } }, async (request) => {
     const { actor, query } = request;
-    scopedAccounts(actor, query.accountId);
+    assertAccountAllowed(actor, query.accountId);
     return backfillRun(actor.teamId, query.accountId);
   });
 

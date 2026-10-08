@@ -36,6 +36,14 @@ let other: { cookie: string; teamId: string };
 
 const post = (headers: Record<string, string>, payload: unknown) => app.inject({ method: 'POST', url: '/v1/stats/backfill', headers, payload: payload as object });
 const status = (headers: Record<string, string>, accountId = ACCOUNT) => app.inject({ method: 'GET', url: `/v1/stats/backfill?accountId=${accountId}`, headers });
+/** Polls the owner's run of ACCOUNT until it is neither queued nor running. */
+async function waitForRun() {
+  for (;;) {
+    const run = (await status(dashboard(owner.cookie))).json();
+    if (run.status !== 'queued' && run.status !== 'running') return run;
+    await sleep(100);
+  }
+}
 
 beforeAll(async () => {
   await resetDb();
@@ -66,15 +74,12 @@ describe('POST /v1/stats/backfill', () => {
     expect(again.statusCode).toBe(409);
     expect(again.json().error.code).toBe('backfill_running');
 
-    let run = (await status(dashboard(owner.cookie))).json();
-    expect(run).toMatchObject({ runId, accountId: ACCOUNT, finishedAt: null, error: null });
-    expect(['queued', 'running']).toContain(run.status);
-    expect(Date.parse(run.to) - Date.parse(run.from)).toBe(24 * HOUR);
+    const pending = (await status(dashboard(owner.cookie))).json();
+    expect(pending).toMatchObject({ runId, accountId: ACCOUNT, finishedAt: null, error: null });
+    expect(['queued', 'running']).toContain(pending.status);
+    expect(Date.parse(pending.to) - Date.parse(pending.from)).toBe(24 * HOUR);
 
-    while (run.status === 'queued' || run.status === 'running') {
-      await sleep(100);
-      run = (await status(dashboard(owner.cookie))).json();
-    }
+    const run = await waitForRun();
     expect(run).toMatchObject({ status: 'done', runId, retries: 0, chats: 1, messages: 2, error: null });
     expect(run.requests).toBeGreaterThan(4);
     expect(run.finishedAt).not.toBeNull();
@@ -84,12 +89,7 @@ describe('POST /v1/stats/backfill', () => {
   it('retries a transient 502 and records it on the run', async () => {
     fake.state.of = { ...ofData(), rateLimit: 0, badGateway: 1 };
     expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
-    let run = (await status(dashboard(owner.cookie))).json();
-    while (run.status === 'queued' || run.status === 'running') {
-      await sleep(100);
-      run = (await status(dashboard(owner.cookie))).json();
-    }
-    expect(run).toMatchObject({ status: 'done', retries: 1, chats: 1, messages: 2, error: null });
+    expect(await waitForRun()).toMatchObject({ status: 'done', retries: 1, chats: 1, messages: 2, error: null });
   });
 
   it('404s an account the workspace has not connected, 403s one outside a key allowlist or with a read key', async () => {
@@ -120,11 +120,6 @@ describe('POST /v1/stats/backfill', () => {
   it('records an expired OF session on the run', async () => {
     fake.state.of = { ...ofData(), rateLimit: 0, unauthorized: true };
     expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
-    let run = (await status(dashboard(owner.cookie))).json();
-    while (run.status === 'queued' || run.status === 'running') {
-      await sleep(100);
-      run = (await status(dashboard(owner.cookie))).json();
-    }
-    expect(run).toMatchObject({ status: 'error', errorCode: 'session_expired', error: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts` });
+    expect(await waitForRun()).toMatchObject({ status: 'error', errorCode: 'session_expired', error: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts` });
   });
 });

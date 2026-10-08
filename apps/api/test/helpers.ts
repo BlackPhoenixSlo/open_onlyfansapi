@@ -3,6 +3,8 @@ import { eq } from 'drizzle-orm';
 import { db, pool } from '../src/db/index.js';
 import { organization, teamBackend } from '../src/db/schema.js';
 import { setMailTransport, type Mail } from '../src/lib/mailer.js';
+import { backfill, dbStore, type BackfillOptions } from '../src/modules/analytics/backfill.js';
+import { claimAccount } from '../src/modules/analytics/workspace.js';
 
 export const ORIGIN = 'http://localhost:5173';
 /** Headers the dashboard sends on cookie-authenticated writes. */
@@ -82,4 +84,10 @@ export async function waitForLogs(ids: string[], timeoutMs = 2000) {
     if (Date.now() > deadline) throw new Error(`request logs not written: ${ids.join(', ')}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+}
+
+/** As `analytics:backfill` (no dry run): claims the account for `teamId`, then backfills into the analytics tables. */
+export async function claimAndBackfill({ teamId, ...opts }: Omit<BackfillOptions, 'store'> & { teamId: string }) {
+  await claimAccount(teamId, opts.accountId);
+  return backfill({ ...opts, store: dbStore(teamId, opts.accountId) });
 }

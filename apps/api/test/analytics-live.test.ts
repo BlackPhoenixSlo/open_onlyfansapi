@@ -5,10 +5,9 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { messageFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
-import { backfill } from '../src/modules/analytics/backfill.js';
 import { ingestFrame, type EventFrame } from '../src/modules/events/ingest.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
 
 const TOKEN = 'test-only-upstream-token';
 const ACCOUNT = 1001;
@@ -74,7 +73,7 @@ beforeAll(async () => {
     welcome: null,
   };
   // Claims the account and stores what the backfill derives (the expected rows) and the chat's coverage.
-  await backfill({ upstream, teamId: a.teamId, accountId: ACCOUNT, from: new Date(Date.now() - 86_400_000), to: new Date(), config: { pageDelayMs: 0 } });
+  await claimAndBackfill({ upstream, teamId: a.teamId, accountId: ACCOUNT, from: new Date(Date.now() - 86_400_000), to: new Date(), config: { pageDelayMs: 0 } });
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE event');
@@ -151,8 +150,7 @@ describe('analytics live updates', () => {
 
   it('GET /v1/stats/config reports freshness for the claimed accounts', async () => {
     const empty = (await app.inject({ method: 'GET', url: '/v1/stats/config', headers: bearer(readKey) })).json();
-    expect(empty.freshness).toMatchObject({ lastLiveAt: null, liveEvents24h: 0 });
-    expect(empty.freshness.lastBackfillAt).toEqual(expect.any(String));
+    expect(empty.freshness).toEqual({ lastLiveAt: null, liveEvents24h: 0 });
 
     await ingestFrame(messageFrame(inbound), log);
     await ingestFrame(messageFrame({ ...outbound, toUser: FAN }), log);

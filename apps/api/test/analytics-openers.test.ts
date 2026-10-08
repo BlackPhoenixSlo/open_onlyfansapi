@@ -2,9 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
-import { backfill } from '../src/modules/analytics/backfill.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
 
 // Openers (spec §6 step 2) over a backfill from the fake upstream, with known answers.
 
@@ -124,9 +123,9 @@ beforeAll(async () => {
   vi.setSystemTime(NOW);
   const run = { upstream, teamId: a.teamId, from: new Date('2026-09-10T00:00:00Z'), to: new Date('2026-09-21T00:00:00Z'), config: { pageDelayMs: 0 } };
   fake.state.of = DATA_A1;
-  await backfill({ ...run, accountId: A1 });
+  await claimAndBackfill({ ...run, accountId: A1 });
   fake.state.of = DATA_A2;
-  await backfill({ ...run, accountId: A2 });
+  await claimAndBackfill({ ...run, accountId: A2 });
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE stats_config');

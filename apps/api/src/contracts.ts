@@ -392,8 +392,6 @@ export const statsConfigResponse = z.object({ config: statsConfig });
 export const statsFreshness = z.object({
   /** The newest `messages.received` / `messages.sent` event for the workspace's claimed accounts. */
   lastLiveAt: z.string().nullable(),
-  /** The last backfill chat walk. */
-  lastBackfillAt: z.string().nullable(),
   /** Message events in the last 24 hours. */
   liveEvents24h: z.number().int(),
 });

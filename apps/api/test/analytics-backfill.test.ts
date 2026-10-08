@@ -10,7 +10,7 @@ import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS,
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
-import { backfill, type BackfillOptions, type BackfillRows } from '../src/modules/analytics/backfill.js';
+import { backfill, dbStore, memoryStore, SessionExpiredError, type BackfillOptions, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
@@ -127,7 +127,7 @@ let teamA: string;
 let teamB: string;
 const opts = (over: Partial<BackfillOptions> = {}): BackfillOptions => ({
   upstream,
-  teamId: teamA,
+  store: dbStore(teamA, ACCOUNT),
   accountId: ACCOUNT,
   from: FROM,
   to: TO,
@@ -181,6 +181,7 @@ beforeAll(async () => {
   await linkTeam(teamB);
   await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [ACCOUNT] });
   await createKey(app, b.cookie, { scope: 'read' }); // no allowlist: still none of workspace A's accounts
+  await claimAccount(teamA, ACCOUNT); // as analytics:backfill does before a stored run
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE message_fact, chat_coverage, purchase_fact');
@@ -503,10 +504,9 @@ describe('analytics backfill', () => {
         return { status: 401, ok: false, headers: new Headers(), body: Buffer.from('{"error":{"code":"of_error","status":401}}') };
       },
     };
-    await expect(backfill(opts({ upstream: expired }))).rejects.toMatchObject({
-      code: 'session_expired',
-      message: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts`,
-    });
+    const run = backfill(opts({ upstream: expired }));
+    await expect(run).rejects.toBeInstanceOf(SessionExpiredError);
+    await expect(run).rejects.toThrow(`OF session expired for account ${ACCOUNT}: re-connect it in Accounts`);
     expect(calls).toBe(1);
   });
 
@@ -524,7 +524,7 @@ describe('analytics tenancy', () => {
   });
 
   it('refuses an account the workspace does not list, and one two workspaces name', async () => {
-    await expect(backfill(opts({ teamId: teamB }))).rejects.toMatchObject({ statusCode: 403, code: 'account_not_allowed' });
+    await expect(claimAccount(teamB, ACCOUNT)).rejects.toMatchObject({ statusCode: 403, code: 'account_not_allowed' });
     const [keyB] = await db.select().from(apiKey).where(eq(apiKey.teamId, teamB));
     await db.update(apiKey).set({ allowedAccountIds: [ACCOUNT] }).where(eq(apiKey.id, keyB!.id));
     await expect(claimAccount(teamB, ACCOUNT)).rejects.toMatchObject({ statusCode: 409, code: 'account_workspace_conflict' });
@@ -591,8 +591,7 @@ describe('analytics CSV export', () => {
     expect(before).toMatchObject({ messages: 0, coverage: 0, purchases: 0 });
     const start = fake.requests.length;
     const rows: BackfillRows = { messages: [], chats: [], transactions: [] };
-    // Workspace B cannot claim the account (see analytics tenancy): the dry run passing proves it claims nothing.
-    const dry = await backfill(opts({ teamId: teamB, rows }));
+    const dry = await backfill(opts({ store: memoryStore(rows) }));
     const dryCalls = ofCalls(start);
     expect(await counts()).toEqual(before); // no rows, coverage, purchases or scripts
     const dryDir = await mkdtemp(join(tmpdir(), 'analytics-'));

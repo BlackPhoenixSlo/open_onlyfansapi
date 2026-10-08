@@ -1,22 +1,18 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, max, sql } from 'drizzle-orm';
+import type { StatsFreshness, WebhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
-import { accountWorkspace, chatCoverage, messageFact } from '../../db/schema.js';
-import { deriveContext, deriveMessage, fanNames, type Raw } from './derive.js';
+import { accountWorkspace, chatCoverage, event, messageFact } from '../../db/schema.js';
+import { cause } from '../../lib/errors.js';
+import { deriveContext, deriveMessage, fanNames, int, type Raw } from './derive.js';
 
 // Live updates (docs/analytics.md): upstream message events write `message_fact` between backfills. Scripts and
 // `chat_coverage` are backfill-only.
 
 /** The event types that count as live message events (freshness). */
-export const LIVE_MESSAGE_TYPES = ['messages.received', 'messages.sent'] as const;
+const LIVE_MESSAGE_TYPES = ['messages.received', 'messages.sent'] satisfies WebhookEventType[];
 
-const num = (v: unknown): number | null => {
-  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
-  return typeof n === 'number' && Number.isSafeInteger(n) ? n : null;
-};
-const userId = (user: unknown) => num((user as Raw | null | undefined)?.id);
-/** The driver's cause only: drizzle's own error message embeds the query parameters (fan message text). */
-const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Error ? err.cause : err);
+const userId = (user: unknown) => int((user as Raw | null | undefined)?.id);
 
 /**
  * The `message_fact` row of one live OF message object, derived by the backfill's `deriveMessage`; null when the
@@ -29,10 +25,8 @@ async function liveRow(teamId: string, accountId: number, payload: unknown) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const { fanData: _fanData, ...raw } = payload as Raw; // `fanData` is the upstream's own, not OF's
   const outbound = userId(raw.fromUser) === accountId;
-  const chatId = outbound ? (userId(raw.toUser) ?? num(raw.chatUserId)) : userId(raw.fromUser);
+  const chatId = outbound ? (userId(raw.toUser) ?? int(raw.chatUserId)) : userId(raw.fromUser);
   if (chatId === null) return null;
-  const queueId = num(raw.queueId);
-  const ctx = deriveContext(accountId, queueId !== null ? [{ id: queueId, sentCount: 2 }] : [], null, []);
   let names: string[] = [];
   if (outbound) {
     const [cov] = await db
@@ -41,57 +35,61 @@ async function liveRow(teamId: string, accountId: number, payload: unknown) {
       .where(and(eq(chatCoverage.accountId, accountId), eq(chatCoverage.chatId, chatId)));
     names = fanNames(cov);
   }
-  const d = deriveMessage(raw, chatId, ctx, names);
+  const d = deriveMessage(raw, chatId, deriveContext(accountId, [], null, []), names);
   if (!d || Number.isNaN(d.createdAt.getTime())) return null;
-  return { teamId, accountId, ...d, raw, fetchedAt: new Date() };
+  // Live policy: with no mass history to check `sentCount` against, any queued outbound message counts as mass.
+  return { teamId, accountId, ...d, isMass: d.direction === 'outbound' && d.queueId !== null, raw, fetchedAt: new Date() };
 }
+
+type Apply = (teamId: string, accountId: number, payload: unknown) => Promise<void>;
+
+/** Inserts the message's row on the backfill's key `(account_id, message_id)`; a row already there (the backfill read it with full context) is kept. */
+const insertMessage: Apply = async (teamId, accountId, payload) => {
+  const row = await liveRow(teamId, accountId, payload);
+  if (row) await db.insert(messageFact).values(row).onConflictDoNothing();
+};
+
+const removeMessage: Apply = async (teamId, accountId, payload) => {
+  const messageId = int((payload as Raw | null)?.id);
+  if (messageId === null) return;
+  await db.delete(messageFact).where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.messageId, messageId)));
+};
+
+const APPLY = {
+  'messages.received': insertMessage,
+  'messages.sent': insertMessage,
+  'messages.deleted': removeMessage,
+} satisfies Partial<Record<WebhookEventType, Apply>>;
+const applies = (type: string): type is keyof typeof APPLY => Object.hasOwn(APPLY, type);
 
 /**
  * Applies one ingested event to the analytics store when its account is claimed (`account_workspace`); otherwise
- * does nothing. `messages.received` / `messages.sent` insert the message's row on the backfill's key
- * `(account_id, message_id)`; a row already there (the backfill read it with full context) is kept. `messages.deleted`
- * removes the row. Never throws: a failure is logged once with the event id.
+ * does nothing. `messages.received` / `messages.sent` insert the message's row (`insertMessage`); `messages.deleted`
+ * removes it. Never throws: a failure is logged once with the event id.
  */
 export async function applyLiveEvent(eventId: string, type: string, accountId: number, payload: unknown, log: FastifyBaseLogger): Promise<void> {
-  const deleted = type === 'messages.deleted';
-  if (!deleted && !(LIVE_MESSAGE_TYPES as readonly string[]).includes(type)) return;
+  if (!applies(type)) return;
   try {
     const [owner] = await db.select({ teamId: accountWorkspace.teamId }).from(accountWorkspace).where(eq(accountWorkspace.accountId, accountId));
-    if (!owner) return;
-    if (deleted) {
-      const messageId = num((payload as Raw | null)?.id);
-      if (messageId === null) return;
-      await db
-        .delete(messageFact)
-        .where(and(eq(messageFact.teamId, owner.teamId), eq(messageFact.accountId, accountId), eq(messageFact.messageId, messageId)));
-      return;
-    }
-    const row = await liveRow(owner.teamId, accountId, payload);
-    if (row) await db.insert(messageFact).values(row).onConflictDoNothing();
+    if (owner) await APPLY[type](owner.teamId, accountId, payload);
   } catch (err) {
     log.error({ err: cause(err), eventId, type, accountId }, 'live analytics update failed');
   }
 }
 
-export type Freshness = { lastLiveAt: string | null; lastBackfillAt: string | null; liveEvents24h: number };
-
 /**
  * How fresh the workspace's stats are: the newest live message event (the event ledger's time, which is the OF
  * message's) and how many arrived in the last 24 hours, over the workspace's claimed accounts (narrowed to
- * `accounts` when given), and the last backfill chat walk.
+ * `accounts` when given).
  */
-export async function freshness(teamId: string, accounts: number[] | null): Promise<Freshness> {
-  const scope = accounts ? sql`and ${inArray(sql`w.account_id`, accounts)}` : sql``;
-  const { rows } = await db.execute<{ last_live: Date | string | null; n: number; last_backfill: Date | string | null }>(sql`
-    select
-      (select max(e.created_at) from event e join account_workspace w on w.account_id = e.account_id
-        where w.team_id = ${teamId} ${scope} and e.type in ('messages.received', 'messages.sent')) as last_live,
-      (select count(*)::int from event e join account_workspace w on w.account_id = e.account_id
-        where w.team_id = ${teamId} ${scope} and e.type in ('messages.received', 'messages.sent')
-          and e.created_at > now() - interval '24 hours') as n,
-      (select max(c.walked_at) from chat_coverage c join account_workspace w on w.account_id = c.account_id
-        where c.team_id = ${teamId} ${scope}) as last_backfill`);
-  const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());
-  const row = rows[0]!;
-  return { lastLiveAt: iso(row.last_live), lastBackfillAt: iso(row.last_backfill), liveEvents24h: Number(row.n) };
+export async function freshness(teamId: string, accounts: number[] | null): Promise<StatsFreshness> {
+  const [row] = await db
+    .select({
+      lastLiveAt: max(event.createdAt),
+      liveEvents24h: sql<number>`(count(*) filter (where ${event.createdAt} > now() - interval '24 hours'))::int`,
+    })
+    .from(event)
+    .innerJoin(accountWorkspace, eq(accountWorkspace.accountId, event.accountId))
+    .where(and(eq(accountWorkspace.teamId, teamId), inArray(event.type, LIVE_MESSAGE_TYPES), accounts ? inArray(accountWorkspace.accountId, accounts) : undefined));
+  return { lastLiveAt: row?.lastLiveAt?.toISOString() ?? null, liveEvents24h: row?.liveEvents24h ?? 0 };
 }

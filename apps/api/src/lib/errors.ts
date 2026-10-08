@@ -13,6 +13,9 @@ export class AppError extends Error {
   }
 }
 
+/** The driver's cause only, for logging a failed query: drizzle's own error message embeds the query parameters (fan message text). */
+export const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Error ? err.cause : err);
+
 const CODE_BY_STATUS: Record<number, string> = {
   400: 'bad_request',
   401: 'unauthorized',

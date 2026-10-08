@@ -2,8 +2,8 @@
 
 Steps 1 to 3 of the [client stats ask](spec/future-client-story-ask.md#6-first-slice-account-and-shift-performance):
 reply time and reply SLA, openers, and script candidates, computed from the analytics store that the
-[step 0 backfill](analytics-backfill.md) fills, plus live message events (see [Live updates](#live-updates)). Nothing
-is computed at ingest. Each request reads the stored messages
+[step 0 backfill](analytics-backfill.md) fills, plus live message events (see [Live updates](#live-updates)). Ingest only derives each live message's
+row (as the backfill does); every metric is computed per request: each request reads the stored messages
 and applies the workspace's current windows, so a changed window applies to all history at once.
 
 Every metric is `verified: false`. The formulas are built and tested, but nobody has checked them by hand in OF or
@@ -25,7 +25,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
-| `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `requests`, `chats` (walked), `messages` (stored), `error`; or `{ "status": "idle" }` |
+| `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `error`, `errorCode` (`session_expired` when OF refused the account's session, else null); or `{ "status": "idle" }` |
 
 Query parameters:
 
@@ -69,8 +69,8 @@ and a row already stored is kept. The live mapper has no mass history, welcome m
 outbound message with a `queueId` counts as mass and none counts as automated until a backfill over its range
 re-derives the row. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
-the event ledger), `liveEvents24h` and `lastBackfillAt` (the last backfill chat walk), over the claimed accounts in
-the key's scope; the Stats page shows the first two under its header.
+the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under
+its header.
 
 ## Terms
 

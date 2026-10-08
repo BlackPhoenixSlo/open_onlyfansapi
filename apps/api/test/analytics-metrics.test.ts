@@ -2,10 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
-import { backfill } from '../src/modules/analytics/backfill.js';
 import { quantile } from '../src/modules/analytics/metrics.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
 // Reply time and reply SLA (spec §6 step 1) over a backfill from the fake upstream, with known answers.
 
@@ -101,9 +100,9 @@ beforeAll(async () => {
   vi.setSystemTime(NOW);
   const run = { upstream, teamId: a.teamId, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-05T00:00:00Z'), config: { pageDelayMs: 0 } };
   fake.state.of = DATA_A1;
-  await backfill({ ...run, accountId: A1 });
+  await claimAndBackfill({ ...run, accountId: A1 });
   fake.state.of = DATA_A2;
-  await backfill({ ...run, accountId: A2 });
+  await claimAndBackfill({ ...run, accountId: A2 });
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE stats_config');

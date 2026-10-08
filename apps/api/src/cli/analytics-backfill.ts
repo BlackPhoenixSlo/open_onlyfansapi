@@ -10,7 +10,8 @@ import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
 import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
-import { backfill, type BackfillRows } from '../modules/analytics/backfill.js';
+import { backfill, dbStore, memoryStore, type BackfillRows } from '../modules/analytics/backfill.js';
+import { claimAccount } from '../modules/analytics/workspace.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 
 const USAGE = 'usage: analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]';
@@ -54,8 +55,10 @@ try {
   const upstream = createUpstream({ url: env.UPSTREAM_URL, token: env.UPSTREAM_TOKEN, timeoutMs: env.UPSTREAM_TIMEOUT_MS });
   console.log(`backfilling account ${accountId} of workspace ${teamId}, ${from.toISOString()} to ${to.toISOString()}${dryRun ? ' (dry run: stores nothing)' : ''}`);
   if (automationFile) console.log(`automation texts: ${automationTexts.length} from ${automationFile}`);
-  const rows: BackfillRows | undefined = dryRun ? { messages: [], chats: [], transactions: [] } : undefined;
-  const result = await backfill({ upstream, teamId, accountId, from, to, config: { automationTexts }, signal: stop.signal, rows });
+  const rows: BackfillRows | null = dryRun ? { messages: [], chats: [], transactions: [] } : null;
+  if (!rows) await claimAccount(teamId, accountId);
+  const store = rows ? memoryStore(rows) : dbStore(teamId, accountId);
+  const result = await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store });
   const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
   console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
   console.log(

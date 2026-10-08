@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { webhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
 import { event, teamBackend } from '../../db/schema.js';
+import { cause } from '../../lib/errors.js';
 import { publish } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
 import { applyLiveEvent } from '../analytics/live.js';
@@ -55,12 +56,9 @@ export function parseFrame(
   return parsed.data;
 }
 
-/** The driver's cause only: drizzle's own error message embeds the query parameters (fan message text). */
-const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Error ? err.cause : err);
-
 /**
- * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then a webhook
- * `emit()` per linked workspace, then the analytics store's live update (`applyLiveEvent`, which never throws). Its
+ * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then together a
+ * webhook `emit()` per linked workspace and the analytics store's live update (`applyLiveEvent`, which never throws). Its
  * `evt_` id is the ledger id, the bus id and the deliveries' idempotency key. A failed ledger insert is logged; the
  * event is still published but not emitted nor applied.
  */
@@ -85,13 +83,14 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
   }
   publish({ id, type, accountId, ts: frame.ts, data });
   const teams = await db.select({ teamId: teamBackend.teamId }).from(teamBackend);
-  await Promise.all(
-    teams.map((t) =>
+  await Promise.all([
+    ...teams.map((t) =>
       emit(t.teamId, id, type, accountId, data).catch((err) =>
         log.error({ err: cause(err), type, teamId: t.teamId }, 'webhook emit failed'),
       ),
     ),
-  );  await applyLiveEvent(id, type, accountId, data, log);
+    applyLiveEvent(id, type, accountId, data, log),
+  ]);
 }
 
 /**

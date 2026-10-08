@@ -4,11 +4,10 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { messageFact, script } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
-import { backfill } from '../src/modules/analytics/backfill.js';
 import { scriptHash } from '../src/modules/analytics/derive.js';
 import { rehashAccount, syncScripts } from '../src/modules/analytics/scripts.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
 
 // Script candidates (spec §6 step 3) over a backfill from the fake upstream, with known answers.
 
@@ -123,9 +122,9 @@ beforeAll(async () => {
   vi.setSystemTime(NOW);
   const run = { upstream, teamId: a.teamId, from: new Date('2026-09-01T00:00:00Z'), to: new Date('2026-09-21T00:00:00Z'), config: { pageDelayMs: 0 } };
   fake.state.of = DATA_A1;
-  await backfill({ ...run, accountId: A1 });
+  await claimAndBackfill({ ...run, accountId: A1 });
   fake.state.of = DATA_A2;
-  await backfill({ ...run, accountId: A2 });
+  await claimAndBackfill({ ...run, accountId: A2 });
 });
 afterAll(async () => {
   vi.useRealTimers();

@@ -2,25 +2,23 @@ import type { StatsBackfillRun } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import type { Upstream } from '../../lib/upstream.js';
-import { backfill } from './backfill.js';
+import { backfill, dbStore, SessionExpiredError, type BackfillResult } from './backfill.js';
 
 /**
  * Dashboard backfill runs (`POST /v1/stats/backfill`), the last one per account. In memory only: an API restart
  * loses the state, and a run in flight ends with the process (the rows it stored stay; run it again, rows upsert).
  */
 type Run = {
-  runId: string;
   teamId: string;
+  runId: string;
   accountId: number;
-  status: 'queued' | 'running' | 'done' | 'error';
   from: Date;
   to: Date;
   startedAt: Date;
   finishedAt: Date | null;
-  requests: number;
-  retries: number;
-  chats: number;
-  messages: number;
+  status: 'queued' | 'running' | 'done' | 'error';
+  /** The backfill's counts so far (its result once done); null until its first request. */
+  progress: Readonly<BackfillResult> | null;
   error: string | null;
   errorCode: 'session_expired' | null;
 };
@@ -31,8 +29,30 @@ const runs = new Map<number, Run>();
 export function backfillRun(teamId: string, accountId: number): StatsBackfillRun {
   const run = runs.get(accountId);
   if (!run || run.teamId !== teamId) return { status: 'idle' };
-  const { teamId: _t, from, to, startedAt, finishedAt, ...rest } = run;
-  return { ...rest, from: from.toISOString(), to: to.toISOString(), startedAt: startedAt.toISOString(), finishedAt: finishedAt?.toISOString() ?? null };
+  const { progress } = run;
+  return {
+    status: run.status,
+    runId: run.runId,
+    accountId: run.accountId,
+    from: run.from.toISOString(),
+    to: run.to.toISOString(),
+    startedAt: run.startedAt.toISOString(),
+    finishedAt: run.finishedAt?.toISOString() ?? null,
+    requests: progress?.requests ?? 0,
+    retries: progress?.retries ?? 0,
+    chats: progress?.chats ?? 0,
+    messages: progress?.messages ?? 0,
+    error: run.error,
+    errorCode: run.errorCode,
+  };
+}
+
+/** 409 `backfill_running` while the account's last run is queued or running. */
+export function assertBackfillIdle(accountId: number): void {
+  const status = runs.get(accountId)?.status;
+  if (status === 'queued' || status === 'running') {
+    throw new AppError(409, 'backfill_running', `A backfill of account ${accountId} is already running`);
+  }
 }
 
 /**
@@ -42,44 +62,43 @@ export function backfillRun(teamId: string, accountId: number): StatsBackfillRun
  */
 export function startBackfillRun(opts: { upstream: Upstream; teamId: string; accountId: number; from: Date; to: Date }): string {
   const { upstream, teamId, accountId, from, to } = opts;
-  const current = runs.get(accountId);
-  if (current?.status === 'queued' || current?.status === 'running') {
-    throw new AppError(409, 'backfill_running', `A backfill of account ${accountId} is already running`);
-  }
+  assertBackfillIdle(accountId);
   const run: Run = {
-    runId: newId('bfr'),
     teamId,
+    runId: newId('bfr'),
     accountId,
-    status: 'queued',
     from,
     to,
     startedAt: new Date(),
     finishedAt: null,
-    requests: 0,
-    retries: 0,
-    chats: 0,
-    messages: 0,
+    status: 'queued',
+    progress: null,
     error: null,
     errorCode: null,
   };
   runs.set(accountId, run);
   backfill({
     upstream,
-    teamId,
     accountId,
     from,
     to,
-    claimed: true,
-    onProgress: (r) => Object.assign(run, { status: 'running', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages }),
+    store: dbStore(teamId, accountId),
+    onProgress: (r) => {
+      run.progress = r;
+      run.status = 'running';
+    },
   }).then(
-    (r) => Object.assign(run, { status: 'done', requests: r.requests, retries: r.retries, chats: r.chats, messages: r.messages, finishedAt: new Date() }),
-    (err: unknown) =>
-      Object.assign(run, {
-        status: 'error',
-        error: err instanceof Error ? err.message : String(err),
-        errorCode: err instanceof AppError && err.code === 'session_expired' ? 'session_expired' : null,
-        finishedAt: new Date(),
-      }),
+    (r) => {
+      run.progress = r;
+      run.status = 'done';
+      run.finishedAt = new Date();
+    },
+    (err: unknown) => {
+      run.status = 'error';
+      run.error = err instanceof Error ? err.message : String(err);
+      run.errorCode = err instanceof SessionExpiredError ? 'session_expired' : null;
+      run.finishedAt = new Date();
+    },
   );
   return run.runId;
 }

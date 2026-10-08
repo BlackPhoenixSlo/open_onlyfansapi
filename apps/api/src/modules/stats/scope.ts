@@ -16,11 +16,16 @@ export function parseDay(value: string, name: string): number {
   return t;
 }
 
-/** The key's allowlist, narrowed by `accountId` (403 outside it); null = every account of the workspace. */
-export function scopedAccounts(actor: Actor, accountId: number | undefined): number[] | null {
-  const allowed = actor.accountIds;
-  if (accountId !== undefined && allowed && !allowed.includes(accountId)) {
+/** 403 when `accountId` is outside the key's allowlist. */
+export function assertAccountAllowed(actor: Actor, accountId: number): void {
+  if (actor.accountIds && !actor.accountIds.includes(accountId)) {
     throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
   }
-  return accountId !== undefined ? [accountId] : allowed;
+}
+
+/** The key's allowlist, narrowed by `accountId` (403 outside it); null = every account of the workspace. */
+export function scopedAccounts(actor: Actor, accountId: number | undefined): number[] | null {
+  if (accountId === undefined) return actor.accountIds;
+  assertAccountAllowed(actor, accountId);
+  return [accountId];
 }

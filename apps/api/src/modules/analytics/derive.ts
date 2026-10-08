@@ -73,6 +73,11 @@ const num = (v: unknown): number | null => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
 };
+/** A safe integer, or a string of one; else null (OF ids, live payload fields). */
+export const int = (v: unknown): number | null => {
+  const n = num(v);
+  return n !== null && Number.isSafeInteger(n) ? n : null;
+};
 const cents = (v: unknown): number | null => {
   const n = num(v);
   return n === null ? null : Math.round(n * 100);

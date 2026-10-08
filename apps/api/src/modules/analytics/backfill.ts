@@ -6,11 +6,10 @@ import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
-import type { Upstream, UpstreamResponse } from '../../lib/upstream.js';
+import type { Upstream } from '../../lib/upstream.js';
 import { backfillConfig, type BackfillConfig } from './config.js';
 import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type DerivedMessage, type DerivedPurchase, type Raw } from './derive.js';
 import { syncScripts } from './scripts.js';
-import { claimAccount } from './workspace.js';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -21,7 +20,6 @@ const PAGE = 100; // the upstream's cap on messages, mass history and transactio
 
 export type BackfillOptions = {
   upstream: Upstream;
-  teamId: string;
   accountId: number;
   /** The range, `from` inclusive, `to` exclusive. */
   from: Date;
@@ -29,18 +27,42 @@ export type BackfillOptions = {
   config?: Partial<BackfillConfig>;
   /** Aborting ends the run at once (a request in flight finishes), keeping the rows already stored. */
   signal?: AbortSignal;
-  /** A dry run: the rows read are added here and nothing is stored (no claim, rows, coverage or script sync). */
-  rows?: BackfillRows;
-  /** The caller already recorded the account as the workspace's (`assignAccount`): skip the key check of `claimAccount`. */
-  claimed?: boolean;
+  /** Where the rows read go: `dbStore` (the account claimed first) or, for a dry run, `memoryStore`. */
+  store: BackfillStore;
   /** Called after each upstream request and each chat walk with the counts so far. */
   onProgress?: (result: Readonly<BackfillResult>) => void;
 };
 
+/** A message as walked: its derived columns, OF's object and when the page was read. */
+export type WalkedMessage = DerivedMessage & { raw: Raw; fetchedAt: Date };
+export type WalkedPurchase = DerivedPurchase & { raw: Raw };
+/** One chat's walk: the fan's names and the oldest message it reached. */
+export type ChatWalk = {
+  chatId: number;
+  fanUsername: string | null;
+  fanName: string | null;
+  fanCustomName: string | null;
+  oldestMessageId: number | null;
+  oldestAt: Date | null;
+  reachedStart: boolean;
+  walkedAt: Date;
+};
+
+/** Where a backfill puts what it reads. */
+export interface BackfillStore {
+  /** One page of a chat: `covered` (from a day before the range on, derived with mass history) and `tail` (older). */
+  messages(covered: WalkedMessage[], tail: WalkedMessage[]): Promise<void>;
+  /** A chat's walk; returns the chat's coverage after it (a store may merge it with earlier walks). */
+  coverage(walk: ChatWalk): Promise<{ oldestAt: Date | null; reachedStart: boolean }>;
+  transactions(rows: WalkedPurchase[]): Promise<void>;
+  /** After the walk, stopped or not. */
+  finish(): Promise<void>;
+}
+
 /** What a dry run read: every message walked (both sides of the range), each chat's walk, the range's transactions. */
 export type BackfillRows = {
   messages: DerivedMessage[];
-  chats: { chatId: number; fanUsername: string | null; oldestMessageId: number | null; oldestAt: Date | null; reachedStart: boolean; walkedAt: Date }[];
+  chats: ChatWalk[];
   transactions: DerivedPurchase[];
 };
 
@@ -65,6 +87,13 @@ export type BackfillResult = {
 
 /** Statuses retried with `transientDelaysMs`: a proxy or gateway error at the upstream, or the upstream unreachable. */
 const TRANSIENT = new Set([502, 503, 504]);
+
+/** OF answered 401: the session behind the account is dead, so it must be re-connected in Accounts before a run can work. */
+export class SessionExpiredError extends Error {
+  constructor(accountId: number) {
+    super(`OF session expired for account ${accountId}: re-connect it in Accounts`);
+  }
+}
 
 /** One account at a time across the process (spec §6.1). */
 const oneAtATime = limiter(1);
@@ -108,26 +137,94 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
 }
 
 /**
+ * The analytics tables of workspace `teamId`, which must own the account (`claimAccount` or `assignAccount` first).
+ * Messages from `massFrom` on upsert on `(account_id, message_id)`; older ones were derived without their mass
+ * history, so they are only inserted, never updated: a later run that read it is not undone. Coverage merges: it
+ * never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's script candidates.
+ */
+export function dbStore(teamId: string, accountId: number): BackfillStore {
+  const owned = { teamId, accountId };
+  return {
+    async messages(covered, tail) {
+      if (covered.length) {
+        await db
+          .insert(messageFact)
+          .values(covered.map((r) => ({ ...owned, ...r })))
+          .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
+      }
+      if (tail.length) await db.insert(messageFact).values(tail.map((r) => ({ ...owned, ...r }))).onConflictDoNothing();
+    },
+    async coverage(walk) {
+      // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.
+      const older = sql`(${chatCoverage.oldestMessageId} is null or excluded.oldest_message_id < ${chatCoverage.oldestMessageId})`;
+      const [merged] = await db
+        .insert(chatCoverage)
+        .values({ ...owned, ...walk })
+        .onConflictDoUpdate({
+          target: [chatCoverage.accountId, chatCoverage.chatId],
+          set: {
+            teamId: sql`excluded.team_id`,
+            fanUsername: sql`coalesce(excluded.fan_username, ${chatCoverage.fanUsername})`,
+            fanName: sql`coalesce(excluded.fan_name, ${chatCoverage.fanName})`,
+            fanCustomName: sql`coalesce(excluded.fan_custom_name, ${chatCoverage.fanCustomName})`,
+            oldestMessageId: sql`least(excluded.oldest_message_id, ${chatCoverage.oldestMessageId})`,
+            oldestAt: sql`case when ${older} then excluded.oldest_at else ${chatCoverage.oldestAt} end`,
+            reachedStart: sql`excluded.reached_start or ${chatCoverage.reachedStart}`,
+            walkedAt: sql`excluded.walked_at`,
+          },
+        })
+        .returning({ oldestAt: chatCoverage.oldestAt, reachedStart: chatCoverage.reachedStart });
+      return merged ?? walk;
+    },
+    async transactions(rows) {
+      if (!rows.length) return;
+      await db
+        .insert(purchaseFact)
+        .values(rows.map((r) => ({ ...owned, ...r })))
+        .onConflictDoUpdate({ target: [purchaseFact.accountId, purchaseFact.txId], set: updateAll(purchaseFact, ['accountId', 'txId']) });
+    },
+    async finish() {
+      await syncScripts(teamId, accountId);
+    },
+  };
+}
+
+/** A dry run's store: adds what is read to `rows` (without OF's objects) and stores nothing. Coverage is the walk's own. */
+export function memoryStore(rows: BackfillRows): BackfillStore {
+  return {
+    async messages(covered, tail) {
+      rows.messages.push(...[...covered, ...tail].map(({ raw: _r, fetchedAt: _f, ...d }) => d));
+    },
+    async coverage(walk) {
+      rows.chats.push(walk);
+      return walk;
+    },
+    async transactions(list) {
+      rows.transactions.push(...list.map(({ raw: _r, ...d }) => d));
+    },
+    async finish() {},
+  };
+}
+
+/**
  * Backfills one account's range (spec §4.2): mass history in one-day windows from a day before `from` up to now
  * (the walks store messages on both sides of the range) and the welcome template (both feed the derived columns),
  * then chats newest first and each chat's messages newest first down to the range start, then the range's
- * transactions. Rows upsert on `(account_id, message_id)` and `(account_id, tx_id)`, so a re-run never double
- * counts. Paced and capped per account within the run, backs off on 429, retries transient failures (502, 503, 504,
- * network errors) up to `transientDelaysMs.length` times, and stops when `signal` aborts. Ends by
- * syncing the account's script candidates (`syncScripts`), stopped or not.
+ * transactions, all into `store` (`dbStore` upserts, so a re-run never double counts). Paced and capped per account
+ * within the run, backs off on 429, retries transient failures (502, 503, 504, network errors) up to
+ * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with `store.finish()`, stopped or not.
+ * Throws `SessionExpiredError` when OF answers 401.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(() => run(opts));
 }
 
 async function run(opts: BackfillOptions): Promise<BackfillResult> {
-  const { upstream, teamId, accountId, signal } = opts;
+  const { upstream, accountId, signal, store } = opts;
   const from = opts.from.getTime();
   const to = opts.to.getTime();
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
   const cfg = backfillConfig(opts.config);
-  const sink = opts.rows ?? null;
-  if (!sink && !opts.claimed) await claimAccount(teamId, accountId);
 
   const result: BackfillResult = {
     stopped: false,
@@ -167,40 +264,34 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     for (;;) {
       signal?.throwIfAborted();
       await pace();
-      let res: UpstreamResponse | null = null;
-      let failure: AppError | null = null;
-      try {
-        res = await upstream.forward({
-          accountId,
-          path,
-          method: 'GET',
-          headers: { accept: 'application/json', 'x-request-id': newId('req') },
+      const out = await upstream
+        .forward({ accountId, path, method: 'GET', headers: { accept: 'application/json', 'x-request-id': newId('req') } })
+        .catch((err: unknown) => {
+          // A network error or timeout (502 `upstream_unavailable`, 504 `upstream_timeout`) is transient; anything else is not.
+          if (err instanceof AppError && TRANSIENT.has(err.statusCode)) return err;
+          throw err;
+        })
+        .finally(() => {
+          lastDone = Date.now();
+          result.requests++;
+          opts.onProgress?.(result);
         });
-      } catch (err) {
-        // A network error or timeout (502 `upstream_unavailable`, 504 `upstream_timeout`) is transient; anything else is not.
-        if (!(err instanceof AppError && TRANSIENT.has(err.statusCode))) throw err;
-        failure = err;
-      } finally {
-        lastDone = Date.now();
-        result.requests++;
-        opts.onProgress?.(result);
-      }
-      if (TRANSIENT.has(failure?.statusCode ?? res!.status) && transient < cfg.transientDelaysMs.length) {
+      const delay = cfg.transientDelaysMs[transient];
+      if (TRANSIENT.has(out instanceof AppError ? out.statusCode : out.status) && delay !== undefined) {
+        transient++;
         result.retries++;
         opts.onProgress?.(result);
-        await sleep(cfg.transientDelaysMs[transient++]!, undefined, { signal });
+        await sleep(delay, undefined, { signal });
         continue;
       }
-      if (failure) throw failure;
-      if (res!.status === 429 && limited < cfg.maxRetries) {
-        await sleep(retryDelay(res!.headers.get('retry-after'), limited++, cfg), undefined, { signal });
+      if (out instanceof AppError) throw out;
+      if (out.status === 429 && limited < cfg.maxRetries) {
+        await sleep(retryDelay(out.headers.get('retry-after'), limited++, cfg), undefined, { signal });
         continue;
       }
-      if (res!.status === 401) {
-        throw new AppError(401, 'session_expired', `OF session expired for account ${accountId}: re-connect it in Accounts`);
-      }
-      if (!res!.ok) throw new Error(`backfill: the upstream answered ${res!.status} to GET ${path}`);
-      return JSON.parse(res!.body.toString('utf8')) as unknown;
+      if (out.status === 401) throw new SessionExpiredError(accountId);
+      if (!out.ok) throw new Error(`backfill: the upstream answered ${out.status} to GET ${path}`);
+      return JSON.parse(out.body.toString('utf8')) as unknown;
     }
   }
 
@@ -220,7 +311,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
 
     const unmatched = new Set<number>();
     for (const chat of await listChats(get, from)) {
-      const walk = await walkChat(get, ctx, teamId, chat, from, massFrom, sink);
+      const walk = await walkChat(get, store, ctx, chat, from, massFrom);
       result.messages += walk.messages;
       for (const q of walk.unmatchedQueueIds) unmatched.add(q);
       result.unmatchedQueueIds = unmatched.size;
@@ -228,12 +319,12 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       result.chats++;
       opts.onProgress?.(result);
     }
-    result.transactions = await readTransactions(get, teamId, accountId, from, to, sink);
+    result.transactions = await readTransactions(get, store, from, to);
   } catch (err) {
     if (!signal?.aborted) throw err;
     result.stopped = true;
   }
-  if (!sink) await syncScripts(teamId, accountId);
+  await store.finish();
   return result;
 }
 
@@ -302,20 +393,18 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
 /**
  * Pages one chat newest first with `first_id=<oldest id seen>` (OF's `id`), never `x-next-page`: OF returns short
  * pages before the end. Stops on `hasMore` false (the chat's start), a page with no new id, or the first page
- * reaching before `from` (the boundary page). Messages before `massFrom` (the boundary page's tail) were derived
- * without their mass history, so they are only inserted, never updated: a later run that read it is not undone.
- * Merges coverage: it never moves back. Returns the messages stored, the queue ids from `massFrom` on that mass
- * history does not list, and whether the stored coverage still falls short of `from`. With `sink` (dry run), the
- * rows and this walk's own coverage go there instead of the database.
+ * reaching before `from` (the boundary page). Each page goes to `store`, split at `massFrom` (the boundary page's
+ * tail before it was derived without its mass history), then the walk's coverage. Returns the messages read, the
+ * queue ids from `massFrom` on that mass history does not list, and whether the store's coverage still falls short
+ * of `from`.
  */
 async function walkChat(
   get: Get,
+  store: BackfillStore,
   ctx: DeriveContext,
-  teamId: string,
   chat: Chat,
   from: number,
   massFrom: number,
-  sink: BackfillRows | null,
 ): Promise<{ messages: number; unmatchedQueueIds: number[]; incomplete: boolean }> {
   const chatId = chat.id;
   const seen = new Set<string | number>();
@@ -331,7 +420,7 @@ async function walkChat(
       const d = deriveMessage(raw, chatId, ctx, fanNames({ name: chat.name, username: chat.username, displayName: chat.customName }));
       return d ? [{ d, raw }] : [];
     });
-    const rows = unique(derived, (x) => x.d.messageId, seen).map(({ d, raw }) => ({ teamId, accountId: ctx.accountId, ...d, raw, fetchedAt }));
+    const rows: WalkedMessage[] = unique(derived, (x) => x.d.messageId, seen).map(({ d, raw }) => ({ ...d, raw, fetchedAt }));
     if (rows.length === 0) break;
     const covered = rows.filter((r) => r.createdAt.getTime() >= massFrom);
     const tail = rows.filter((r) => !(r.createdAt.getTime() >= massFrom));
@@ -342,16 +431,7 @@ async function walkChat(
       const fan = Number((r.raw.fromUser as Raw | undefined)?.id) === chatId ? r.raw.fromUser : r.raw.toUser;
       fanUsername ??= username(fan);
     }
-    if (sink) sink.messages.push(...rows.map(({ teamId: _t, accountId: _a, raw: _r, fetchedAt: _f, ...d }) => d));
-    else {
-      if (covered.length) {
-        await db
-          .insert(messageFact)
-          .values(covered)
-          .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
-      }
-      if (tail.length) await db.insert(messageFact).values(tail).onConflictDoNothing();
-    }
+    await store.messages(covered, tail);
     for (const r of rows) {
       if (!oldest || r.messageId < oldest.id) oldest = { id: r.messageId, at: r.createdAt };
     }
@@ -361,9 +441,7 @@ async function walkChat(
     }
     if (rows.some((r) => r.createdAt.getTime() < from)) break;
   }
-  const coverage = {
-    teamId,
-    accountId: ctx.accountId,
+  const merged = await store.coverage({
     chatId,
     fanUsername,
     fanName: chat.name,
@@ -372,53 +450,21 @@ async function walkChat(
     oldestAt: oldest?.at ?? null,
     reachedStart,
     walkedAt: new Date(),
-  };
-  let merged: { oldestAt: Date | null; reachedStart: boolean } = coverage;
-  if (sink) sink.chats.push(coverage);
-  else {
-    // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.
-    const older = sql`(${chatCoverage.oldestMessageId} is null or excluded.oldest_message_id < ${chatCoverage.oldestMessageId})`;
-    const [row] = await db
-      .insert(chatCoverage)
-      .values(coverage)
-      .onConflictDoUpdate({
-        target: [chatCoverage.accountId, chatCoverage.chatId],
-        set: {
-          teamId: sql`excluded.team_id`,
-          fanUsername: sql`coalesce(excluded.fan_username, ${chatCoverage.fanUsername})`,
-          fanName: sql`coalesce(excluded.fan_name, ${chatCoverage.fanName})`,
-          fanCustomName: sql`coalesce(excluded.fan_custom_name, ${chatCoverage.fanCustomName})`,
-          oldestMessageId: sql`least(excluded.oldest_message_id, ${chatCoverage.oldestMessageId})`,
-          oldestAt: sql`case when ${older} then excluded.oldest_at else ${chatCoverage.oldestAt} end`,
-          reachedStart: sql`excluded.reached_start or ${chatCoverage.reachedStart}`,
-          walkedAt: sql`excluded.walked_at`,
-        },
-      })
-      .returning({ oldestAt: chatCoverage.oldestAt, reachedStart: chatCoverage.reachedStart });
-    merged = row!;
-  }
+  });
   const incomplete = !merged.reachedStart && merged.oldestAt !== null && merged.oldestAt.getTime() > from;
   return { messages: seen.size, unmatchedQueueIds: [...unmatched], incomplete };
 }
 
-/** The range's transactions (newest first from OF), stopping at the first page reaching before `from`; to `sink` on a dry run. */
-async function readTransactions(get: Get, teamId: string, accountId: number, from: number, to: number, sink: BackfillRows | null): Promise<number> {
+/** The range's transactions (newest first from OF) into `store`, stopping at the first page reaching before `from`. */
+async function readTransactions(get: Get, store: BackfillStore, from: number, to: number): Promise<number> {
   const seen = new Set<string>();
   let read = 0;
   for (let offset = 0; ; offset += PAGE) {
     const page = await get(`/payouts/transactions?limit=${PAGE}&offset=${offset}&startDate=${encodeURIComponent(ofDate(from))}`);
     const list = unique(items(page).filter((tx) => tx.id !== undefined && tx.id !== null), (tx) => String(tx.id), seen);
     if (list.length === 0) break;
-    const rows = list
-      .map((raw) => ({ teamId, accountId, ...derivePurchase(raw), raw }))
-      .filter((r) => r.createdAt.getTime() >= from && r.createdAt.getTime() < to);
-    if (sink) sink.transactions.push(...rows.map(({ teamId: _t, accountId: _a, raw: _r, ...d }) => d));
-    else if (rows.length) {
-      await db
-        .insert(purchaseFact)
-        .values(rows)
-        .onConflictDoUpdate({ target: [purchaseFact.accountId, purchaseFact.txId], set: updateAll(purchaseFact, ['accountId', 'txId']) });
-    }
+    const rows = list.map((raw) => ({ ...derivePurchase(raw), raw })).filter((r) => r.createdAt.getTime() >= from && r.createdAt.getTime() < to);
+    await store.transactions(rows);
     read += rows.length;
     if (!hasMore(page) || list.some((tx) => time(tx.createdAt) < from)) break;
   }
