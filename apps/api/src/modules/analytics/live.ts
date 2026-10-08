@@ -91,5 +91,7 @@ export async function freshness(teamId: string, accounts: number[] | null): Prom
     .from(event)
     .innerJoin(accountWorkspace, eq(accountWorkspace.accountId, event.accountId))
     .where(and(eq(accountWorkspace.teamId, teamId), inArray(event.type, LIVE_MESSAGE_TYPES), accounts ? inArray(accountWorkspace.accountId, accounts) : undefined));
-  return { lastLiveAt: row?.lastLiveAt?.toISOString() ?? null, liveEvents24h: row?.liveEvents24h ?? 0 };
+  // An aggregate without GROUP BY always yields exactly one row.
+  if (!row) throw new Error('freshness aggregate returned no row');
+  return { lastLiveAt: row.lastLiveAt?.toISOString() ?? null, liveEvents24h: row.liveEvents24h };
 }

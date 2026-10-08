@@ -174,7 +174,8 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
           },
         })
         .returning({ oldestAt: chatCoverage.oldestAt, reachedStart: chatCoverage.reachedStart });
-      return merged ?? walk;
+      if (!merged) throw new Error(`chat_coverage upsert returned no row for chat ${walk.chatId}`);
+      return merged;
     },
     async transactions(rows) {
       if (!rows.length) return;

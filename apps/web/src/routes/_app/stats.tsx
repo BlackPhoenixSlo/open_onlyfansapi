@@ -66,8 +66,8 @@ const SCRIPT_LIMIT = 50;
 const shortDay = (d: string) => d.slice(5);
 
 /** A metric over the page's range and account; idle until the range is known (it needs the config timezone). */
-function useMetric(id: string, groupBy: StatsGroupBy, range: StatsRange | undefined, enabled = true) {
-  return useQuery({ ...statsMetricQuery(id, { ...range, groupBy }), enabled: enabled && range !== undefined });
+function useMetric(id: string, groupBy: StatsGroupBy, range: StatsRange | undefined) {
+  return useQuery({ ...statsMetricQuery(id, { ...range, groupBy }), enabled: range !== undefined });
 }
 
 function Stats() {

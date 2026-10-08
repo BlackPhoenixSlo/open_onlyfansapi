@@ -62,10 +62,10 @@ export const percent = (part: number, whole: number) => (whole > 0 ? (part / who
  * account medians weighted by `n` (a median cannot be merged exactly), so `exact` is false.
  */
 export function combineAccounts(rows: StatsMetricRow[] | undefined): { value: number | null; n: number; exact: boolean } {
-  const withValue = (rows ?? []).filter((r) => r.value !== null && r.n > 0);
+  const withValue = (rows ?? []).flatMap((r) => (r.value !== null && r.n > 0 ? [{ value: r.value, n: r.n }] : []));
   const n = withValue.reduce((t, r) => t + r.n, 0);
   if (!n) return { value: null, n: 0, exact: true };
-  const value = withValue.reduce((t, r) => t + r.value! * r.n, 0) / n;
+  const value = withValue.reduce((t, r) => t + r.value * r.n, 0) / n;
   return { value, n, exact: withValue.length === 1 };
 }
 
@@ -99,5 +99,5 @@ export function formatAgo(iso: string, now = Date.now()): string {
 }
 
 /** The Stats page's live line: the newest message event and the count of the last 24 hours. */
-export const liveLine = (f: Pick<StatsFreshness, 'lastLiveAt' | 'liveEvents24h'>, now = Date.now()) =>
+export const liveLine = (f: StatsFreshness, now = Date.now()) =>
   f.lastLiveAt ? `Live: last message event ${formatAgo(f.lastLiveAt, now)} · ${f.liveEvents24h} events last 24h` : 'Live: no events yet';

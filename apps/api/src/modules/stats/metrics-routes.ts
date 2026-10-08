@@ -191,7 +191,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
 
   r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => {
     const { teamId } = request.actor;
-    const [config, fresh] = await Promise.all([getStatsConfig(teamId), freshness(teamId, scopedAccounts(request.actor, undefined))]);
+    const [config, fresh] = await Promise.all([getStatsConfig(teamId), freshness(teamId, request.actor.accountIds)]);
     return { config, freshness: fresh };
   });
 

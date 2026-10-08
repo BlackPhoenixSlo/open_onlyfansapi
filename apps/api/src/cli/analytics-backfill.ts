@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
 import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
-import { backfill, dbStore, memoryStore, type BackfillRows } from '../modules/analytics/backfill.js';
+import { backfill, dbStore, memoryStore, type BackfillRows, type BackfillStore } from '../modules/analytics/backfill.js';
 import { claimAccount } from '../modules/analytics/workspace.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 
@@ -55,10 +55,15 @@ try {
   const upstream = createUpstream({ url: env.UPSTREAM_URL, token: env.UPSTREAM_TOKEN, timeoutMs: env.UPSTREAM_TIMEOUT_MS });
   console.log(`backfilling account ${accountId} of workspace ${teamId}, ${from.toISOString()} to ${to.toISOString()}${dryRun ? ' (dry run: stores nothing)' : ''}`);
   if (automationFile) console.log(`automation texts: ${automationTexts.length} from ${automationFile}`);
-  const rows: BackfillRows | null = dryRun ? { messages: [], chats: [], transactions: [] } : null;
-  if (!rows) await claimAccount(teamId, accountId);
-  const store = rows ? memoryStore(rows) : dbStore(teamId, accountId);
-  const result = await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store });
+  let sink: { store: BackfillStore; write: () => ReturnType<typeof writeExport> };
+  if (dryRun) {
+    const rows: BackfillRows = { messages: [], chats: [], transactions: [] };
+    sink = { store: memoryStore(rows), write: () => writeRowsExport({ rows, from, to, outDir }) };
+  } else {
+    await claimAccount(teamId, accountId);
+    sink = { store: dbStore(teamId, accountId), write: () => writeExport({ teamId, accountId, from, to, outDir }) };
+  }
+  const result = await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store: sink.store });
   const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
   console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
   console.log(
@@ -68,7 +73,7 @@ try {
     `unmatched queue ids ${result.unmatchedQueueIds} (outbound sends with a queue id mass history does not list); ` +
       `incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`,
   );
-  const written = rows ? await writeRowsExport({ rows, from, to, outDir }) : await writeExport({ teamId, accountId, from, to, outDir });
+  const written = await sink.write();
   console.log(
     `wrote ${outDir}: messages.csv ${written.messages}, chats.csv ${written.chats}, transactions.csv ${written.transactions}, reply_times.csv ${written.replyTimes} rows`,
   );
