@@ -103,10 +103,10 @@ function ofData(): FakeOf {
       { id: 902, date: '2026-09-03T18:00:00Z', sentCount: 40 },
     ],
     transactions: [
-      { id: 'tx4', type: 'tip', amount: 1, net: 0.8, currency: 'USD', createdAt: '2026-09-04T05:00:00Z', user: { id: 2001 } }, // after `to`
+      { id: 'tx4', descriptionDetails: { type: 'tips' }, amount: 1, net: 0.8, currency: 'USD', createdAt: '2026-09-04T05:00:00Z', user: { id: 2001 } }, // after `to`
       {
         id: 'tx2',
-        type: 'message',
+        descriptionDetails: { type: 'message' },
         amount: 19.99,
         net: 15.99,
         currency: 'USD',
@@ -114,8 +114,8 @@ function ofData(): FakeOf {
         description: 'Payment for message from <a href="https://onlyfans.com/u2001">fan</a>',
         user: { id: 2001 },
       },
-      { id: 'tx1', type: 'tip', amount: 5, net: 4, currency: 'USD', createdAt: '2026-09-02T08:00:00Z', description: 'Tip from <a href="https://onlyfans.com/u2003">u2003</a>' },
-      { id: 'tx0', type: 'tip', amount: 2, net: 1.6, currency: 'USD', createdAt: '2026-09-01T01:00:00Z', description: 'Tip from <a href="https://onlyfans.com/somefan">x</a>' },
+      { id: 'tx1', descriptionDetails: { type: 'tips' }, amount: 5, net: 4, currency: 'USD', createdAt: '2026-09-02T08:00:00Z', description: 'Tip from <a href="https://onlyfans.com/u2003">u2003</a>' },
+      { id: 'tx0', descriptionDetails: { type: 'tips' }, amount: 2, net: 1.6, currency: 'USD', createdAt: '2026-09-01T01:00:00Z', description: 'Tip from <a href="https://onlyfans.com/somefan">x</a>' },
     ],
     welcome: { id: '7001', template: 'reply_on_subscribe', text: '<p>welcome &amp; hi!</p>', media: [] },
     pageCap: 3,
@@ -251,8 +251,8 @@ describe('analytics backfill', () => {
 
     const tx = await db.select().from(purchaseFact).orderBy(purchaseFact.txId);
     expect(tx.map((t) => [t.txId, t.fanId, t.fanIdSource, t.kind, t.grossCents, t.netCents, t.currency])).toEqual([
-      ['tx0', null, null, 'tip', 200, 160, 'USD'],
-      ['tx1', 2003, 'description', 'tip', 500, 400, 'USD'],
+      ['tx0', null, null, 'tips', 200, 160, 'USD'],
+      ['tx1', 2003, 'description', 'tips', 500, 400, 'USD'],
       ['tx2', 2001, 'field', 'message', 1999, 1599, 'USD'],
     ]);
   });
@@ -570,8 +570,8 @@ describe('analytics CSV export', () => {
 
     const tx = readCsv(await file('transactions.csv'));
     expect(tx.map((t) => [t.tx_id, t.kind, t.gross_cents, t.net_cents, t.currency, t.fan_id, t.fan_id_source])).toEqual([
-      ['tx0', 'tip', '200', '160', 'USD', '', ''],
-      ['tx1', 'tip', '500', '400', 'USD', '2003', 'description'],
+      ['tx0', 'tips', '200', '160', 'USD', '', ''],
+      ['tx1', 'tips', '500', '400', 'USD', '2003', 'description'],
       ['tx2', 'message', '1999', '1599', 'USD', '2001', 'field'],
     ]);
 

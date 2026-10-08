@@ -201,6 +201,7 @@ export type DerivedPurchase = {
   txId: string;
   fanId: number | null;
   fanIdSource: 'field' | 'description' | null;
+  /** OF's `descriptionDetails.type`, live: `message`, `tips`, `post`, `subscription`, `subscription_prolong`. */
   kind: string | null;
   grossCents: number | null;
   netCents: number | null;
@@ -221,10 +222,11 @@ export function txFan(raw: Raw): Pick<DerivedPurchase, 'fanId' | 'fanIdSource'> 
 }
 
 export function derivePurchase(raw: Raw): DerivedPurchase {
+  const kind = (raw.descriptionDetails as Raw | undefined)?.type;
   return {
     txId: String(raw.id),
     ...txFan(raw),
-    kind: typeof raw.type === 'string' ? raw.type : null,
+    kind: typeof kind === 'string' ? kind : null,
     grossCents: cents(raw.amount),
     netCents: cents(raw.net),
     currency: typeof raw.currency === 'string' ? raw.currency : null,

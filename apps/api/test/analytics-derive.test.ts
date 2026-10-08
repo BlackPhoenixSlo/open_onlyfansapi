@@ -4,6 +4,7 @@ import { REPLY_CAP_MS } from '../src/modules/analytics/config.js';
 import {
   deriveContext,
   deriveMessage,
+  derivePurchase,
   fanNames,
   isScriptEligible,
   NORMALISER_VERSION,
@@ -167,6 +168,14 @@ describe('analytics derived columns', () => {
     expect(txFan({ description: 'Tip from <a href="https://onlyfans.com/u2003">u2003</a>' })).toEqual({ fanId: 2003, fanIdSource: 'description' });
     expect(txFan({ description: 'Tip from <a href="https://onlyfans.com/somefan">x</a>' })).toEqual({ fanId: null, fanIdSource: null });
     expect(txFan({ description: 'Tip from <a href="https://onlyfans.com/u2003x">x</a>' })).toEqual({ fanId: null, fanIdSource: null });
+  });
+
+  it('takes the purchase kind from descriptionDetails.type, else null', () => {
+    const tx = { id: 'tx1', amount: 5, net: 4, currency: 'USD', createdAt: '2026-09-02T08:00:00Z' };
+    expect(derivePurchase({ ...tx, descriptionDetails: { type: 'tips' } }).kind).toBe('tips');
+    expect(derivePurchase({ ...tx, type: 'tips' }).kind).toBeNull(); // OF sends no top-level type
+    expect(derivePurchase({ ...tx, descriptionDetails: { type: 1 } }).kind).toBeNull();
+    expect(derivePurchase(tx).kind).toBeNull();
   });
 });
 

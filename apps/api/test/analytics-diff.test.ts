@@ -52,11 +52,11 @@ describe('analytics CSV', () => {
       messages: [],
       chats: [],
       transactions: [
-        { txId: 'tx,1', createdAt: new Date(0), kind: 'tip', grossCents: 100, netCents: 80, currency: 'USD', fanId: null, fanIdSource: null },
+        { txId: 'tx,1', createdAt: new Date(0), kind: 'tips', grossCents: 100, netCents: 80, currency: 'USD', fanId: null, fanIdSource: null },
       ],
       turns: [],
     });
-    expect(tx['transactions.csv'].split('\n')[1]).toBe('"tx,1",1970-01-01T00:00:00.000Z,tip,100,80,USD,,');
+    expect(tx['transactions.csv'].split('\n')[1]).toBe('"tx,1",1970-01-01T00:00:00.000Z,tips,100,80,USD,,');
   });
 });
 
