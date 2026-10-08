@@ -1,250 +1,210 @@
-# Handoff: mine 90 days of chats for stats ideas
+# Handoff: store all chat data for 337749380 (90 days)
 
-Written 2026-10-08 (store state read 2026-10-08 19:20 to 19:35 UTC). Background: [docs/analytics.md](docs/analytics.md),
-[docs/analytics-backfill.md](docs/analytics-backfill.md), [spec §2 and §6](docs/spec/future-client-story-ask.md),
-[Infloww definitions](docs/spec/infloww-definitions.md).
+Updated 2026-10-08 22:45 UTC (2026-10-09 local) after the owner's answers. Background: [docs/analytics.md](docs/analytics.md)
+(see "Stored messages and export" for every export field), [docs/analytics-backfill.md](docs/analytics-backfill.md),
+[spec §2](docs/spec/future-client-story-ask.md).
 
 ## 1. Goal
 
-Store the last 90 days of DMs for the live account(s) and export them. Then write a list of stats ideas that the
-stored data really supports, compared with what AI chatter tools show. The output is a ranked list of ideas plus the
-numbers behind each one.
+Store **all** chat data for @isaraee now: every message's text, its PPV price and whether it was bought, tips,
+photo/video/gif/audio counts, plus every transaction. It gets investigated later. Stats ideas come after the data is
+in. Window: 2026-07-11..2026-10-09 (UTC).
 
-## 2. Runbook: get 90 days stored and exported
+## 2. State of the store
 
-What was in the store on 2026-10-08 (from psql). Both accounts are in workspace `jaka-basej-ehpyuz`, team
-`bc407cc9-d7cd-499a-87fe-58a04e67f71a`:
+As of 2026-10-08 22:41 UTC. Workspace `jaka-basej-ehpyuz`, team `bc407cc9-d7cd-499a-87fe-58a04e67f71a`.
 
-| Account | OF session | `message_fact` rows | Range stored | Chats (`chat_coverage`) | `purchase_fact` |
-|---|---|---|---|---|---|
-| 337749380 = @isaraee (Isabelle Rae) | working | 9,500 (1,932 fan, 5,564 DM, 1,957 mass, 47 automated) | 2026-09-09 .. 2026-10-08 | 656 (walked 18:16 to 19:18 UTC), 1 walked to its start | **0 rows** |
-| 91610731 = Main (@jakabasej) | **dead** (2026-10-08) | 11,588 (10,038 of them in 2026-09) | 2025-01-25 .. 2026-10-05 | 87, 0 walked to start | **0 rows** |
+| Account | OF session | `message_fact` | `purchase_fact` |
+|---|---|---|---|
+| 337749380 = @isaraee (Isabelle Rae) | working | 13,805 rows (13,698 in the window, 662 chats), growing while the run walks | 173 rows, 2026-07-14..2026-10-07, see §4 |
+| 91610731 = Main (@jakabasej) | **dead** since 2026-10-08 | 11,588 rows, 2025-01-25..2026-10-05 | 0 rows |
 
-So 337749380 is the account to backfill. Main can only be mined from what is already stored, until someone
-re-connects it on Accounts.
+Main can only be mined from what is stored, until someone re-connects it on Accounts.
 
-**0. Pre-flight**
+## 3. Runbook
 
-- **Services.** `curl localhost:4000/healthz` must return `{"ok":true}`. The upstream listens on :3001, Postgres on
-  :5434 and the dashboard on :5174. The DSN in `.env.example`, `postgres://gateway:gateway@localhost:5434/gateway`,
-  worked on 2026-10-08.
-- **Root `.env`.** The CLIs read the repo root `.env` (`--env-file-if-exists=../../.env` in `apps/api/package.json`)
-  and need `DATABASE_URL`, `UPSTREAM_URL` and `UPSTREAM_TOKEN`. Check with
-  `grep -cE '^(DATABASE_URL|UPSTREAM_URL|UPSTREAM_TOKEN)=' .env`, which must print `3`.
-- **API key.** On 2026-10-08 the workspace had **no API keys**. Create one on Dashboard → API keys, allowlisting
-  `337749380`. The CLI's claim (`claimAccount`, `apps/api/src/modules/analytics/workspace.ts`) needs a live key of
-  any scope that lists the account; `write` is needed only for `POST /v1/stats/backfill`. Keys get 120 requests a
-  minute (`KEY_RATE_LIMIT_PER_MIN`, `apps/api/src/env.ts`). Then `export GW=http://localhost:4000 KEY=<key>`.
-- **Workspace.** The CLIs need `--team bc407cc9-d7cd-499a-87fe-58a04e67f71a` unless `account_workspace` already has
-  the account (`accountTeam`, `apps/api/src/cli/analytics-export.ts`). On 2026-10-08 it had both accounts.
-- **Session.** `curl -fsS -H "Authorization: Bearer $KEY" $GW/v1/accounts | jq` must show 337749380 with
-  `"status": "active"`. If it shows `session_expired`, re-connect the account on Accounts.
+**Nothing needs an API key.** The CLI reads the repo root `.env` (`--env-file-if-exists=../../.env` in
+`apps/api/package.json`), which must set `DATABASE_URL`, `UPSTREAM_URL` and `UPSTREAM_TOKEN`. The dashboard uses your
+login.
 
-**1. Backfill 90 days.** Use the CLI. It runs in its own process, so a `tsx watch` restart of the dev API does not
-kill it. A dashboard or route run lives in the API's memory and dies when the API restarts.
+**Step 1: the 90-day run is already going. Do not start another run on 337749380.** The owner's other session
+started it on 2026-10-08 at 22:13 UTC:
 
 ```sh
-mkdir -p ~/of-capture/chat-mining/337749380-90d
-pnpm --filter @gateway/api analytics:backfill --account 337749380 \
-  --from 2026-07-11 --to 2026-10-09 --out ~/of-capture/chat-mining/337749380-90d 2>&1 | tee ~/of-capture/chat-mining/337749380-90d/backfill.log
+pnpm --filter @gateway/api analytics:backfill --account 337749380 --from 2026-07-11 --to 2026-10-10 --out ~/of-capture/chat-mining/337749380-90d
 ```
 
-`--from` is inclusive and `--to` exclusive (UTC midnight): the 90 days 2026-07-11..2026-10-08; move both dates if
-you run later. A finished run prints `requests: N; stopped: no` and `chats N, messages N, broadcasts N,
-transactions N, ...`; keep that log. It writes four CSVs, none with message text.
+- **Log.** `~/of-capture/chat-mining/337749380-90d/backfill.log` holds only a start line, then a final summary
+  (`requests: N; stopped: no`, then `chats N, messages N, broadcasts N, transactions N, ...`). When the run ends it
+  also writes four CSVs to that folder.
+- **Second run.** A 3-day diagnostic run on the same account (`--from 2026-10-06 --to 2026-10-09`, log
+  `/tmp/chat-mining/backfill-3d.log`) ran alongside it and was stopped on 2026-10-09 after writing
+  `/tmp/chat-mining/run-3d` (3,669 messages, 662 chats, 9 transactions). Its upsert used pre-551e282 code, so
+  `kind` for 2026-10-06..09 is null until the restore in step 2.3 runs.
+- **Duration.** Many hours. A 3-day window already meant about 460 active chats, and the 600/h cap was hit after
+  about 17 minutes. Each active chat costs at least one 100-message page, plus chat-list pages (about 10 chats each)
+  and one mass-history window per day.
+- **Progress.** Run this in `psql postgres://gateway:gateway@localhost:5434/gateway`. It returned 662 at 22:41 UTC:
+  `select count(*), max(walked_at) from chat_coverage where account_id=337749380 and walked_at > now() - interval '6 hours';`
+- **If it dies** (session expired, machine sleep): check the account is `active` on Accounts, then re-run the same
+  command. Rows upsert, but there is no resume.
 
-Use the route only if the API process is stable, meaning not `pnpm dev` while someone edits `apps/api`:
+**Step 2: after the run ends, let the transaction-kind watcher finish.** Both running CLIs loaded code from before
+551e282 (purchase kind fix) and ac9761d (transactions read first). When they end, they re-read transactions with the
+old code, and that upsert sets `purchase_fact.kind` to null.
 
-```sh
-curl -fsS -X POST -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
-  -d '{"accountId":337749380,"days":90}' $GW/v1/stats/backfill            # 202 {runId}; days 1..366
-while sleep 30; do curl -fsS -H "Authorization: Bearer $KEY" "$GW/v1/stats/backfill?accountId=337749380" \
-  | jq -c '{status,requests,chats,messages,retries,error,errorCode}'; done   # stop at done or error
-```
+- **The watcher.** `/tmp/chat-mining/restore-kind.sh` (log `/tmp/chat-mining/tx-restore.log`) waits for both runs to
+  exit. It then runs `/tmp/chat-mining/tx-only.mts 2026-07-11 2026-10-10`, which is the fixed backfill stopped as
+  soon as the transactions (read first) are stored, in about 3 requests.
+- **Check.** `select count(*), count(kind) from purchase_fact where account_id=337749380;` should show two equal
+  numbers.
+- **If `/tmp` was wiped**, use the shipped CLI over the **same** 90-day range:
+  `pnpm --filter @gateway/api analytics:backfill --account 337749380 --from 2026-07-11 --to 2026-10-10 --out /tmp/tx-redo`.
+  As soon as the check query shows the counts equal, press Ctrl-C. Transactions are read first, so this takes
+  seconds; the CLI then writes its CSVs and exits.
+- **Why not a 1-day window.** It would not do this. `readTransactions` (`apps/api/src/modules/analytics/backfill.ts`)
+  keeps only rows inside `[from, to)` and stops at the first page older than `from`, so a 1-day window restores one
+  day.
 
-If the poll shows `idle` partway through, the API restarted and the run is gone. Start again: rows upsert, but there
-is no resume.
+**Step 3: export from the dashboard.** Open
+`http://localhost:5174/stats?range=custom&from=2026-07-11&to=2026-10-09&accountId=337749380`. `to` is inclusive. In
+the **Fans** card:
 
-**Budget.** Chats drive the cost, not messages. Reference ([TESTING.md §6](TESTING.md), CLI, 2026-09-06..10-06 on
-Main): 259 requests in 12 min for 87 chats and 9,150 messages. A run requests chat-list pages (about 10 chats each),
-1 or 2 message pages per active chat (100 messages a page, `PAGE` in `apps/api/src/modules/analytics/backfill.ts`,
-plus a boundary page), one mass-history window per day from the day before `--from` (91 or more), and the
-transaction pages. The unknown is N, the chats active in the 90 days (656 in 30 days is only a lower bound). At
-N = 1,000: about 100 + 1,500 + 91 ≈ 1,700 requests, close to 3 h at the default `ANALYTICS_REQUESTS_PER_HOUR=600`.
+- **Download all messages (CSV)**: every message, both sides.
+- **Download fan replies (CSV)**: the fans' messages only.
+- **CSV** on a fan's row: that fan's conversation.
 
-**2. Check the store.** Open `psql postgres://gateway:gateway@localhost:5434/gateway` and create view `m`. It is
-used here and in §3.
+Save the files to `~/of-capture/chat-mining/337749380-90d/` and keep them out of the repo, because they hold fan
+ids and fan text.
+
+- **Columns.** `account_id`, `chat_id`, `fan_username`, `message_id`, `created_at`, `direction`, `text`,
+  `price_cents`, `is_free`, `is_opened`, `is_tip`, `tip_cents`, `media_count`, `photos`, `videos`, `gifs`, `audios`,
+  `has_preview`, `is_mass`, `is_automated`, `is_reply`, `is_liked`, `deleted_at`. What each one means is in the
+  docs table, not repeated here.
+- **Fan rows.** The card's fan list also shows PPV bought/sent and tips.
+- **Format.** Streamed, plain UTF-8, LF line endings, the whole range. `pd.read_csv` reads it directly.
+- **Splitting.** A conversation per fan is just a filter on `chat_id` in the full file. Do not click every row.
+
+**Fallback: export with psql**, for raw OF HTML or fields the CSV lacks. Use view `m` from §5:
+`\copy (select m.chat_id, c.fan_username, m.created_at, m.direction, m.price_cents, m.raw->>'isOpened' bought, m.deleted_at, m.raw->>'text' text_html, m.raw->'media' media from m left join chat_coverage c using (team_id, account_id, chat_id) order by 1,3,m.message_id) to '~/of-capture/chat-mining/337749380-90d/messages-raw.csv' csv header`
+
+Optional¹: the same CSV over HTTP.
+
+## 4. Money (`purchase_fact`)
+
+**Root cause of the earlier 0 rows.** The backfill read transactions last, after hours of chat walks, and no run
+lived long enough to reach them. ac9761d reads them first.
+
+337749380 now has 173 rows for 2026-07-11..2026-10-10, gross **$3,728.52**:
+
+| `kind` | `raw->>'status'` done | loading | Gross |
+|---|---|---|---|
+| message (PPV) | 111 | 19 | $2,400.12 + $820.00 |
+| tips | 13 | 11 | $226.28 + $138.00 |
+| subscription | 11 | 0 | $56.13 |
+| post | 8 | 0 | $87.99 |
+
+Every revenue query must filter on status:
+
+- Exclude `undo` and `pending_return` (refunded or reversed). None were stored yet, but OF has them.
+- `loading` is booked but not yet paid out, 30 of the 173 rows. Report it in its own column ("settled" =
+  `done`, "booked" = `done` plus `loading`) until the owner decides (§7).
+- All 173 rows have `fan_id` from the transaction's `user.id` (`fan_id_source='field'`). `fan_id` equals
+  `message_fact.chat_id`.
+- 66 fans paid. On 2026-10-08 only 33 of them had messages stored in the window, because the walk was still running.
+
+## 5. What to compute first
+
+Create the view in psql. Every query below was tested on 2026-10-08:
 
 ```sql
 create temp view m as select *, (direction='outbound' and not is_mass and not is_automated) is_dm from message_fact
-where team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and account_id=337749380 and created_at >= '2026-07-11T00:00Z' and created_at < '2026-10-09T00:00Z';
-select date_trunc('week', created_at)::date wk, direction, count(*) from m group by 1,2 order by 1,2;
-select count(*), count(*) filter (where reached_start), min(oldest_at) from chat_coverage where team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and account_id=337749380;
+where team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and account_id=337749380 and created_at >= '2026-07-11T00:00Z' and created_at < '2026-10-10T00:00Z';
 ```
 
-Note the `unmatched queue ids` and `incomplete chats` counts from the backfill log.
-
-**3. Export transcripts.**
-
-`GET /v1/stats/fans` and `GET /v1/stats/messages` were committed in 801f1a3 (a fix lands on top; contract in
-`apps/api/src/contracts.ts`, `statsFans` and `statsMessages`). `from`/`to` are days in the stats timezone (UTC by
-default), `to` inclusive; always pass both. `fans` returns `total` and `items[]` (`chatId`, `fanUsername`,
-`fanMessages`, `dmMessages`, `massMessages`, `automatedMessages`, `firstAt`, `lastAt`, `lastFanAt`), newest
-`lastFanAt` first; `total` above the item count means `limit` cut it. The messages CSV is streamed and holds the
-whole range; JSON stops at `limit` and sets `truncated`.
-
-Save each file only after its first line looks right. Otherwise a 401 or 429 body would land as a `.csv`:
-
-```sh
-OUT=~/of-capture/chat-mining/337749380-90d; Q="accountId=337749380&from=2026-07-11&to=2026-10-08"
-get() { curl -fsS -H "Authorization: Bearer $KEY" "$GW$1" -o "$2.part" && head -1 "$2.part" | grep -q "$3" && mv "$2.part" "$2" || echo "FAILED $2"; }
-get "/v1/stats/fans?$Q&limit=1000" $OUT/fans.json '"total"'
-get "/v1/stats/messages?$Q&direction=all&format=csv" $OUT/messages-all.csv 'account_id,chat_id'
-get "/v1/stats/messages?$Q&direction=in&format=csv"  $OUT/fan-replies.csv  'account_id,chat_id'   # fans' messages only
-```
-
-`messages-all.csv` already holds every chat. To get one file per fan, split it locally. Column 2 is `chat_id`, and
-`text` has its line breaks collapsed, so one row is one line:
-`mkdir -p $OUT/chats && awk -F, -v d=$OUT/chats 'NR==1{h=$0;next} {f=d"/"$2".csv"; if(!(f in s)){s[f]; print h > f} print >> f; close(f)}' $OUT/messages-all.csv`
-
-For the raw HTML and the unlock hint, or if the routes are missing, export from the view in the same psql session
-(tested 2026-10-08):
-
-```sql
-\copy (select m.chat_id, c.fan_username, m.created_at, m.direction, m.is_mass, m.is_automated, m.price_cents, m.raw->>'canPurchaseReason' unlock_hint, m.raw->>'text' text_html from m left join chat_coverage c using (team_id, account_id, chat_id) order by m.chat_id, m.created_at, m.message_id) to '~/of-capture/chat-mining/337749380-90d/messages-raw.csv' csv header
-```
-
-Keep every export out of the repo, because it holds fan ids and fan text.
-
-**Money is unconfirmed.** `purchase_fact` has 0 rows for both accounts. Yet in 30 days @isaraee sent 111 PPVs
-(19 marked `opened`, $567.99 list price) and got 2 fan tips. Revenue ideas are blocked until these three checks are
-done:
-
-- **(a) Did a run reach transactions?** `backfill.ts` reads them last (`readTransactions`, after every chat walk).
-  The stored 337749380 rows came from a run whose last chat walk was at 19:18 UTC. Nothing was written after that,
-  and its final status is unknown: a route run dies on an API restart or a `session_expired`. The CLI's
-  `transactions N` line settles it.
-- **(b) Does the named route answer?**
-  `curl -fsS -H "Authorization: Bearer $KEY" "$GW/v1/337749380/payouts/transactions?limit=10&startDate=2026-07-11%2000:00:00" | jq`.
-  The backfill calls this route, not the `_of` passthrough. Spec §6.1 notes that the upstream ignored `startDate`
-  on 2026-10-06.
-- **(c) Short pages (a hypothesis).** `readTransactions` moves `offset += 100` however many rows a page held. If OF
-  answers with short pages, as it does for chats, rows are skipped. This is untested:
-  `apps/api/test/fake-upstream.ts` always returns full transaction pages. Compare (b) with `&offset=10`.
-
-**Other gotchas**
-
-- **Session expiry.** An OF 401 or "Wrong user" stops the run (`errorCode: session_expired`); Main died this way on
-  2026-10-08. **In-memory runs:** the API's one-run-per-account guard does not see CLI runs, so never start a route
-  run for an account while its CLI run is going.
-- **Rate limits.** OF documents none; the 600/h cap is a guess. A 429 backs off (8 retries, then the run fails), a
-  502/503/504 is retried 3 times, and each run counts its cap from zero, so leave an hour between runs.
-- **Mass makes every chat active.** In 30 days 656 chats got mass messages, but only 212 fans wrote.
-- **PPV unlock hint is unverified.** On outbound PPVs, `raw->>'canPurchaseReason'='opened'` (with `isOpened=true`)
-  is the only unlock signal stored. The spec says `isOpened` means viewed, not bought. Check 5 cases in OF.
-- **No fan profile in the store.** `raw->'fromUser'` is only `{id,_view}` on 1,931 of 1,932 fan rows. Subscribe
-  date, auto-renew and `lastSeen` are not stored.
-- **Coverage.** Only 1 of 656 chats was walked to its start, so most openers have kind `unknown`.
-- **Deletes are hard.** A live `messages.deleted` deletes the `message_fact` row (`apps/api/src/modules/analytics/live.ts`),
-  so a fan's unsent message disappears from the export.
-
-## 3. What to compute first
-
-Use view `m` from §2 step 2. Every query below was tested on 2026-10-08 against the stored 30 days. Route ranges
-`from=2026-07-11&to=2026-10-08` match the view's bounds.
-
-1. **Per-fan reply rate**: the share of fans reached who ever wrote back (30 days: 212 of 656). It sizes the
-   chattable base against the broadcast-only base.
+1. **Revenue per fan**: settled and booked spend per fan, next to how much they chat. This is the base for LTV,
+   whales and big-spender coverage. The top fan on 2026-10-08: $641 booked, 267 fan messages, 347 DMs.
+   ```sql
+   with p as (select fan_id, count(*) n, sum(gross_cents) filter (where raw->>'status'='done') done_c, sum(gross_cents) all_c from purchase_fact where team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and account_id=337749380 and created_at >= '2026-07-11T00:00Z' and created_at < '2026-10-10T00:00Z' and coalesce(raw->>'status','') not in ('undo','pending_return') group by 1)
+   select p.fan_id, c.fan_username, p.n, p.done_c/100.0 settled_usd, p.all_c/100.0 booked_usd, f.fan_msgs, f.dms from p left join chat_coverage c on c.team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and c.account_id=337749380 and c.chat_id=p.fan_id left join (select chat_id, count(*) filter (where direction='inbound') fan_msgs, count(*) filter (where is_dm) dms from m group by 1) f on f.chat_id=p.fan_id order by p.all_c desc;
+   ```
+2. **PPV conversion**: priced outbound messages against those with `isOpened`, which on a priced message means
+   bought (docs table).
+   - 2026-10-08 result: DM PPVs 39 of 183 bought (21.3%, $1,212.74). Mass PPVs 5 of 5 (check those by hand).
+   - Cross-check bought dollars against `purchase_fact` kind `message`.
+   `select is_mass, count(*), count(*) filter (where (raw->>'isOpened')::boolean) bought, round(100.0*count(*) filter (where (raw->>'isOpened')::boolean)/nullif(count(*),0),1) pct, sum(price_cents) filter (where (raw->>'isOpened')::boolean)/100.0 usd from m where direction='outbound' and price_cents>0 group by 1;`
+3. **Per-fan reply rate**: the share of fans reached who ever wrote back. It separates the base worth chatting to
+   from the broadcast-only base.
    `select count(*), count(*) filter (where fan>0) from (select chat_id, count(*) filter (where direction='inbound') fan from m group by 1) f;`
-2. **Fan response latency**: time from our DM to the fan's next message (30 days: median 93 s, p90 10 h, n=1,426).
-   It shows when fans are live, which is the basis for upsell timing.
+4. **Fan response latency**: time from our DM to the fan's next message. It shows when fans are live, which is
+   when to upsell.
    `select percentile_cont(array[.5,.9]) within group (order by extract(epoch from created_at-p)) from (select *, lag(created_at) over w p, lag(is_dm) over w pdm from m window w as (partition by chat_id order by created_at, message_id)) x where direction='inbound' and pdm;`
-3. **Our reply time and SLA**: already built.
-   `GET /v1/stats/metrics/reply_time?accountId=337749380&from=2026-07-11&to=2026-10-08&groupBy=day`, and the same for
-   `reply_sla` and `reply_time_p90`. Every competitor leads with this number.
-4. **PPV unlock conversion**: PPVs sent and marked opened, with the list price of the opened ones, mass against DM.
-   This is the "unlock rate" the competitors show. It is unverified until the hint is checked (§2).
-   `select is_mass, count(*), count(*) filter (where raw->>'canPurchaseReason'='opened'), sum(price_cents) filter (where raw->>'canPurchaseReason'='opened')/100.0 from m where direction='outbound' and price_cents>0 group by 1;`
-5. **Revenue per fan**: spend per fan from transactions. It is the base for LTV, whale lists and big-spender
-   coverage. Blocked until checks (a) to (c) are done.
-   `select fan_id, kind, count(*), sum(gross_cents)/100.0 from purchase_fact where team_id='bc407cc9-d7cd-499a-87fe-58a04e67f71a' and account_id=337749380 and created_at >= '2026-07-11T00:00Z' and created_at < '2026-10-09T00:00Z' group by 1,2 order by 4 desc;`
-6. **Conversation length**: message count per session, where a session ends after a 6 h gap and mass is excluded.
-   It shows whether chats die after 1 or 2 messages or run long.
+5. **Our reply time and SLA**: already built.
+   `GET /v1/stats/metrics/reply_time?accountId=337749380&from=2026-07-11&to=2026-10-09&groupBy=day`, or the same
+   numbers on the Stats page.
+6. **Conversation length**: messages per session, where a session ends after a 6 h gap and mass is excluded.
    `select width_bucket(n,1,101,10), count(*) from (select chat_id, s, count(*) n from (select chat_id, sum(case when p is null or created_at-p>interval '6 hours' then 1 else 0 end) over (partition by chat_id order by created_at, message_id) s from (select chat_id, created_at, message_id, lag(created_at) over (partition by chat_id order by created_at, message_id) p from m where not is_mass) a) b group by 1,2) c group by 1 order by 1;`
-7. **Best hours**: fan messages, DMs, PPVs and opened PPVs by local hour. Use it to staff shifts and time PPVs
-   (timezone: §6). Also `GET /v1/stats/metrics/reply_time?...&groupBy=hour`.
-   `select extract(hour from created_at at time zone 'Europe/Ljubljana') h, count(*) filter (where direction='inbound') fan, count(*) filter (where is_dm) dm, count(*) filter (where price_cents>0 and direction='outbound') ppv, count(*) filter (where raw->>'canPurchaseReason'='opened') opened from m group by 1 order by 1;`
+7. **Best hours**: fan messages, DMs, PPVs and bought PPVs by local hour (timezone: §7).
+   `select extract(hour from created_at at time zone 'Europe/Ljubljana') h, count(*) filter (where direction='inbound') fan, count(*) filter (where is_dm) dm, count(*) filter (where price_cents>0 and direction='outbound') ppv, count(*) filter (where (raw->>'isOpened')::boolean and price_cents>0) bought from m group by 1 order by 1;`
 8. **Drop-off points**: in chats silent for 7 or more days before the window ends, the last non-mass message, by
-   sender and type. It shows where conversations die.
-   `select direction, price_cents>0 ppv, raw->>'canPurchaseReason', count(*) from (select distinct on (chat_id) * from m where not is_mass and not is_automated order by chat_id, created_at desc, message_id desc) l where created_at < '2026-10-02T00:00Z' group by 1,2,3 order by 4 desc;`
+   sender and type.
+   `select direction, price_cents>0 ppv, raw->>'isOpened', count(*) from (select distinct on (chat_id) * from m where not is_mass and not is_automated order by chat_id, created_at desc, message_id desc) l where created_at < '2026-10-03T00:00Z' group by 1,2,3 order by 4 desc;`
 9. **Reactivation**: fans who wrote again after 7 or more days of silence, per week. Pair it with opener kind
-   `reactivation` from `GET /v1/stats/metrics/openers?accountId=337749380&from=2026-07-11&to=2026-10-08`. This is
-   the win-back number competitors sell.
+   `reactivation` from `GET /v1/stats/metrics/openers`.
    `select date_trunc('week', created_at)::date, count(*) from (select created_at, created_at-lag(created_at) over (partition by chat_id order by created_at, message_id) g from m where direction='inbound') x where g >= interval '7 days' group by 1 order by 1;`
-10. **Scripts**: already built. `GET /v1/stats/scripts?accountId=337749380&from=2026-07-11&to=2026-10-08` gives the
-    reply rate per repeated text, the closest thing we have to "what the AI should say".
+10. **Media mix**: photos, videos, gifs and audio sent per side, and in bought PPVs. Read from `raw->'media'`
+    (`type` is `photo`, `video`, `gif` or `audio`), or the CSV's `photos`, `videos`, `gifs`, `audios`.
 
 For Main, recreate `m` with `account_id=91610731`.
 
-## 4. Competitor findings
+## 6. Gotchas
 
-**"ai chat agenie" is not identified.** Eight searches on 2026-10-08 found no product by that name ("Agenie",
-"Chat Genie", "ChatGenie", "AI Chat Genie", "Genie" with OnlyFans/chatter/CRM, and "AI chat agent" OnlyFans). It is
-also not in the [ofm-tools AI chat directory](https://ofm-tools.com/ai-chat-onlyfans/). There are two readings: (a) **GenieHelper**¹, the only
-name match, at low confidence; (b) a typo for "AI chat agent", which points to Supercreator's Izzy or Substy. The table covers both, with Infloww as the baseline. "(claim)" marks marketing copy, "(inferred)" marks my
-inference, and "(vendor blog)" marks a vendor's own blog.
+- **Session expiry.** An OF 401 or "Wrong user" stops a run (`session_expired`). Main died this way on 2026-10-08.
+- **Run status.** Route and dashboard runs live in the API's memory and die on a `tsx watch` restart. CLI runs are
+  separate processes, and the API's one-run guard does not see them.
+- **Rate limits.** OF documents none. The 600/h cap is a guess, and each run counts its own cap from zero.
+- **Unsent messages.** A `messages.deleted` event keeps the row and sets `deleted_at` (migration `0012`, 62d3c50).
+  A later backfill that reads the message again clears the mark. Metrics still count marked rows, and the export
+  shows `deleted_at`.
+- **Not stored.** The media files themselves (only counts and ids are kept), and subscription details per fan:
+  `raw->'fromUser'` is only `{id,_view}` on nearly every fan row.
+- **Coverage.** Few chats are walked to their start, so most openers have kind `unknown`.
+- **GIPHY gifs.** They have `giphyId` and empty `media`: the export's `gifs` counts them, but `media_count` does not.
 
-| Tool | Per-fan data kept | Metrics shown | Ingestion | How the AI uses history | Source |
-|---|---|---|---|---|---|
-| **Supercreator** (Izzy AI) | Purchases (what, how much, when), LTV, spend tier, lists, active vs "gone quiet", traffic source, notes and tags (preferred name, likes, refusals), which chatter closed each sale | Per chatter: private sales, $/hour, chat conversion, tips, messages sent, hours online, response time, open chats, PPVs sent, sales per shift. Per content: sent, opened, purchased, revenue, average price, unlock rate. Account: revenue by source/fan/chatter/content, churn and renewal trends, whale segments | Desktop and mobile apps. History "is imported when you connect", depth not stated. "Never collects or stores your login credentials", so likely a session relay (inferred) | Learns each fan's "history, tone, and spending habits". Copies the creator's "slang, rhythm, humor" and emojis (persona from past outbound messages, inferred). Picks "PPV content, price, and caption at the perfect moment". Re-prices old vault content (claim) | [fan-crm](https://www.supercreator.app/onlyfans-crm/fan-crm), [chatter-management](https://www.supercreator.app/onlyfans-crm/chatter-management), [revenue-content-analytics](https://www.supercreator.app/onlyfans-crm/revenue-content-analytics), [ai-chatter](https://www.supercreator.app/ai-chatter) |
-| **Infloww** (baseline, the client's CRM) | Total spend *since the creator was added*, purchase rate (PPVs bought ÷ received), last and highest spend, PPV/tip totals and averages, subscription status, price, duration, auto-renew. Nickname, birthday, source, location by hand. PPV timeline. Notes. Inbox tags: New (subscribed ≤7 d), 🔥 recent buyer, ❄️ no messages 72 h, ❌ expired, Off (renew off) | Per employee: sales, DM sales (no mass), DMs sent, DM PPVs, golden ratio (DM PPVs ÷ DMs), unlocks, unlock rate, fans chatted, Fan CVR, earnings per paying fan, response time (scheduled and clocked). Fan reports: spend ranking, retention, auto-renew rate, subs gained/lost. Sales credited by shift, sender or "converter" (last message before payment) | Desktop app that proxies the creator's OF session ([infloww-definitions §8](docs/spec/infloww-definitions.md)), so the full chat history shows in its inbox. Only its spend stats start when the creator is added; no stats backfill (inferred from the fan-insights page) | AI Copilot (beta) "learns from every interaction", "remembers past interactions", live suggestions. Scripts in storylines. Event automations (fan online, new sub, after purchase, expiring/expired, resub, birthday) | [fan insights](https://help.infloww.com/en/articles/418759-fan-insights-panel), [messages pro](https://help.infloww.com/en/articles/262067-getting-started-with-onlyfans-messages-pro), [employee reports](https://help.infloww.com/en/articles/262078-employee-reports), [fan reports](https://help.infloww.com/en/articles/276167-fan-reports), [infloww.com](https://infloww.com/) |
-| **Substy** (best "AI chat agent" match) | "Profiles, lists and conversation context", fan history, PPV sales. Fans auto-classed as Spenders, VIPs, Newbies, Timewasters. Remembers "name, interests, spending history, emotional triggers" (vendor blog) | "Creator and employee statistics". Per chatter: revenue, response rate, average basket (vendor blog) | Not stated. Public API: creators, subscribers, tagged users, conversation webhooks | "Your tone & personality", script and non-script PPVs, auto-replies, objection handling, price negotiation, renewal follow-ups (claim, vendor blog) | [substy.ai](https://substy.ai/), [API docs](https://docs.substy.ai/reference), [blog](https://substy.ai/blog/best-onlyfans-crm-for-agencies-in-2026-the-complete-comparison-guide) |
-| **GenieHelper**¹ (name match only) | Claims 71 fields: total spend, message count, response rate, PPV/tip/custom totals, time-of-day activity, content affinity, sentiment, lifecycle stage, notes, tags, `fan_memories` (pet names, job, city, hobbies, past conversation facts) | `fan_scores`: churn risk, predicted LTV, upsell readiness, loyalty (no formulas). Subscription event log incl. win_back_sent. Dynamic segments | Server-side Playwright with injected session cookies or stored credentials. Profile plus 20 recent posts every 6 h. DM ingestion not described | Local LLMs (Ollama). Per-fan memories injected when drafting. Per-fan persona plus the creator's voice. Retrieval: HyDE + RRF | [fan-crm](https://mintlify.wiki/kismetkanceled/geniehelper/platform/fan-crm), [onlyfans](https://mintlify.wiki/kismetkanceled/geniehelper/integrations/onlyfans), [overview](https://mintlify.wiki/kismetkanceled/geniehelper/platform/overview) |
-| **FlirtFlow** | "Impeccable memory", learns from fan interactions (claim) | Not stated | Connect OnlyFans in their web app; mechanism not stated | Autonomous PPV and custom selling, "drip method" (claim) | [flirtflow.ai](https://www.flirtflow.ai/) |
-| **FansMetric** (definitions only) | n/a | Chat earnings (tips + PPV), messages per hour, messages per fan, Chat AFV (revenue per chatting fan), earnings per hour and per message, fans per hour, unlock ratio, golden ratio (PPVs ÷ all messages) | n/a | n/a | [chatter analytics](https://intercom.help/fansmetric/en/articles/9207508-chatter-analytics) |
+## 7. Open questions for the owner
 
-¹ GenieHelper's docs live on mintlify.wiki under `kismetkanceled/geniehelper`. That looks like an auto-generated wiki
-of a GitHub repo, not a commercial product: no company site was found. Its fan fields are design claims, not a
-shipped service.
+1. Is `loading` revenue counted (booked), or only `done` (settled)?
+2. Should Main (91610731) be re-connected and mined too, or is @isaraee enough?
+3. Which timezone should hour-of-day stats use: the agency's (e.g. Europe/Ljubljana) or the model's?
+4. Is 90 days enough, or should the CLI go further back? It takes any range, but cost grows with chat count.
+5. Which automations or bots send on @isaraee? Their texts make `is_automated` accurate (`--automation <file>`).
+6. May fan text leave this machine later, for example to an LLM for tagging or summaries?
 
-Common pattern: every tool is built on **per-fan spend plus recency** (whale tier, gone quiet, recent buyer). Chatter
-boards share a core: response time, golden ratio, unlock rate, $/hour or $/message. The AI pitch is always
-**per-fan memory** from the chat, a **creator persona** from past outbound text, and **PPV choice, price and
-timing**. No vendor states its history depth. Hypothesis, not checked: per-fan stats over up to 366 days of backfilled
-history, with fan text kept, beat stats that start when the creator is connected.
+## 8. Reference only: what AI chatter tools expose
 
-## 5. Gap list (what they show that we don't, cheapest first)
+Not needed for the data gathering. This is for when the stats get designed.
 
-Tier **A** needs only `message_fact` (SQL on view `m`, or a small route). **B** needs `purchase_fact` filled, after
-checks (a) to (c) in §2. **C** needs a new data source.
-
-| # | Gap | Shown by | What it takes on our data | Tier |
+| Tool | Per-fan data | Metrics | Ingestion / AI | Sources |
 |---|---|---|---|---|
-| 1 | Golden ratio (DM PPVs ÷ DMs) by day and hour | Infloww, FansMetric | `count(*) filter (where is_dm and price_cents>0)::numeric / nullif(count(*) filter (where is_dm), 0)` from `m` (tested) | A |
-| 2 | Fans chatted, messages per fan, active chats per hour | Infloww, FansMetric, Supercreator | `count(distinct chat_id) filter (where is_dm)`, by hour | A |
-| 3 | Recency tags: ❄️ no fan message in 72 h, "gone quiet", last active | Infloww, Supercreator | `lastFanAt` in `/v1/stats/fans` (within the range). "New" needs the subscribe date (tier C) | A |
-| 4 | Each fan's active hours (when to message them) | Supercreator (inferred), GenieHelper | Fan messages per `chat_id` by local hour, top 3 hours | A |
-| 5 | PPV timeline per fan: sent, prices offered, highest and lowest, status | Infloww | Outbound `price_cents>0` per chat. Status uses the unverified `opened` hint | A, then B |
-| 6 | Content stats per media: times sent, opened, average price, re-sell candidates | Supercreator | Group by `media_key` (stored). Unlocks as in row 5 | A, then B |
-| 7 | Creator persona corpus (few-shot examples of how the model writes) | Supercreator, Substy, Infloww Copilot | `/v1/stats/messages?direction=out` CSV, keeping rows with `is_mass=false` and `is_automated=false`. Without that filter, 2,004 of the 7,568 outbound rows in 30 days are mass or automated. Export only | A |
-| 8 | Per-fan memory (name, city, job, kinks, refusals, pet names) | Supercreator, Substy, GenieHelper | An LLM pass over each fan's `direction=in` text. The data is there. Cost: LLM spend and the privacy decision (§6 question 8) | A + LLM |
-| 9 | Spend per fan, LTV, last and highest spend, whale tier, Fan CVR, Chat AFV, $/message, DM sales without mass | All | Group `purchase_fact` by `fan_id`, joined to chats | B |
-| 10 | Verified unlock rate and time from send to unlock | Infloww, Supercreator, FansMetric | Tx-to-PPV link rule (spec §2). `purchase_fact` has no `message_id` column yet | B |
-| 11 | "Converter" credit (last message before payment) | Infloww | `purchase_fact` time plus the previous outbound in that chat | B |
-| 12 | Subscription lifecycle: renewals, expiries, auto-renew, churn and win-back cohorts | Infloww, Supercreator, GenieHelper | `subscriptions/subscribers` / `fans/*` reads. `raw.fromUser` lacks these fields on 1,931 of 1,932 rows | C |
-| 13 | Per-chatter $/hour and sales per shift | Infloww, Supercreator | `send_log` or the Infloww export join, plus shift schedules (spec §5 questions 1 and 2) | C |
-| 14 | Churn-risk and predicted-LTV scores | GenieHelper, Supercreator (claims) | A model on top of 9 and 12. YAGNI until those exist | C |
+| Supercreator (Izzy) | purchases, LTV, spend tier, lists, gone quiet, notes/tags, closing chatter | per chatter $/h, conversion, response time, PPVs; per content unlock rate; churn, whales | apps, history imported on connect; AI learns fan history and creator style, picks PPV, price and timing (claim) | [fan-crm](https://www.supercreator.app/onlyfans-crm/fan-crm), [chatters](https://www.supercreator.app/onlyfans-crm/chatter-management), [analytics](https://www.supercreator.app/onlyfans-crm/revenue-content-analytics), [ai](https://www.supercreator.app/ai-chatter) |
+| Infloww (client's CRM) | spend since added, purchase rate, last/highest spend, subscription, PPV timeline; tags New/🔥/❄️ 72 h/expired | golden ratio, unlock rate, Fan CVR, response time, converter credit | desktop app proxying the session; Copilot beta; event automations | [fan insights](https://help.infloww.com/en/articles/418759-fan-insights-panel), [messages pro](https://help.infloww.com/en/articles/262067-getting-started-with-onlyfans-messages-pro), [employee](https://help.infloww.com/en/articles/262078-employee-reports), [fan reports](https://help.infloww.com/en/articles/276167-fan-reports) |
+| Substy | fan context, Spender/VIP/Newbie/Timewaster classes (vendor blog) | creator and employee stats, response rate, basket | API and webhooks; tone and persona, PPV, negotiation (claim) | [substy.ai](https://substy.ai/), [API](https://docs.substy.ai/reference), [blog](https://substy.ai/blog/best-onlyfans-crm-for-agencies-in-2026-the-complete-comparison-guide) |
+| GenieHelper² | 71 claimed fields, `fan_memories` | churn and LTV scores (no formulas) | Playwright and cookies; local LLM with per-fan memory | [fan-crm](https://mintlify.wiki/kismetkanceled/geniehelper/platform/fan-crm) |
+| FlirtFlow, FansMetric | memory (claim); n/a | n/a; Chat AFV, $/message, unlock ratio, golden ratio | autonomous PPV (claim); n/a | [flirtflow.ai](https://www.flirtflow.ai/), [fansmetric](https://intercom.help/fansmetric/en/articles/9207508-chatter-analytics) |
 
-## 6. Open questions for the owner
+Gaps the stored data can already fill, cheapest first:
 
-1. What is "ai chat agenie"? Send the URL or a screenshot. It is unidentified (§4); GenieHelper and Substy are guesses.
-2. Should Main (91610731) be re-connected so it can join the 90-day mining, or is @isaraee enough?
-3. Which timezone should "best hours" use: the agency's (e.g. Europe/Ljubljana) or the model's?
-4. Is "opened" on a PPV enough to call it bought, or must it match a transaction?
-5. What is the mining for: a dashboard for chatters, training data for an AI chatter, or a pitch? The answer changes
-   which gaps matter.
-6. A fan's unsend (`messages.deleted`) hard-deletes the `message_fact` row. Should it become a soft delete, so the
-   export keeps what the fan wrote and marks it unsent?
-7. Which automations or bots send on @isaraee? Their texts make `is_automated` accurate (`--automation <file>`).
-8. May the full fan text leave the machine, for example to an LLM for tagging or summaries? Today it stays in
-   Postgres and `~/of-capture`.
+1. golden ratio, using `count(*) filter (...)` with `nullif`
+2. fans chatted per hour
+3. recency tags from `lastFanAt`
+4. each fan's active hours
+5. PPV timeline and unlock rate from `isOpened`
+6. per-media stats by `media_key`
+7. spend per fan, LTV, whale tier and converter credit, from `purchase_fact`
+8. a creator persona corpus: outbound rows with `is_mass=false` and `is_automated=false`
+
+These need new data: the subscription lifecycle, per-chatter numbers (`send_log` plus shifts), and predicted scores.
+
+---
+¹ Optional, needs an API key: `curl -fsS -H "Authorization: Bearer $KEY" "localhost:4000/v1/stats/messages?accountId=337749380&from=2026-07-11&to=2026-10-09&format=csv" -o messages-all.csv`.
+² A Mintlify auto-wiki of the GitHub repo `kismetkanceled/geniehelper`, not a commercial product.
