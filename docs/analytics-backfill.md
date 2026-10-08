@@ -74,11 +74,12 @@ pnpm --filter @gateway/api analytics:backfill --account 1001 --from 2026-09-01 -
 relative `--out` is taken from the directory you typed the command in. Keep the folder out of the repo: it holds fan
 ids.
 
-The run reads, in order: mass-message history in one-day windows from the day before `--from` up to now (the chat
+The run reads, in order: the range's transactions (first, so a run that dies during the hours of chat walks still
+stores the money), mass-message history in one-day windows from the day before `--from` up to now (the chat
 walks store messages on both sides of the range, and each outbound message's queue id is looked up there), the
 welcome message, the chat list (most recent first, with `skip_users=none` so each chat carries the fan's username;
 see below), each chat's messages newest first down to the page that reaches
-`--from`, then the range's transactions. Messages on that boundary page older than the mass window (before the day
+`--from`. Messages on that boundary page older than the mass window (before the day
 before `--from`) are stored once and never updated by a later run, since their mass history was not read. Mass history answers
 one page of 100 per window; a full page may have been cut, so that window is split in halves until a page is not
 full, and a full page for an hour or less fails the run.
@@ -137,8 +138,8 @@ within an hour: leave an hour between them, or lower the cap.
 
 Press Ctrl-C. The run stops at once: a request in flight finishes, but a page delay, hourly-cap or 429 wait is cut
 short and no new request is made. It still writes the CSVs from what was stored (`stopped: yes`). A chat whose walk
-was cut short gets no new coverage in `chats.csv`, and transactions are read last, so a stopped run usually has
-none. Ctrl-C a second time quits at once without writing.
+was cut short gets no new coverage in `chats.csv`. Transactions are read first, so a stopped run has them unless it
+stopped within its first few requests. Ctrl-C a second time quits at once without writing.
 
 ## The CSVs
 

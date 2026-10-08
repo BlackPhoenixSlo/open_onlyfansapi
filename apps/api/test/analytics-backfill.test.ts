@@ -198,7 +198,7 @@ afterAll(async () => {
 });
 
 describe('analytics backfill', () => {
-  it('reads mass in day windows from a day before the range to now, the welcome once, chats down to the range, messages down to the boundary, then transactions', async () => {
+  it('reads transactions, then mass in day windows from a day before the range to now, the welcome once, chats down to the range, messages down to the boundary', async () => {
     const start = fake.requests.length;
     const result = await backfill(opts());
     expect(result).toEqual({
@@ -214,6 +214,7 @@ describe('analytics backfill', () => {
       incompleteChats: 1, // 2002: OF ignored the cursor before the walk reached the range start
     });
     expect(ofCalls(start)).toEqual([
+      '/of/payouts/transactions?limit=100&offset=0&startDate=2026-09-01%2000%3A00%3A00',
       '/of/mass-messaging/overview?startDate=2026-08-31+00%3A00%3A00&endDate=2026-08-31+23%3A59%3A59&limit=100',
       '/of/mass-messaging/overview?startDate=2026-09-01+00%3A00%3A00&endDate=2026-09-01+23%3A59%3A59&limit=100',
       '/of/mass-messaging/overview?startDate=2026-09-02+00%3A00%3A00&endDate=2026-09-02+23%3A59%3A59&limit=100',
@@ -228,7 +229,6 @@ describe('analytics backfill', () => {
       // OF ignores the cursor here: the second page adds no new id, so paging stops.
       '/of/chats/2002/messages?limit=100&order=desc',
       '/of/chats/2002/messages?limit=100&order=desc&first_id=202',
-      '/of/payouts/transactions?limit=100&offset=0&startDate=2026-09-01%2000%3A00%3A00',
     ]);
 
     const coverage = await db.select().from(chatCoverage).orderBy(chatCoverage.chatId);
@@ -380,20 +380,20 @@ describe('analytics backfill', () => {
 
   it('stops at once when the signal aborts during a backoff wait', async () => {
     const stop = new AbortController();
-    // 5 mass windows, the welcome, the chat list, chat 2003 (one page), chat 2001's first page; its second gets a 429.
+    // Transactions, 5 mass windows, the welcome, the chat list, chat 2003 (one page), chat 2001's first page; its second gets a 429.
     const p = probe({
       before: (n) => {
-        if (n === 9) Object.assign(fake.state.of!, { rateLimit: 1, retryAfter: '42' });
+        if (n === 10) Object.assign(fake.state.of!, { rateLimit: 1, retryAfter: '42' });
       },
     });
     const run = backfill(opts({ upstream: p.upstream, signal: stop.signal }));
-    await until(() => p.answered() === 10); // the 429 is in, the 42 s wait has begun (real timers)
+    await until(() => p.answered() === 11); // the 429 is in, the 42 s wait has begun (real timers)
     stop.abort();
     const result = await run;
-    expect(result).toMatchObject({ stopped: true, requests: 10, chats: 1, transactions: 0 });
-    expect(p.started).toHaveLength(10);
-    // Chat 2001's walk was cut short, so it records no coverage.
-    expect(await counts()).toMatchObject({ messages: 6, coverage: 1, purchases: 0 });
+    expect(result).toMatchObject({ stopped: true, requests: 11, chats: 1, transactions: 3 });
+    expect(p.started).toHaveLength(11);
+    // Chat 2001's walk was cut short, so it records no coverage; the transactions, read first, are stored.
+    expect(await counts()).toMatchObject({ messages: 6, coverage: 1, purchases: 3 });
   });
 
   it('backs off on 429 for Retry-After, then carries on', async () => {
@@ -409,9 +409,10 @@ describe('analytics backfill', () => {
     await until(() => p.started.length === 2);
     expect(p.started[1]! - p.started[0]!).toBe(42_000);
     vi.useRealTimers();
+    vi.setSystemTime(NOW); // mass history, read after the retried transactions, runs up to NOW
     const result = await run;
     expect(result.requests).toBe(14);
-    expect(ofCalls(start).slice(0, 2)).toEqual([ofCalls(start)[0], ofCalls(start)[0]]); // the same window, retried
+    expect(ofCalls(start).slice(0, 2)).toEqual([ofCalls(start)[0], ofCalls(start)[0]]); // the same request, retried
     expect((await counts()).messages).toBe(12);
   });
 
@@ -459,8 +460,9 @@ describe('analytics backfill', () => {
     await until(() => p.started.length === 2);
     expect(p.started[1]! - p.started[0]!).toBe(1000);
     vi.useRealTimers();
+    vi.setSystemTime(NOW);
     expect(await run).toMatchObject({ requests: 14, retries: 1, messages: 12 });
-    expect(ofCalls(start).slice(0, 2)).toEqual([ofCalls(start)[0], ofCalls(start)[0]]); // the same window, retried
+    expect(ofCalls(start).slice(0, 2)).toEqual([ofCalls(start)[0], ofCalls(start)[0]]); // the same request, retried
   });
 
   it('fails the run on the 4th 502 in a row, after waits of 1, 3 and 9 s', async () => {
@@ -468,7 +470,7 @@ describe('analytics backfill', () => {
     Object.assign(fake.state.of!, { badGateway: 4 });
     const p = probe();
     const run = backfill(opts({ upstream: p.upstream }));
-    const failed = expect(run).rejects.toThrow(/answered 502 to GET \/mass-messaging\/overview/);
+    const failed = expect(run).rejects.toThrow(/answered 502 to GET \/payouts\/transactions/);
     for (const [i, wait] of [1000, 3000, 9000].entries()) {
       await until(() => p.answered() === i + 1);
       await vi.advanceTimersByTimeAsync(wait);

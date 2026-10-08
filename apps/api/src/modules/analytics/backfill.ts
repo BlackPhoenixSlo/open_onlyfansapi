@@ -215,10 +215,10 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
 }
 
 /**
- * Backfills one account's range (spec §4.2): mass history in one-day windows from a day before `from` up to now
- * (the walks store messages on both sides of the range) and the welcome template (both feed the derived columns),
- * then chats newest first and each chat's messages newest first down to the range start, then the range's
- * transactions, all into `store` (`dbStore` upserts, so a re-run never double counts). Paced and capped per account
+ * Backfills one account's range (spec §4.2): first the range's transactions (a few pages, so a long run that dies
+ * still has them), then mass history in one-day windows from a day before `from` up to now (the walks store messages
+ * on both sides of the range) and the welcome template (both feed the derived columns), then chats newest first and
+ * each chat's messages newest first down to the range start, all into `store` (`dbStore` upserts, so a re-run never double counts). Paced and capped per account
  * within the run, backs off on 429, retries transient failures (502, 503, 504, network errors) up to
  * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with `store.finish()`, stopped or not.
  * Throws `SessionExpiredError` when OF answers 401.
@@ -304,6 +304,9 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   }
 
   try {
+    // Transactions first: the chat walks can take hours, and a run that dies (an API restart, an expired session) before
+    // the end would otherwise store no money at all.
+    result.transactions = await readTransactions(get, store, from, to);
     // Mass history from a day before the range up to now: the walks store outbound messages outside the range too.
     const massFrom = from - DAY_MS;
     const mass: Raw[] = [];
@@ -327,7 +330,6 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       result.chats++;
       opts.onProgress?.(result);
     }
-    result.transactions = await readTransactions(get, store, from, to);
   } catch (err) {
     if (!signal?.aborted) throw err;
     result.stopped = true;
