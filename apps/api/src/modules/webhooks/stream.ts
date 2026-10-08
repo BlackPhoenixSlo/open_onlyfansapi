@@ -1,6 +1,9 @@
 import type { ServerResponse } from 'node:http';
+import { desc } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { DashboardFrame, GatewayEvent } from '../../contracts.js';
+import { db } from '../../db/index.js';
+import { event } from '../../db/schema.js';
 import { subscribe, subscribeDeliveries } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
 import { isTeamLinked } from '../../lib/team-link.js';
@@ -15,6 +18,9 @@ export type StreamOptions = {
   maxMs?: number;
 };
 
+/** How many ledger rows `GET /api/webhooks/stream/recent` returns: the Live events card keeps as many. */
+const RECENT_EVENTS = 50;
+
 type Listener = {
   teamId: string;
   /** The workspace link as of connect: only linked workspaces get upstream events. */
@@ -25,8 +31,9 @@ type Listener = {
 
 /**
  * `GET /api/webhooks/stream`: Server-Sent Events of the session workspace's webhook deliveries and upstream events
- * (no replay), fed by the event bus. `POST /api/webhooks/stream/test` pushes one synthetic `webhook.test` event to the
- * caller's workspace. The open streams live in this plugin's closure: one registry per app.
+ * (no replay), fed by the event bus. `GET /api/webhooks/stream/recent` returns the newest ledger events instead, without
+ * payloads, so the Live events card opens with history. `POST /api/webhooks/stream/test` pushes one synthetic
+ * `webhook.test` event to the caller's workspace. The open streams live in this plugin's closure: one registry per app.
  */
 export default async function webhookStreamRoutes(app: FastifyInstance, opts: StreamOptions) {
   const { heartbeatMs = 25_000, maxMs = 10 * 60_000 } = opts;
@@ -78,6 +85,20 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
     };
     listeners.add(listener);
     res.on('close', () => drop(listener));
+  });
+
+  // The ledger has no team id; like the stream, every linked workspace sees every upstream event.
+  app.get('/webhooks/stream/recent', { preHandler: app.requireSession }, async (request) => {
+    if (!(await isTeamLinked(request.session.teamId))) return { events: [] };
+    const rows = await db.select().from(event).orderBy(desc(event.createdAt), desc(event.id)).limit(RECENT_EVENTS);
+    const events: GatewayEvent[] = rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      accountId: r.accountId,
+      ts: r.createdAt.toISOString(),
+      data: null,
+    }));
+    return { events };
   });
 
   app.post('/webhooks/stream/test', { preHandler: app.requireSession }, async (request, reply) => {

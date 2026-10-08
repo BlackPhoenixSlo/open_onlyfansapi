@@ -3,6 +3,7 @@ import type {
   ApiKey,
   DeliveryStatus,
   ErrorBody,
+  GatewayEvent,
   LogDetail,
   LogList,
   LogStatus,
@@ -137,6 +138,12 @@ export const overviewQuery = queryOptions({
 export const webhooksQuery = queryOptions({
   queryKey: ['webhooks'],
   queryFn: () => api<{ items: WebhookEndpoint[] }>('/v1/webhooks'),
+});
+
+/** The newest ledger events (`data: null`) for the Live events card; empty for an unlinked workspace. */
+export const recentEventsQuery = queryOptions({
+  queryKey: ['events', 'recent'],
+  queryFn: () => api<{ events: GatewayEvent[] }>('/api/webhooks/stream/recent'),
 });
 
 export const webhookQuery = (id: string) =>

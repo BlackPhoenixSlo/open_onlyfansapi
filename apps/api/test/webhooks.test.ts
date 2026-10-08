@@ -3,7 +3,8 @@ import { createServer, get } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { pool } from '../src/db/index.js';
+import { db, pool } from '../src/db/index.js';
+import { event } from '../src/db/schema.js';
 import { env } from '../src/env.js';
 import { deleteExpired } from '../src/jobs/retention.js';
 import { eventDescription, WEBHOOK_EVENTS, type WebhookEventInfo } from '../src/contracts.js';
@@ -727,5 +728,42 @@ describe('dashboard delivery stream', () => {
       before.close();
       after.close();
     }
+  });
+
+  it('returns the newest 50 ledger events without payloads to linked workspaces only', async () => {
+    await pool.query('TRUNCATE event');
+    const t0 = Date.parse('2026-10-01T00:00:00.000Z');
+    await db.insert(event).values(
+      Array.from({ length: 51 }, (_, i) => ({
+        id: `evt_recent${String(i).padStart(2, '0')}`,
+        accountId: 7,
+        type: i % 2 ? 'tips.received' : 'messages.received',
+        amountCents: i % 2 ? 100 : null,
+        createdAt: new Date(t0 + i * 1000),
+      })),
+    );
+    // Same time: the id breaks the tie.
+    await db.insert(event).values({ id: 'evt_recent99', accountId: 8, type: 'messages.sent', createdAt: new Date(t0 + 50_000) });
+
+    const noSession = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent' });
+    expect(noSession.statusCode).toBe(401);
+
+    const unlinked = await signUp(app, 'webhooks-recent-unlinked@example.test');
+    const none = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent', headers: { cookie: unlinked.cookie } });
+    expect(none.statusCode).toBe(200);
+    expect(none.json()).toEqual({ events: [] });
+
+    const linked = await signUp(app, 'webhooks-recent-linked@example.test');
+    await linkTeam(linked.teamId);
+    const res = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent', headers: { cookie: linked.cookie } });
+    expect(res.statusCode).toBe(200);
+    const { events } = res.json() as { events: unknown[] };
+    expect(events).toHaveLength(50);
+    expect(events.slice(0, 3)).toEqual([
+      { id: 'evt_recent99', type: 'messages.sent', accountId: 8, ts: '2026-10-01T00:00:50.000Z', data: null },
+      { id: 'evt_recent50', type: 'messages.received', accountId: 7, ts: '2026-10-01T00:00:50.000Z', data: null },
+      { id: 'evt_recent49', type: 'tips.received', accountId: 7, ts: '2026-10-01T00:00:49.000Z', data: null },
+    ]);
+    expect(events.at(-1)).toMatchObject({ id: 'evt_recent02' }); // 52 rows: the two oldest are cut
   });
 });
