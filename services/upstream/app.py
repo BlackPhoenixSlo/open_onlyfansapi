@@ -27,7 +27,11 @@ import config
 import events
 import proxies
 import session_bootstrap
-from deps import ApiError, account_client  # noqa: F401  (tests override it)
+from deps import (  # noqa: F401  (tests override account_client)
+    ApiError,
+    account_client,
+    note_of_response,
+)
 from of_client import OFAPIError, OFClient
 from pump import Hub, Supervisor
 from routes import ROUTERS
@@ -96,7 +100,8 @@ async def _api_error(_req: Request, e: ApiError) -> JSONResponse:
 
 
 @app.exception_handler(OFAPIError)
-async def _of_error(_req: Request, e: OFAPIError) -> JSONResponse:
+async def _of_error(req: Request, e: OFAPIError) -> JSONResponse:
+    note_of_response(req, e.response)
     status = getattr(e.response, "status_code", None) or 502
     return _error(status, "of_error", status=status)
 
@@ -138,7 +143,8 @@ def of_accounts() -> list[dict]:
     """Connected OF accounts. `status`:
     `active` — a frame has been received since the pump started (not proof of live connectivity);
     `connecting` — runnable, pump starting or no frame yet;
-    `session_expired` — OF answered 401 (or a JSON 403); waits for a new session;
+    `session_expired` — OF answered 401 to any call, 400 "Wrong user" (code 301), or a JSON 403
+    to /users/me; waits for a new session (re-connect);
     `no_session` — no captured session; `no_proxy` — no proxy while OF_REQUIRE_PROXY is on.
     """
     rows = []

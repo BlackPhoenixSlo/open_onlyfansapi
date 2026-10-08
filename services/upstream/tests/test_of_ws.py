@@ -111,3 +111,19 @@ def test_cancelling_events_cancels_the_pending_recv(monkeypatch, no_pinger):
         assert asyncio.all_tasks() == {asyncio.current_task()}
 
     asyncio.run(main())
+
+
+def test_wrong_user_on_users_me_raises_session_expired():
+    from of_client import OFAPIError
+
+    body = {"error": {"code": 301, "message": "Wrong user."}}
+    resp = SimpleNamespace(status_code=400, json=lambda: body)
+    client = fake_client()
+    client.me = lambda: (_ for _ in ()).throw(OFAPIError("400", response=resp))
+
+    async def main():
+        async for _ in OFWebSocket(client).events():
+            pass
+
+    with pytest.raises(of_ws.SessionExpired):
+        asyncio.run(main())

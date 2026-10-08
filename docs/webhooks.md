@@ -71,7 +71,7 @@ it validates. **Status** says whether this gateway sends the event:
 | `accounts.connected` | emitted | An account was connected for the first time (`connect.py`) | `{ state, progress, latestAuthAttempt }` |
 | `accounts.reconnected` | emitted | An account that already had a session was connected again | Same as `accounts.connected` |
 | `accounts.disconnected` | never | | |
-| `accounts.session_expired` | emitted | A connected account's session expired; reconnect it | Same as `accounts.connected` |
+| `accounts.session_expired` | emitted | A connected account's session expired: OF answered 401 (or 400 "Wrong user") to any call for it, and its status stays `session_expired`, sent once, until you re-connect it | Same as `accounts.connected` |
 | `accounts.authentication_failed` | never | | |
 | `accounts.otp_code_required` | never | | |
 | `accounts.face_otp_required` | never | | |

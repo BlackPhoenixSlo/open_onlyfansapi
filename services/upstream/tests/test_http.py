@@ -102,6 +102,34 @@ def test_proxy_not_required_when_disabled(routed, monkeypatch, fake):
     assert routed.get("/of/me", headers=H).status_code == 200
 
 
+
+@pytest.mark.parametrize(("status", "body"), [
+    (401, {"error": {"code": 401, "message": "Unauthorized"}}),
+    (400, {"error": {"code": 301, "message": "Wrong user."}}),
+])
+@pytest.mark.parametrize("path", ["/of/chats", "/of/_of/mass-messaging/overview"])
+def test_a_dead_session_reply_on_rest_expires_the_account_once(routed, monkeypatch, fake, status, body, path):
+    events = []
+    monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=events.append))
+    monkeypatch.setattr(client_pool, "get", lambda aid: fake)
+    make_account("100001")
+    for _ in range(2):
+        fake.respond(body, status=status)
+        assert routed.get(path, headers=H).status_code == status
+    assert upstream.supervisor.status("100001") == "session_expired"
+    assert [(e["type"], e["account_id"]) for e in events] == [("accounts.session_expired", 100001)]
+
+
+def test_an_ordinary_400_does_not_expire_the_account(routed, monkeypatch, fake):
+    events = []
+    monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=events.append))
+    monkeypatch.setattr(client_pool, "get", lambda aid: fake)
+    make_account("100001")
+    fake.respond({"error": {"code": 0, "message": "Bad request"}}, status=400)
+    assert routed.get("/of/chats", headers=H).status_code == 400
+    assert upstream.supervisor.blocker("100001") is None and events == []
+
+
 # ─── handlers ──────────────────────────────────────────────────────
 
 SENT_DEFAULTS = {"lockedText": False, "mediaFiles": [], "price": 0, "previews": [],

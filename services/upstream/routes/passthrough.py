@@ -1,7 +1,8 @@
 """Raw passthrough `ANY /of/_of/{path}` to OF's `/api2/v2/{path}` (plan-v5 §2.1).
 
 OF's status, body bytes and content-type come back unchanged; no client header reaches OF
-and no OF header but content-type comes back. No ledger rows, no events.
+and no OF header but content-type comes back. No ledger rows, no events, except that a 401 or 400
+"Wrong user" marks the account session_expired (`deps.note_of_response`).
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from curl_cffi.requests.utils import requote_uri
 from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from deps import ApiError, Client
+from deps import ApiError, Client, note_of_response
 from of_client import API_BASE
 
 _PATH = re.compile(r"[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*")
@@ -63,6 +64,7 @@ async def passthrough(request: Request, client: Client, path: str) -> Response:
     # exactly the request target OF receives (`%7e` becomes `~`, `{` becomes `%7B`).
     url = requote_uri(url)
     r = await run_in_threadpool(client.request, request.method, url, json_body=json_body)
+    note_of_response(request, r)
     content_type = r.headers.get("content-type")
     return Response(r.content, status_code=r.status_code,
                     headers={"content-type": content_type} if content_type else None)

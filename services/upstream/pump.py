@@ -22,7 +22,7 @@ import accounts
 import client_pool
 import events
 import proxies
-from of_ws import OFWebSocket, SessionExpired
+from of_ws import OFWebSocket, SessionExpired, session_refused
 
 log = logging.getLogger("upstream.pump")
 
@@ -146,11 +146,11 @@ class _Pump:
 
 
 def _expired(exc: SessionExpired) -> bool:
-    """A real session expiry: 401, or a 403 with OF's JSON body. An HTML or other
-    403 is Cloudflare or a flagged proxy IP, which a restart (or a new proxy) may fix."""
+    """A real session expiry: 401, 400 "Wrong user", or a 403 with OF's JSON body. An HTML
+    or other 403 is Cloudflare or a flagged proxy IP, which a restart (or a new proxy) may fix."""
     resp = getattr(exc.__cause__, "response", None)
     status = getattr(resp, "status_code", None)
-    if status == 401:
+    if session_refused(resp):
         return True
     if status == 403:
         ctype = (getattr(resp, "headers", None) or {}).get("content-type") or ""
@@ -201,6 +201,21 @@ class Supervisor:
         if pump is not None and pump.key == key and account_id in self._live:
             return "active"
         return "connecting"
+
+    def mark_expired(self, aid: str, key: Key | None = None) -> None:
+        """Mark this session expired and announce `account.session_expired` once per session.
+        `key` is the pump's; None means the current session (a REST call OF refused). The next
+        reconcile stops the pump; a new session (re-connect) clears the mark."""
+        current = self.key(aid)
+        key = key or current
+        if key is None or self._expired.get(aid) == key[0]:
+            return
+        log.warning("session expired account=%s", aid)
+        self._expired[aid] = key[0]
+        if current == key:  # a pump outlived by a new session or proxy announces nothing
+            self.hub.publish(events.account_event(
+                "account.session_expired", int(aid), key[0], "session_expired",
+                events.iso(datetime.now(UTC))))
 
     async def run(self, interval: float = RECONCILE_S) -> None:
         while True:
@@ -256,12 +271,7 @@ class Supervisor:
                 log.warning("account=%s: OF refused the session (%s) without OF's JSON body; "
                             "likely Cloudflare or the proxy IP, retrying on the next reconcile", aid, e)
                 return
-            log.warning("session expired account=%s", aid)
-            self._expired[aid] = key[0]
-            if self.key(aid) == key:  # a pump outlived by a new session or proxy announces nothing
-                self.hub.publish(events.account_event(
-                    "account.session_expired", account_id, key[0], "session_expired",
-                    events.iso(datetime.now(UTC))))
+            self.mark_expired(aid, key)
         except Exception:  # restarted by the next reconcile
             log.exception("pump failed account=%s", aid)
         finally:

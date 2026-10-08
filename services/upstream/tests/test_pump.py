@@ -281,3 +281,41 @@ def test_removed_account_stops_its_pump(evicted, monkeypatch):
         assert src.closed == 1 and sup._pumps == {}
 
     asyncio.run(main())
+
+
+def wrong_user():
+    """SessionExpired from /users/me's 400 `{"error":{"code":301,"message":"Wrong user."}}`."""
+    body = {"error": {"code": 301, "message": "Wrong user."}}
+    resp = SimpleNamespace(status_code=400, headers={"content-type": "application/json"}, json=lambda: body)
+    try:
+        raise SessionExpired("/users/me answered 400") from OFAPIError("400", response=resp)
+    except SessionExpired as e:
+        return e
+
+
+def test_wrong_user_expires_the_session_once(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        src.feeds[0].put_nowait(wrong_user())
+        await settle()
+        assert sup.status("100001") == "session_expired"
+        assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
+        sup.mark_expired("100001")  # a later REST 401 on the same session announces nothing
+        await sup.reconcile()
+        await settle()
+        assert src.starts == ["100001"] and len(hub.frames) == 1
+        await sup.stop()
+
+    asyncio.run(main())
+
+
+def test_a_plain_400_is_not_an_expiry():
+    resp = SimpleNamespace(status_code=400, json=lambda: {"error": {"code": 0, "message": "Bad request"}})
+    try:
+        raise SessionExpired("x") from OFAPIError("400", response=resp)
+    except SessionExpired as e:
+        assert not pump._expired(e)
