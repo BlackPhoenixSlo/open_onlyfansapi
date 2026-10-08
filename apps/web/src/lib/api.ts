@@ -7,6 +7,10 @@ import type {
   LogList,
   LogStatus,
   Overview,
+  StatsGroupBy,
+  StatsMetric,
+  StatsMetricSeries,
+  StatsScripts,
   Usage,
   UsageGroupBy,
   WebhookDeliveryList,
@@ -153,4 +157,28 @@ export const webhookDeliveriesQuery = (id: string, filters: DeliveryFilters) =>
       api<WebhookDeliveryList>(`/v1/webhooks/${encodeURIComponent(id)}/deliveries?${qs({ ...filters, cursor: pageParam })}`),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+
+export type StatsRange = { from?: string; to?: string };
+
+export const statsMetricsQuery = queryOptions({
+  queryKey: ['stats', 'metrics'],
+  queryFn: () => api<{ items: StatsMetric[] }>('/v1/stats/metrics'),
+  staleTime: Infinity,
+});
+
+/** The rows the metric CSV holds; `statsMetricPath(..., 'csv')` is the same request as `text/csv`. */
+export const statsMetricPath = (id: string, params: StatsRange & { groupBy: StatsGroupBy }, format?: 'csv') =>
+  `/v1/stats/metrics/${encodeURIComponent(id)}?${qs({ ...params, format })}`;
+
+export const statsMetricQuery = (id: string, params: StatsRange & { groupBy: StatsGroupBy }) =>
+  queryOptions({
+    queryKey: ['stats', 'metric', id, params],
+    queryFn: () => api<StatsMetricSeries>(statsMetricPath(id, params)),
+  });
+
+export const statsScriptsQuery = (params: StatsRange) =>
+  queryOptions({
+    queryKey: ['stats', 'scripts', params],
+    queryFn: () => api<StatsScripts>(`/v1/stats/scripts?${qs(params)}`),
   });

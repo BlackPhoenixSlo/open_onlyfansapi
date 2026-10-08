@@ -17,6 +17,7 @@ import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
 import { Route as AppKeysRouteImport } from './routes/_app/keys'
 import { Route as AppPlaygroundRouteImport } from './routes/_app/playground'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppStatsRouteImport } from './routes/_app/stats'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as AppLogsIndexRouteImport } from './routes/_app/logs.index'
 import { Route as AppLogsIdRouteImport } from './routes/_app/logs.$id'
@@ -62,6 +63,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStatsRoute = AppStatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppUsageRoute = AppUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
+  '/stats': typeof AppStatsRoute
   '/usage': typeof AppUsageRoute
   '/logs/$id': typeof AppLogsIdRoute
   '/webhooks/$id': typeof AppWebhooksIdRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
+  '/stats': typeof AppStatsRoute
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
   '/logs/$id': typeof AppLogsIdRoute
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/_app/keys': typeof AppKeysRoute
   '/_app/playground': typeof AppPlaygroundRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/stats': typeof AppStatsRoute
   '/_app/usage': typeof AppUsageRoute
   '/_app/': typeof AppIndexRoute
   '/_app/logs/$id': typeof AppLogsIdRoute
@@ -142,6 +151,7 @@ export interface FileRouteTypes {
     | '/keys'
     | '/playground'
     | '/settings'
+    | '/stats'
     | '/usage'
     | '/logs/$id'
     | '/webhooks/$id'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/keys'
     | '/playground'
     | '/settings'
+    | '/stats'
     | '/usage'
     | '/'
     | '/logs/$id'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '/_app/keys'
     | '/_app/playground'
     | '/_app/settings'
+    | '/_app/stats'
     | '/_app/usage'
     | '/_app/'
     | '/_app/logs/$id'
@@ -242,6 +254,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/stats': {
+      id: '/_app/stats'
+      path: '/stats'
+      fullPath: '/stats'
+      preLoaderRoute: typeof AppStatsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/usage': {
       id: '/_app/usage'
       path: '/usage'
@@ -285,6 +304,7 @@ interface AppRouteChildren {
   AppKeysRoute: typeof AppKeysRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppStatsRoute: typeof AppStatsRoute
   AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLogsIdRoute: typeof AppLogsIdRoute
@@ -298,6 +318,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppKeysRoute: AppKeysRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppStatsRoute: AppStatsRoute,
   AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
   AppLogsIdRoute: AppLogsIdRoute,
