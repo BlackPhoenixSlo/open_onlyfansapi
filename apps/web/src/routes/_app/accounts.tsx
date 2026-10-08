@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
+import { RunAnalytics } from '@/features/accounts/RunAnalytics';
 import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
@@ -49,6 +50,7 @@ function Accounts() {
               <TableHead>Label</TableHead>
               <TableHead>ID</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Analytics</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -68,6 +70,7 @@ function Accounts() {
                 <TableCell>
                   <Badge variant="secondary">{a.status}</Badge>
                 </TableCell>
+                <TableCell>{a.status === 'active' && <RunAnalytics accountId={a.id} />}</TableCell>
               </TableRow>
             ))}
           </TableBody>

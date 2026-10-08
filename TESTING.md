@@ -93,8 +93,8 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
    need to capture again. `no_proxy` appears only with `OF_REQUIRE_PROXY=true`.
 6. **Mint two keys.** Go to **API keys**. The secret is shown once.
    - `read` key, allowlist `[<id>]`, named `testing-read`
-   - `write` key, allowlist `[<id>]`, named `testing-write`. This live key, with an allowlist naming the account, is the
-     backfill precondition.
+   - `write` key, allowlist `[<id>]`, named `testing-write`. The dashboard's Run analytics button needs no key; the
+     `analytics:claim` CLI does (a live key whose allowlist names the account).
 7. **Store the keys** in an editor so they stay out of shell history: `mkdir -p /tmp/step0 && umask 077 && nano /tmp/step0/.keys`, with
    `READ=gk_…`, `WRITE=gk_…`, `READ_ID=key_…` and `WRITE_ID=key_…`. Then run `chmod 600 /tmp/step0/.keys`. Load them per shell with
    `set -a; . /tmp/step0/.keys; set +a`. `/tmp/step0/mint.mts` (scratch, not in the repo) mints read keys through
@@ -102,8 +102,8 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
    `npx tsx --env-file-if-exists=../../.env` (check).
 8. **Smoke.** `curl -H "Authorization: Bearer $READ" localhost:4000/v1/whoami` should show the scope and allowlist.
    `curl -H "Authorization: Bearer $READ" localhost:4000/v1/accounts` should list `<id>`.
-9. **Claim for analytics.** `pnpm --filter @gateway/api analytics:claim --team <teamId> --account <id>`. It is idempotent. A
-   different workspace whose keys name the account gets `account_workspace_conflict`.
+9. **Claim for analytics.** Nothing to do here: **Run analytics (30 days)** in §6.1 claims the account for this workspace.
+   Another workspace that already owns it gets `account_workspace_conflict`.
 10. **Second workspace, for the isolation tests.** Register a second user, link its workspace and mint a `read` key with no
     allowlist. Store it as `ISO=gk_…` in the same `.keys` file.
 
@@ -141,12 +141,14 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 
 ## 6. Analytics acceptance against the real model
 
-1. **30-day backfill.** `--to` is exclusive, so tomorrow includes today. Leave the pacing variables unset (600/h cap):
-   ```sh
-   pnpm --filter @gateway/api analytics:backfill --account <id> --from <today-30d> --to <tomorrow> --out /tmp/step0/last30-<date>
-   ```
-   The reference run (2026-09-06..10-06) took 259 requests in 12 min, with 87 chats, 9150 messages, 1286 turns and 7 incomplete chats.
-   Leave an hour before the next run: each run counts its cap from zero. Ctrl-C stops the run and still writes CSVs.
+1. **30-day backfill.** On **Accounts**, press **Run analytics (30 days)** on the account's row. It claims the account,
+   then backfills the last 30 days in the API process. The row shows `Running… N chats, M messages` (polled every 3 s),
+   then `Done · view Stats` (opens Stats for that account) or the error. Leave the pacing variables unset (600/h cap).
+   The reference run (2026-09-06..10-06, CLI) took 259 requests in 12 min, with 87 chats, 9150 messages, 1286 turns and 7 incomplete chats.
+   Leave an hour before the next run: each run counts its cap from zero. Restarting the API ends a run and forgets its
+   status (stored rows stay; press the button again). For CSVs (step 3), `--automation` or `--dry-run`, use the CLI:
+   `pnpm --filter @gateway/api analytics:backfill --account <id> --from <today-30d> --to <tomorrow> --out /tmp/step0/last30-<date>`
+   (`--to` is exclusive; Ctrl-C stops it and still writes the CSVs).
 2. **Morning check.** Run the openers and scripts CLIs over the same range (§5). Log in to OF and check every row per
    `docs/analytics.md` "Morning checklist". Write the verdict, OK or wrong for each row with its chat id, message id and what OF shows,
    to `/tmp/step0/morning-verdict.md`. The earlier passes looked for that file (check).

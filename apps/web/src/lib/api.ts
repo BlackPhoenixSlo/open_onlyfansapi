@@ -7,6 +7,7 @@ import type {
   LogList,
   LogStatus,
   Overview,
+  StatsBackfillRun,
   StatsConfig,
   StatsFreshness,
   StatsGroupBy,
@@ -188,4 +189,11 @@ export const statsScriptsQuery = (params: StatsRange) =>
   queryOptions({
     queryKey: ['stats', 'scripts', params],
     queryFn: () => api<StatsScripts>(`/v1/stats/scripts?${qs(params)}`),
+  });
+
+/** The account's last analytics backfill run (`POST /v1/stats/backfill`), or `idle`. */
+export const statsBackfillQuery = (accountId: number) =>
+  queryOptions({
+    queryKey: ['stats', 'backfill', accountId],
+    queryFn: () => api<StatsBackfillRun>(`/v1/stats/backfill?${qs({ accountId })}`),
   });

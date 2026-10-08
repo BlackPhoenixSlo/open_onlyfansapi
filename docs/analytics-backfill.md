@@ -2,11 +2,36 @@
 
 Step 0 of the [client stats ask](spec/future-client-story-ask.md#6-first-slice-account-and-shift-performance): read one
 account's past week from OnlyFans through the upstream, store it, write it to CSV, and diff it against the client's
-Infloww export. The backfill runs from the command line only; the stats routes over what it stores (reply time,
-openers, scripts) are in [analytics.md](analytics.md). Every row belongs to one workspace, and a workspace's key never
-sees another workspace's rows.
+Infloww export. The backfill runs from the dashboard or the command line; the stats routes over what it stores (reply
+time, openers, scripts) are in [analytics.md](analytics.md). Every row belongs to one workspace, and a workspace's key
+never sees another workspace's rows.
 
-Three commands, all run from the repo root:
+## From the dashboard
+
+The usual path. On **Accounts**, each `active` account has **Run analytics (30 days)**. It calls
+`POST /v1/stats/backfill` ([analytics.md](analytics.md#routes)), which:
+
+1. checks the account is in the workspace's account list (`GET /v1/accounts`; for a key, within its allowlist), so no
+   key naming the account is needed;
+2. claims the account for the workspace (once; `409 account_workspace_conflict` if another workspace owns it);
+3. starts the backfill of the last 30 days, now minus 30 days to now, inside the API process, and answers at once.
+
+The row then polls `GET /v1/stats/backfill` every 3 s and shows `Running… N chats, M messages`, then
+`Done · view Stats` (Stats for that account) or the error. The run is the CLI's backfill without CSVs, with the same
+pacing, hourly cap and 429 backoff ([Request budget](#request-budget)), and it ends by syncing script candidates.
+
+Limits:
+
+- **One run per account at a time** (`409 backfill_running`), and one account at a time per API process: a second
+  account's run shows `Queued…` until the first ends. A CLI run is a separate process and is not counted.
+- **The status is in memory.** Restarting the API ends a run in flight and forgets its status (the account shows the
+  button again). The rows already stored stay; press the button again (rows upsert, it requests everything again).
+- **No stop button.** A run ends on its own, on an error, or with the API process.
+
+## From the command line
+
+The CLI stays for `--dry-run`, `--automation <file>`, a range other than the last 30 days, and the CSVs (for the
+Infloww diff). Three commands, all run from the repo root:
 
 | Command | What it does |
 |---|---|
@@ -31,8 +56,9 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
 3. **Link the workspace** if it is not linked yet: `pnpm --filter @gateway/api link-team <workspace-slug>`. It prints
    the workspace id (`linked workspace <slug> (<teamId>)`), which the other commands take.
-4. **Allow the account on a key.** The workspace needs a live API key whose account allowlist names the account
-   (Dashboard → API keys). An account named by another workspace's keys is refused with `account_workspace_conflict`.
+4. **Allow the account on a key** (CLI only: the dashboard button needs neither this nor step 5). The workspace needs a
+   live API key whose account allowlist names the account (Dashboard → API keys); `analytics:backfill` checks it on
+   every run that stores rows. An account named by another workspace's keys is refused with `account_workspace_conflict`.
 5. **Claim the account:** `analytics:claim --team <teamId> --account <id>`. It is idempotent. Once claimed,
    `analytics:backfill` finds the workspace itself, so `--team` is optional.
 

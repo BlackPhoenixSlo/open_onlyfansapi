@@ -401,6 +401,35 @@ export type StatsFreshness = z.infer<typeof statsFreshness>;
 /** `GET /v1/stats/config`: the config and the stats' freshness. */
 export const statsConfigGetResponse = statsConfigResponse.extend({ freshness: statsFreshness });
 
+/** `POST /v1/stats/backfill`: claim the account for the workspace and backfill the last `days` days in the background. */
+export const statsBackfillBody = z.object({
+  accountId: z.number().int().positive(),
+  days: z.number().int().min(1).max(366).default(30),
+});
+export const statsBackfillStarted = z.object({ runId: z.string() });
+export const statsBackfillQuery = z.object({ accountId: z.coerce.number().int().positive() });
+/** `GET /v1/stats/backfill`: the account's last dashboard run since the API started, or `idle`. Times are ISO. */
+export const statsBackfillRun = z.union([
+  z.object({ status: z.literal('idle') }),
+  z.object({
+    status: z.enum(['queued', 'running', 'done', 'error']),
+    runId: z.string(),
+    accountId: z.number().int(),
+    from: z.string(),
+    to: z.string(),
+    startedAt: z.string(),
+    finishedAt: z.string().nullable(),
+    /** Upstream requests made, 429s included. */
+    requests: z.number().int(),
+    /** Chats walked. */
+    chats: z.number().int(),
+    /** Messages stored. */
+    messages: z.number().int(),
+    error: z.string().nullable(),
+  }),
+]);
+export type StatsBackfillRun = z.infer<typeof statsBackfillRun>;
+
 /** `PUT /v1/stats/config`: only the given fields change. */
 export const putStatsConfigBody = z.object({
   replyCapSeconds: windowSeconds.optional(),

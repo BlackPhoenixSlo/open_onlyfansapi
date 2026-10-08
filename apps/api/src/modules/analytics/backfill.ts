@@ -30,6 +30,10 @@ export type BackfillOptions = {
   signal?: AbortSignal;
   /** A dry run: the rows read are added here and nothing is stored (no claim, rows, coverage or script sync). */
   rows?: BackfillRows;
+  /** The caller already recorded the account as the workspace's (`assignAccount`): skip the key check of `claimAccount`. */
+  claimed?: boolean;
+  /** Called after each upstream request and each chat walk with the counts so far. */
+  onProgress?: (result: Readonly<BackfillResult>) => void;
 };
 
 /** What a dry run read: every message walked (both sides of the range), each chat's walk, the range's transactions. */
@@ -116,7 +120,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
   const cfg = backfillConfig(opts.config);
   const sink = opts.rows ?? null;
-  if (!sink) await claimAccount(teamId, accountId);
+  if (!sink && !opts.claimed) await claimAccount(teamId, accountId);
 
   const result: BackfillResult = {
     stopped: false,
@@ -164,6 +168,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       } finally {
         lastDone = Date.now();
         result.requests++;
+        opts.onProgress?.(result);
       }
       if (res.status === 429 && attempt < cfg.maxRetries) {
         await sleep(retryDelay(res.headers.get('retry-after'), attempt, cfg), undefined, { signal });
@@ -196,6 +201,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       result.unmatchedQueueIds = unmatched.size;
       if (walk.incomplete) result.incompleteChats++;
       result.chats++;
+      opts.onProgress?.(result);
     }
     result.transactions = await readTransactions(get, teamId, accountId, from, to, sink);
   } catch (err) {

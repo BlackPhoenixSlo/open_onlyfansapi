@@ -3,6 +3,8 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { accountList, type Account } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
+import type { Upstream } from '../../lib/upstream.js';
+import type { Actor } from '../../plugins/actor.js';
 
 type UpstreamAccount = {
   id: number;
@@ -34,6 +36,15 @@ function parseAccounts(body: Buffer): UpstreamAccount[] | null {
   }
 }
 
+/** The accounts the actor sees in `GET /v1/accounts`: the upstream's list, narrowed to a key's allowlist. 502 when it fails. */
+export async function connectedAccounts(upstream: Upstream, actor: Actor, requestId: string): Promise<UpstreamAccount[]> {
+  const res = await upstream.listAccounts(requestId);
+  const rows = res.ok ? parseAccounts(res.body) : null;
+  if (!rows) throw new AppError(502, 'upstream_error', `The upstream answered ${res.status} for the account list`);
+  const allowed = actor.accountIds;
+  return rows.filter((a) => !allowed || allowed.includes(a.id));
+}
+
 export default async function accountsRoutes(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().get(
     '/accounts',
@@ -41,11 +52,7 @@ export default async function accountsRoutes(app: FastifyInstance) {
     async (request) => {
       const { actor } = request;
       await assertTeamLinked(actor.teamId);
-      const res = await app.upstream.listAccounts(request.id);
-      const rows = res.ok ? parseAccounts(res.body) : null;
-      if (!rows) throw new AppError(502, 'upstream_error', `The upstream answered ${res.status} for the account list`);
-      const allowed = actor.accountIds;
-      return { items: rows.filter((a) => !allowed || allowed.includes(a.id)).map(toAccount) };
+      return { items: (await connectedAccounts(app.upstream, actor, request.id)).map(toAccount) };
     },
   );
 }

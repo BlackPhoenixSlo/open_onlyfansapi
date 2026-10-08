@@ -13,7 +13,8 @@ certain.
 ## Routes
 
 All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or the dashboard session, as for
-[`/v1/stats`](authentication.md). They read the analytics tables only and never call the upstream.
+[`/v1/stats`](authentication.md). They read the analytics tables only and never call the upstream, except
+`POST /v1/stats/backfill`, which runs the [backfill](analytics-backfill.md#from-the-dashboard).
 
 | Route | What it returns |
 |---|---|
@@ -23,6 +24,8 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/config` | The workspace's windows and timezone, and `freshness` ([Live updates](#live-updates)). The first read creates the default row |
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
+| `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
+| `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `requests`, `chats` (walked), `messages` (stored), `error`; or `{ "status": "idle" }` |
 
 Query parameters:
 
@@ -50,7 +53,10 @@ Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a d
   even with `accountId` set to the first workspace's account.
 - **Key allowlist.** A key with an account allowlist sees only those accounts; a key without one sees all of its
   workspace's accounts. `accountId` outside the allowlist is `403 account_not_allowed`.
-- **Write scope.** `PUT /v1/stats/config` with a read-only key is `403 insufficient_scope`.
+- **Write scope.** `PUT /v1/stats/config` and `POST /v1/stats/backfill` with a read-only key are `403 insufficient_scope`.
+- **Backfill.** `POST /v1/stats/backfill` takes an account the caller sees in `GET /v1/accounts` (else `404 not_found`);
+  one another workspace owns is `409 account_workspace_conflict`, and one with a run queued or running is
+  `409 backfill_running`. `GET /v1/stats/backfill` shows only the caller's workspace's runs.
 
 ## Live updates
 

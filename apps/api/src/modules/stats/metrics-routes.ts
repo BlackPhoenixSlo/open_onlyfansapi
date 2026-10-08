@@ -3,6 +3,10 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   putStatsConfigBody,
+  statsBackfillBody,
+  statsBackfillQuery,
+  statsBackfillRun,
+  statsBackfillStarted,
   statsConfigGetResponse,
   statsConfigResponse,
   statsMetricList,
@@ -35,10 +39,13 @@ import {
   zonedToday,
   type MetricId,
 } from '../analytics/metrics.js';
+import { connectedAccounts } from '../accounts/routes.js';
+import { backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
+import { assignAccount } from '../analytics/workspace.js';
 import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
@@ -68,7 +75,7 @@ const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.en
 const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
 
 /**
- * `/v1/stats/metrics`, `/v1/stats/scripts` and `/v1/stats/config` (spec §4.6): reply time, reply SLA, openers and
+ * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6) and `/v1/stats/backfill`: reply time, reply SLA, openers and
  * script candidates over the workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
@@ -147,6 +154,33 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     config: await getStatsConfig(request.actor.teamId),
     freshness: await freshness(request.actor.teamId, scopedAccounts(request.actor, undefined)),
   }));
+
+  r.post(
+    '/stats/backfill',
+    { schema: { tags, body: statsBackfillBody, response: { 202: statsBackfillStarted } } },
+    async (request, reply) => {
+      const { actor, body } = request;
+      scopedAccounts(actor, body.accountId);
+      const connected = await connectedAccounts(app.upstream, actor, request.id);
+      if (!connected.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
+      await assignAccount(actor.teamId, body.accountId);
+      const to = new Date();
+      const runId = startBackfillRun({
+        upstream: app.upstream,
+        teamId: actor.teamId,
+        accountId: body.accountId,
+        from: new Date(to.getTime() - body.days * DAY_MS),
+        to,
+      });
+      return reply.status(202).send({ runId });
+    },
+  );
+
+  r.get('/stats/backfill', { schema: { tags, querystring: statsBackfillQuery, response: { 200: statsBackfillRun } } }, async (request) => {
+    const { actor, query } = request;
+    scopedAccounts(actor, query.accountId);
+    return backfillRun(actor.teamId, query.accountId);
+  });
 
   r.put('/stats/config', { schema: { tags, body: putStatsConfigBody, response: { 200: statsConfigResponse } } }, async (request) => ({
     config: await putStatsConfig(request.actor.teamId, request.body),

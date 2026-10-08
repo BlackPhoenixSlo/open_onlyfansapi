@@ -22,6 +22,15 @@ export async function claimAccount(teamId: string, accountId: number): Promise<v
   if (teams.length > 1) {
     throw new AppError(409, 'account_workspace_conflict', `Account ${accountId} is named by more than one workspace's keys`);
   }
+  await assignAccount(teamId, accountId);
+}
+
+/**
+ * Records that `accountId` belongs to `teamId` without the key check: for a caller that checked the account
+ * otherwise (`POST /v1/stats/backfill`: the account is connected). Idempotent; 409 `account_workspace_conflict`
+ * when another workspace owns it.
+ */
+export async function assignAccount(teamId: string, accountId: number): Promise<void> {
   await db.insert(accountWorkspace).values({ accountId, teamId }).onConflictDoNothing();
   const [row] = await db.select().from(accountWorkspace).where(eq(accountWorkspace.accountId, accountId));
   if (row?.teamId !== teamId) {
