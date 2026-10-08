@@ -7,6 +7,7 @@ import type {
   LogList,
   LogStatus,
   Overview,
+  StatsConfig,
   StatsGroupBy,
   StatsMetric,
   StatsMetricSeries,
@@ -159,7 +160,12 @@ export const webhookDeliveriesQuery = (id: string, filters: DeliveryFilters) =>
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 
-export type StatsRange = { from?: string; to?: string };
+export type StatsRange = { from?: string; to?: string; accountId?: number };
+
+export const statsConfigQuery = queryOptions({
+  queryKey: ['stats', 'config'],
+  queryFn: () => api<{ config: StatsConfig }>('/v1/stats/config'),
+});
 
 export const statsMetricsQuery = queryOptions({
   queryKey: ['stats', 'metrics'],
