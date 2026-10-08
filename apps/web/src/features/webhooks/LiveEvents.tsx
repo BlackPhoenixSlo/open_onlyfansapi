@@ -1,10 +1,11 @@
 import type { GatewayEvent } from '@api/contracts';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { api, recentEventsQuery } from '@/lib/api';
+import { accountsQuery, api, recentEventsQuery } from '@/lib/api';
 import { subscribe, useStreamOpen } from '@/lib/dashboard-stream';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +19,8 @@ export function LiveEvents() {
   const [items, setItems] = useState<GatewayEvent[]>([]);
   const [hideHistory, setHideHistory] = useState(false);
   const recent = useQuery(recentEventsQuery);
+  const accounts = useQuery(accountsQuery);
+  const accountName = new Map(accounts.data?.items.map((a) => [a.id, a.label ?? (a.username ? `@${a.username}` : null)]));
   const open = useStreamOpen();
   useEffect(
     () =>
@@ -68,11 +71,14 @@ export function LiveEvents() {
           <ul className="divide-y text-xs">
             {shown.map((e) => (
               <li key={e.id}>
-                <details>
-                  <summary className="flex cursor-pointer gap-4 py-1.5">
+                <details className="group">
+                  <summary className="flex cursor-pointer items-center gap-4 py-1.5 hover:bg-muted/50">
+                    <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
                     <span className="w-20 shrink-0 text-muted-foreground tabular-nums">{new Date(e.ts).toLocaleTimeString()}</span>
                     <span className="min-w-0 flex-1 truncate font-mono">{e.type}</span>
-                    <span className="shrink-0 text-muted-foreground">{e.accountId === null ? '—' : `account ${e.accountId}`}</span>
+                    <span className="shrink-0 text-muted-foreground" title={e.accountId === null ? undefined : `account ${e.accountId}`}>
+                      {e.accountId === null ? '—' : (accountName.get(e.accountId) ?? `account ${e.accountId}`)}
+                    </span>
                   </summary>
                   {liveIds.has(e.id) ? (
                     <pre className="mb-2 max-h-64 overflow-auto rounded-md bg-muted p-2">{JSON.stringify(e.data, null, 2)}</pre>

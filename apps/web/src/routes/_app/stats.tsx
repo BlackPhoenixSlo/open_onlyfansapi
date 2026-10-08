@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { COLORS, Chart } from '@/features/stats/chart';
+import { BackfillNotice } from '@/features/stats/BackfillNotice';
 import { HowToRead } from '@/features/stats/explainers';
 import {
   HOURS,
@@ -185,6 +186,7 @@ function Stats() {
             {liveLine(config.data.freshness)}
           </p>
         )}
+        {search.accountId !== undefined && <BackfillNotice accountId={search.accountId} />}
       </div>
 
       {config.isError && <ErrorCard message={config.error.message} />}
