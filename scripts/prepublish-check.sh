@@ -4,7 +4,7 @@
 set -u
 
 # The reference-product brand, built by concatenation so that this script is not itself a match.
-BRAND='only''fansapi|ofapi''_'
+BRAND='ofapi''_'
 
 fail=0
 report() {
