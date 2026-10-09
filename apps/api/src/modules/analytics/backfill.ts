@@ -79,8 +79,6 @@ export type BackfillResult = {
   transactions: number;
   /** A welcome message is set on the account. */
   welcome: boolean;
-  /** Distinct queue ids on outbound messages from the mass window on that mass history does not list: every OF message has a queue id, so this counts DMs mostly, not an anomaly. */
-  unmatchedQueueIds: number;
   /** Chats whose walk stopped on a page with no new id before reaching back to `from` (nor to the chat's start). */
   incompleteChats: number;
 };
@@ -111,11 +109,11 @@ export function retryDelay(retryAfter: string | null, attempt: number, cfg: Pick
   return Math.min(ms, cfg.backoffMaxMs);
 }
 
-/** `set` for an upsert: every column not named in `key` (the primary key, and any column to keep) takes the incoming row's value. */
-function updateAll(table: PgTable, key: string[]): Record<string, SQL> {
+/** `set` for an upsert: every column not named in `keep` (the primary key, and any column to keep) takes the incoming row's value. */
+function updateAll(table: PgTable, keep: string[]): Record<string, SQL> {
   return Object.fromEntries(
     Object.entries(getTableColumns(table))
-      .filter(([name]) => !key.includes(name))
+      .filter(([name]) => !keep.includes(name))
       .map(([name, col]) => [name, sql.raw(`excluded."${col.name}"`)]),
   );
 }
@@ -161,7 +159,7 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
           .values(tail.map((r) => ({ ...owned, ...r })))
           .onConflictDoUpdate({
             target: [messageFact.accountId, messageFact.messageId],
-            set: { ...updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']), deletedAt: null },
+            set: updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']),
           });
       }
     },
@@ -247,7 +245,6 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     broadcasts: 0,
     transactions: 0,
     welcome: false,
-    unmatchedQueueIds: 0,
     incompleteChats: 0,
   };
   /** This run's request start times in the last hour: the hourly cap is per run, not shared across runs. */
@@ -324,12 +321,9 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     result.welcome = welcome !== null && typeof welcome === 'object';
     const ctx = deriveContext(accountId, mass, result.welcome ? welcome : null, cfg.automationTexts);
 
-    const unmatched = new Set<number>();
     for (const chat of await listChats(get, from)) {
       const walk = await walkChat(get, store, ctx, chat, from, massFrom);
       result.messages += walk.messages;
-      for (const q of walk.unmatchedQueueIds) unmatched.add(q);
-      result.unmatchedQueueIds = unmatched.size;
       if (walk.incomplete) result.incompleteChats++;
       result.chats++;
       opts.onProgress?.(result);
@@ -408,9 +402,8 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
  * Pages one chat newest first with `first_id=<oldest id seen>` (OF's `id`), never `x-next-page`: OF returns short
  * pages before the end. Stops on `hasMore` false (the chat's start), a page with no new id, or the first page
  * reaching before `from` (the boundary page). Each page goes to `store`, split at `massFrom` (the boundary page's
- * tail before it was derived without its mass history), then the walk's coverage. Returns the messages read, the
- * queue ids from `massFrom` on that mass history does not list, and whether the store's coverage still falls short
- * of `from`.
+ * tail before it was derived without its mass history), then the walk's coverage. Returns the messages read and
+ * whether the store's coverage still falls short of `from`.
  */
 async function walkChat(
   get: Get,
@@ -419,10 +412,9 @@ async function walkChat(
   chat: Chat,
   from: number,
   massFrom: number,
-): Promise<{ messages: number; unmatchedQueueIds: number[]; incomplete: boolean }> {
+): Promise<{ messages: number; incomplete: boolean }> {
   const chatId = chat.id;
   const seen = new Set<string | number>();
-  const unmatched = new Set<number>();
   let fanUsername = chat.username;
   let oldest: { id: number; at: Date } | null = null;
   let reachedStart = false;
@@ -438,9 +430,6 @@ async function walkChat(
     if (rows.length === 0) break;
     const covered = rows.filter((r) => r.createdAt.getTime() >= massFrom);
     const tail = rows.filter((r) => !(r.createdAt.getTime() >= massFrom));
-    for (const r of covered) {
-      if (r.direction === 'outbound' && r.queueId !== null && !ctx.massSent.has(r.queueId)) unmatched.add(r.queueId);
-    }
     for (const r of rows) {
       const fan = Number((r.raw.fromUser as Raw | undefined)?.id) === chatId ? r.raw.fromUser : r.raw.toUser;
       fanUsername ??= username(fan);
@@ -466,7 +455,7 @@ async function walkChat(
     walkedAt: new Date(),
   });
   const incomplete = !merged.reachedStart && merged.oldestAt !== null && merged.oldestAt.getTime() > from;
-  return { messages: seen.size, unmatchedQueueIds: [...unmatched], incomplete };
+  return { messages: seen.size, incomplete };
 }
 
 /**

@@ -19,7 +19,7 @@ Ordered by cost, after the owner's answer that all data is stored first and stat
 
 1. No code: re-derive the 10-09 02:39 UTC bulk send (likely mass, now 321 DMs) with a backfill over 2026-10-09..10-10.
 2. No code: re-read transactions before reporting money, because `loading` rows settle over time (this doc §3).
-3. No code: capture one live `messages.sent` payload and check `queueId` and `isFromQueue` (this doc §2, bug 2).
+3. Done, no capture needed: live outbound rows are mass when `isFromQueue` is true (this doc §2, bug 2).
 4. SQL only: the bulk-send label in view `m` (this doc §3, caveat 2), a prerequisite for every DM-based metric.
 5. New table: store the mass-history rows each backfill already reads; mass performance cannot come from chats.
 6. Then the stats of this doc §5, cost 0 first.
@@ -38,6 +38,10 @@ Ordered by cost, after the owner's answer that all data is stored first and stat
    `messages.deleted`. So whether live outbound payloads carry `queueId` is unknown; if they do, each live DM stays
    mass until a backfill re-derives it. `isFromQueue` is true on 6,404 of 6,404 mass rows and on 322 non-mass
    outbound rows, 321 of them the 10-09 bulk send (this doc §3, caveat 2).
+   **Resolved after 0e9ae31 (review-loop round 2): live rows use `isFromQueue`.** On both live accounts (2026-10-09)
+   it is true on 6,512 of 6,512 mass rows and on 733 non-mass outbound rows: 683 share a queue id across 2 to 321
+   chats (broadcasts the mass history missed), 50 are single-chat queued sends. Residual: those ~0.2% of DMs (50 of
+   26,133) count as mass until the next backfill over their range.
 
 ## 3. Data in hand
 
@@ -176,8 +180,8 @@ last column is reference only (handoff §8), not a ranking input.
 **Retired:** predicted churn and LTV scores (66 payers are too few; YAGNI); drop-off, session length and win-back,
 now handoff §5 items 6, 8 and 9 (this doc §4); the bulk-send label, now a prerequisite (this doc §1 item 4).
 
-**Follow-ups** (code, not designed here): count only queue ids seen in 2+ chats in the backfill's counter; re-read
-mass history before a backfill ends; decide live mass by `isFromQueue` if bug 2 holds; add handoff §5 item 10 to the kit.
+**Follow-ups** (code, not designed here): re-read mass history before a backfill ends; add handoff §5 item 10 to the
+kit. Live mass by `isFromQueue` is done (this doc §2, bug 2); the backfill's unmatched-queue counter was removed.
 
 ## 6. Main (91610731) from stored rows
 

@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { asc, eq } from 'drizzle-orm';
+import { asc, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
@@ -139,11 +139,17 @@ describe('analytics live updates', () => {
     expect([row!.deletedAt, row!.priceCents, row!.isOpened, row!.isMass, row!.isAutomated, row!.automatedReason]).toEqual([null, 999, true, false, false, null]);
   });
 
-  it('a live outbound message is not mass, queueId and isFromQueue or not, until a backfill re-derives it', async () => {
+  it('a live outbound message is mass when isFromQueue is true, until a backfill re-derives it; a plain one is not', async () => {
     await ingestFrame(messageFrame({ ...outbound, id: 111, queueId: 900, isFromQueue: true, toUser: FAN }), log);
-    const [row] = await db.select().from(messageFact).where(eq(messageFact.messageId, 111));
-    expect(row).toMatchObject({ chatId: FAN.id, direction: 'outbound', isMass: false, queueId: 900, isAutomated: false });
-    await db.delete(messageFact).where(eq(messageFact.messageId, 111));
+    await ingestFrame(messageFrame({ ...outbound, id: 112, queueId: 901, isFromQueue: false, toUser: FAN }), log);
+    await ingestFrame(messageFrame({ ...inbound, id: 113, isFromQueue: true }), log);
+    const rows = await db.select().from(messageFact).where(inArray(messageFact.messageId, [111, 112, 113])).orderBy(asc(messageFact.messageId));
+    expect(rows).toMatchObject([
+      { chatId: FAN.id, direction: 'outbound', isMass: true, queueId: 900, isAutomated: false },
+      { chatId: FAN.id, direction: 'outbound', isMass: false, queueId: 901, isAutomated: false },
+      { chatId: FAN.id, direction: 'inbound', isMass: false },
+    ]);
+    await db.delete(messageFact).where(inArray(messageFact.messageId, [111, 112, 113]));
   });
 
   it('an unclaimed account gets no row; the event is still ingested', async () => {

@@ -210,7 +210,6 @@ describe('analytics backfill', () => {
       broadcasts: 3,
       transactions: 3,
       welcome: true,
-      unmatchedQueueIds: 0,
       incompleteChats: 1, // 2002: OF ignored the cursor before the walk reached the range start
     });
     expect(ofCalls(start)).toEqual([
@@ -284,24 +283,24 @@ describe('analytics backfill', () => {
     ]);
   });
 
-  it('reads mass history outside the range too, and counts queue ids it does not list', async () => {
+  it('reads mass history outside the range too; a queue id it does not list is not mass', async () => {
     const of = fake.state.of!;
     of.messages[2001]!.find((m) => m.id === 105)!.queueId = 903; // before the range
     of.messages[2001]!.find((m) => m.id === 110)!.queueId = 999; // in no mass history
     of.messages[2003]!.unshift(msg(304, '09-04T10:00', ACCOUNT, { queueId: 904 })); // after the range
     of.mass.push({ id: 903, date: '2026-08-31T20:00:00Z', sentCount: 30 }, { id: 904, date: '2026-09-04T10:00:00Z', sentCount: 12 });
     const result = await backfill(opts());
-    expect(result).toMatchObject({ broadcasts: 5, unmatchedQueueIds: 1 });
+    expect(result).toMatchObject({ broadcasts: 5 });
     const byId = Object.fromEntries((await db.select().from(messageFact)).map((r) => [r.messageId, r]));
     expect([byId[105]!.isMass, byId[304]!.isMass, byId[110]!.isMass, byId[110]!.queueId]).toEqual([true, true, false, 999]);
   });
 
-  it('never re-derives the mass flag of messages older than the mass window, and counts none of their queue ids', async () => {
+  it('never re-derives the mass flag of messages older than the mass window', async () => {
     const of = fake.state.of!;
     of.pageCap = 4; // chat 2001's boundary page now reaches 101 (2026-08-20), before the mass window (from 08-31)
     Object.assign(of.messages[2001]!.find((m) => m.id === 101)!, { fromUser: { id: ACCOUNT }, queueId: 905 });
     of.mass.push({ id: 905, date: '2026-08-20T10:00:00Z', sentCount: 50 }); // outside the windows read
-    expect(await backfill(opts())).toMatchObject({ unmatchedQueueIds: 0 });
+    await backfill(opts());
     const stored = async () => (await db.select().from(messageFact).where(eq(messageFact.messageId, 101)))[0]!;
     expect(await stored()).toMatchObject({ direction: 'outbound', queueId: 905, isMass: false });
 
@@ -309,7 +308,7 @@ describe('analytics backfill', () => {
     await backfill(opts({ from: new Date('2026-08-15T00:00:00.000Z') }));
     expect((await stored()).isMass).toBe(true);
     of.messages[2001]!.find((m) => m.id === 101)!.text = '<p>edited</p>';
-    expect(await backfill(opts())).toMatchObject({ unmatchedQueueIds: 0 });
+    await backfill(opts());
     expect(await stored()).toMatchObject({ isMass: true, raw: expect.objectContaining({ text: '<p>edited</p>' }) });
   });
 

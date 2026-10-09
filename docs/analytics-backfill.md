@@ -95,11 +95,8 @@ one page with no chat active since `--from` does not end it; two such pages in a
 active chat listed after two quiet pages in a row is missed. OF lists a chat whose latest message was deleted with
 `lastMessage: null`; such a chat counts as active and is walked, so its other messages are read.
 
-It prints the request count and whether it was stopped, then two checks:
+It prints the request count and whether it was stopped, then one check:
 
-- **unmatched queue ids**: the distinct queue ids of outbound messages from the day before `--from` on that mass
-  history does not list, so those messages are not counted as mass. Every OF message carries a queue id, DMs too, so
-  this counts DMs mostly (17,124 on a 90-day run); it is not an error.
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
   messages before that time are missing.
