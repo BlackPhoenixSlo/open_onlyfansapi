@@ -45,7 +45,7 @@ Query parameters:
 
 A turn is grouped by the time of its first fan message, an opener by its send time. Every response carries `asOf`,
 `timezone` and `configVersion`; scripts also carry `normaliserVersion`. The same stored data, `asOf` and versions
-give the same numbers. Turn and opener statuses are judged as of each account's last backfill
+give the same numbers. Turn, opener and script sequence statuses are judged as of each account's last backfill
 ([status time](#reply-time-metrics)), not `asOf`.
 
 Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a day that does not exist;
@@ -223,7 +223,8 @@ request's `asOf` (now) when no backfill has ended since migration `0015`. Live e
 backfill but the account's own messages only as `messages.sent` delivers them, so judged as of now a fan message after
 the last run could read `breached` for good although it was answered; as of the status time it is `pending` until a
 backfill reads the chat again. Openers are judged as of the same time, so a fan reply stored after it counts at the
-next backfill (until then the opener is `pending` or, once `open_reply` has elapsed at the status time, `no_reply`).
+next backfill (until then the opener is `pending` or, once `open_reply` has elapsed at the status time, `no_reply`);
+so are [script](#scripts) sequences.
 
 | Status | Meaning |
 |---|---|
@@ -332,7 +333,8 @@ Per script:
 
 An **outbound sequence** is a run of DMs in one chat with no fan message between them; mass and automated messages
 neither join nor end it. A sequence counts once per script it holds. It is `replied` when a fan message arrives
-within `open_reply` after the sequence's last DM, and `pending` while that window has not elapsed. So a script sent
+within `open_reply` after the sequence's last DM, and `pending` while that window has not elapsed at the account's
+[status time](#reply-time-metrics). So a script sent
 as several parts is not penalised for its first parts. Reply rate describes what happened after a send; it does not
 show the script caused it. There is no money in this step.
 

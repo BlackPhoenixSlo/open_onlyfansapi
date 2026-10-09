@@ -3,7 +3,7 @@ import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
 import { fanNames, messageFanNames, NORMALISER_VERSION, normaliseText, scriptHash } from './derive.js';
-import { workspaceAccounts } from './metrics.js';
+import { statusAsOf, workspaceAccounts } from './metrics.js';
 
 // Script candidates (spec §2 "Script", "Script sends", "Script reply rate"; §6 step 3): auto-detected DM text
 // hashes with their exact variants, sends and reply rate. No money.
@@ -153,7 +153,8 @@ const rate = (s: Record<Status, number>) => (s.replied + s.no_reply ? (s.replied
  * hash in range, and `sendsAll`/`chatsAll` all stored DM sends of it over the same accounts (the population script
  * detection reads), in range or not. Reply rate is per outbound sequence (consecutive DMs with no fan message between; mass and automated
  * messages neither join nor end it): a sequence holding a send of the script in range counts once, replied when a fan
- * message arrives within `open_reply` after its last DM, pending while that window has not elapsed at `asOf`. The
+ * message arrives within `open_reply` after its last DM, pending while that window has not elapsed at the account's
+ * `statusAsOf` (`asOf` when it has none), as for openers. The
  * substantive variant counts only a fan message of `min_reply_chars`+ (normalised text, code points).
  *
  * Reads `[from, to + open_reply)` per account: a sequence's DMs before `from` are not sends in range and do not move
@@ -176,13 +177,14 @@ export async function scopedScripts(
   );
   if (!known.size) return [];
   const openReplyMs = cfg.openReplySeconds * 1000;
-  const asOf = range.asOf.getTime();
   const tallies = new Map<string, Tally>();
   const accounts = await workspaceAccounts(teamId, accountIds);
+  const judgedAt = await statusAsOf(teamId, accountIds, range.asOf);
   const inRange = (m: Row) =>
     m.textHash !== null && m.normaliserVersion === NORMALISER_VERSION && known.has(m.textHash) && m.createdAt >= range.from && m.createdAt < range.to;
 
   for (const accountId of accounts) {
+    const asOf = judgedAt(accountId).getTime();
     const rows: Row[] = await db
       .select({
         messageId: messageFact.messageId,

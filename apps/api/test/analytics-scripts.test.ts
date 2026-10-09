@@ -189,6 +189,19 @@ describe('GET /v1/stats/scripts', () => {
     ]);
   });
 
+  it("judges a sequence as of the account's last backfill (refreshed_at), else now", async () => {
+    const dee = async () => (await scripts(`${RANGE}&accountId=${A1}`)).items[0];
+    vi.setSystemTime(new Date('2026-09-25T00:00:00.000Z')); // days later, no backfill since: the send to Dee is still pending
+    try {
+      expect(await dee()).toMatchObject({ noReply: 2, pending: 1 });
+      await pool.query('UPDATE account_workspace SET refreshed_at = NULL WHERE account_id = $1', [A1]);
+      expect(await dee()).toMatchObject({ noReply: 3, pending: 0 }); // judged as of now
+    } finally {
+      vi.setSystemTime(NOW);
+      await pool.query('UPDATE account_workspace SET refreshed_at = $1 WHERE account_id = $2', [NOW, A1]);
+    }
+  });
+
   it('counts only sends in the range, and a sequence once', async () => {
     const [s] = (await scripts('from=2026-09-12&to=2026-09-13')).items; // 201, 301, 302
     expect(s).toMatchObject({ sends: 3, chats: 2, sendsAll: 7, chatsAll: 5, sequences: 2, replied: 1, noReply: 1, pending: 0, replyRate: 50, variantCount: 2 });
