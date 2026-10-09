@@ -66,16 +66,13 @@ class MassPoller:
             self._warned = True
             log.warning("mass poller: OF listed %d broadcasts in 24 hours account=%s; some may arrive late or not "
                         "at all", len(items), self.account_id)
-        reached = sorted(
-            [(queue_id, sent, entry) for entry in items
-             if (queue_id := events.int_or_none(entry.get("id"))) is not None
-             and (sent := events.int_or_none(entry.get("sentCount"))) is not None and sent > 0],
-            key=lambda row: row[0])
-        for queue_id, sent, entry in reached:
+        for entry in sorted(items, key=lambda e: events.int_or_none(e.get("id")) or 0):
+            queue_id, sent = events.int_or_none(entry.get("id")), events.int_or_none(entry.get("sentCount"))
             date = events.parse_time(entry.get("date"))
-            if queue_id in self.emitted or (date is not None and date < self.floor):
+            if (queue_id is None or queue_id in self.emitted or (sent or 0) <= 0
+                    or (date is not None and date < self.floor)):
                 continue
             self.emitted.add(queue_id)
             log.info("mass poller: chat_queue.finished account=%s queue=%s sentCount=%s",
                      self.account_id, queue_id, sent)
-            self.publish(events.chat_queue_finished(self.account_id, entry, now))
+            self.publish(events.chat_queue_finished(self.account_id, queue_id, entry, now))

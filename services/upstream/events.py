@@ -133,24 +133,21 @@ def _chat_message(account_id: int, msg: Any, now: datetime) -> dict | None:
     return event("message.received", account_id, message_id, ts, {**msg, "fanData": _fan_data(ts)})
 
 
-def sent_message(account_id: int, msg: Any, with_user: Any) -> dict | None:
+def sent_message(account_id: int, msg: Any, with_user: Any, now: datetime) -> dict | None:
     """`messages.sent` for one of the account's own DMs read from a chat (sent_poller): the socket's
     frame, with the chat's `withUser` (`{id, _view}`) as `toUser`. None for a fan's message and for a
     queued send (`isFromQueue`: a broadcast copy)."""
-    if not isinstance(msg, dict) or msg.get("isFromQueue"):
+    if (not isinstance(msg, dict) or msg.get("isFromQueue") or user_id(msg.get("fromUser")) != account_id
+            or (message_id := int_or_none(msg.get("id"))) is None):
         return None
-    ev = _chat_message(account_id, msg, datetime.now(UTC))
-    if ev is None or ev["type"] != PUBLIC["message.sent"]:
-        return None
-    ev["payload"] = {**ev["payload"], "toUser": with_user}
-    return ev
+    return event("message.sent", account_id, message_id, _ts(msg.get("createdAt"), now),
+                 {**msg, "toUser": with_user})
 
 
-def chat_queue_finished(account_id: int, entry: dict, now: datetime) -> dict:
+def chat_queue_finished(account_id: int, queue_id: int, entry: dict, now: datetime) -> dict:
     """`chat_queue.finished` for one of the account's mass-message history entries (mass_poller): the
     entry as OF returned it, `id` the queue id, `ts` its `date` (or `now` when unreadable)."""
-    return event("chat_queue.finished", account_id, int_or_none(entry.get("id")),
-                 iso(parse_time(entry.get("date")) or now), entry)
+    return event("chat_queue.finished", account_id, queue_id, iso(parse_time(entry.get("date")) or now), entry)
 
 
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire", "chat_message_delete"})

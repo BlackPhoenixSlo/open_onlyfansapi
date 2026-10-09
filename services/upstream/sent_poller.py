@@ -53,10 +53,11 @@ class SentPoller:
         self.client = client
         self.publish = publish
         self.interval = interval
+        self.now = now or (lambda: datetime.now(UTC))
         self.last_seen: dict[int, int] = {}   # chat id -> the newest message id its messages were read up to
         self.pending: Changed = {}            # changed chats not yet read, first queued first
         # A chat not read before is read back to here, so the first poll covers two intervals.
-        self.floor = (now or (lambda: datetime.now(UTC)))() - timedelta(seconds=2 * interval)
+        self.floor = self.now() - timedelta(seconds=2 * interval)
         self._warned: set[str] = set()
 
     async def poll(self) -> None:
@@ -143,7 +144,7 @@ class SentPoller:
         return created is None or created >= self.floor
 
     def _emit(self, msg: dict, with_user: Any) -> None:
-        ev = events.sent_message(self.account_id, msg, with_user)
+        ev = events.sent_message(self.account_id, msg, with_user, self.now())
         if ev is not None:
             self.publish(ev)
 

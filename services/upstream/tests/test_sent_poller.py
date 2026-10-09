@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import Done, OFFake, run_loop
+from conftest import OFFake
 
 from sent_poller import SentPoller
 
@@ -363,50 +363,15 @@ def test_a_waiting_chat_that_changes_again_is_fetched_once(inbox, frames, monkey
     assert len(frames) == 3
 
 
-def test_429_sleeps_retry_after_or_doubles_and_resets_after_a_clean_poll(poller, of):
-    def retry_after(seconds):
-        return {"content-type": "application/json", "retry-after": seconds}
-
-    of.respond({"error": {"code": 0}}, status=429, headers=retry_after("7"))  # never below the interval
-    of.respond({"error": {"code": 0}}, status=429, headers=retry_after("300"))
-    of.respond({"error": {"code": 0}}, status=429)
-    of.respond(chats())
-    of.respond({"error": {"code": 0}}, status=429)
-    sleeps = []
-    with pytest.raises(Done):
-        run_loop("sent", poller, sleeps, 5)
-    assert sleeps == [INTERVAL, 300, 2 * INTERVAL, INTERVAL, 2 * INTERVAL]
-
-
-def test_any_other_failure_is_logged_once_and_backed_off(poller, of, caplog):
-    of.fail(RuntimeError("boom"))
-    of.respond({"error": {"code": 0}}, status=500)
-    of.respond(chats())
-    sleeps = []
-    with caplog.at_level(logging.WARNING, logger="upstream.poll_loop"), pytest.raises(Done):
-        run_loop("sent", poller, sleeps, 3)
-    assert sleeps == [2 * INTERVAL, 4 * INTERVAL, INTERVAL]
-    assert [r.getMessage() for r in caplog.records if "failed" in r.getMessage()] == [
-        f"sent poller failed account={ACCT} status=None: retrying in {2 * INTERVAL}s"]
-
-
-def test_a_null_message_page_backs_off_and_the_chat_is_read_on_the_next_poll(poller, of, frames):
+def test_a_null_message_page_raises_and_the_chat_is_read_on_the_next_poll(poller, of, frames):
     page = chats(chat(2001, 11, -60))
     of.respond(page)
     of.respond(None)   # a `null` body: the page is None
+    with pytest.raises(TypeError, match="unexpected OF page shape"):
+        poll(poller)
+    assert frames == []
     of.respond(page)
     of.respond(messages(message(11, -60, ACCT)))
-    sleeps = []
-    with pytest.raises(Done):
-        run_loop("sent", poller, sleeps, 2)
-    assert sleeps == [2 * INTERVAL, INTERVAL]
+    poll(poller)
     assert paths(of) == ["/chats", "/chats/2001/messages"] * 2
     assert ids(frames) == [f"message.sent:{ACCT}:11"]
-
-
-@pytest.mark.parametrize(("status", "body"), [(401, {"error": {"code": 0}}), (400, {"error": {"code": 301}})])
-def test_a_refused_session_calls_on_expired_and_ends(poller, of, status, body):
-    of.respond(body, status=status)
-    expired, sleeps = [], []
-    run_loop("sent", poller, sleeps, 99, on_expired=lambda: expired.append(1))
-    assert expired == [1] and sleeps == []

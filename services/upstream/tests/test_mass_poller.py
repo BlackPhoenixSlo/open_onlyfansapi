@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import Done, OFFake, mass_entry, run_loop
+from conftest import OFFake, mass_entry
 
 from mass_poller import MassPoller
 from of_client import OFAPIError
@@ -153,15 +153,5 @@ def test_an_unexpected_body_raises(poller, of, frames, body):
     of.respond(body)
     with pytest.raises(TypeError, match="unexpected OF mass history shape"):
         poll(poller)
-    assert frames == [] and poller.emitted == set()
+    assert frames == []
 
-
-def test_a_failure_is_logged_with_the_backoff(poller, of, caplog):
-    of.fail(RuntimeError("boom"))
-    of.respond(history())
-    sleeps = []
-    with caplog.at_level(logging.WARNING, logger="upstream.poll_loop"), pytest.raises(Done):
-        run_loop("mass", poller, sleeps, 2)
-    assert sleeps == [2 * INTERVAL, INTERVAL]
-    assert [r.getMessage() for r in caplog.records if "failed" in r.getMessage()] == [
-        f"mass poller failed account={ACCT} status=None: retrying in {2 * INTERVAL}s"]

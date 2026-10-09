@@ -93,7 +93,7 @@ def test_message_payloads_against_the_fixture(event, of_frame, frame_id):
 
 def test_chat_queue_finished_against_the_fixture():
     fx = payload_fixture("chat_queue.finished")
-    ev = chat_queue_finished(1001, mass_entry(1013, "2026-10-02T12:29:00+00:00", 2), NOW)
+    ev = chat_queue_finished(1001, 1013, mass_entry(1013, "2026-10-02T12:29:00+00:00", 2), NOW)
     assert (ev["type"], ev["id"]) == (fx["event"], "chat_queue.finished:1001:1013")
     assert _gaps(fx["payload"], ev["payload"]) == KNOWN_GAPS["chat_queue.finished"]
 

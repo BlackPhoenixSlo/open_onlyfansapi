@@ -1,5 +1,4 @@
 """Test env: a throwaway state dir and a known token, set before `app` is imported."""
-import asyncio
 import json
 import os
 import shutil
@@ -24,7 +23,6 @@ from curl_cffi.requests.headers import Headers
 import accounts
 import client_pool
 import config
-import poll_loop
 import proxies
 from of_client import OFClient
 
@@ -104,23 +102,6 @@ def mass_entry(qid, date, sent, /, **extra) -> dict:
         "isMediaReady": True, "isReportedByMe": False, "isTip": False, "canUnsend": True, "unsendSeconds": 1000000,
         "responseType": "message", "template": "group", **extra,
     }
-
-
-class Done(Exception):
-    pass
-
-
-def run_loop(name, poller, sleeps, n, on_expired=lambda: None):
-    """Run the poll loop as `name` until its `n`th sleep; the slept seconds land in `sleeps`."""
-    async def sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) == n:
-            raise Done
-
-    async def main():
-        await poll_loop.run(name, poller, on_expired, sleep=sleep)
-
-    asyncio.run(main())
 
 
 # ─── of_fake: OF at the wire ───────────────────────────────────────
