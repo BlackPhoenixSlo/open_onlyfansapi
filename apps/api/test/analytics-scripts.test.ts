@@ -225,6 +225,8 @@ describe('GET /v1/stats/scripts', () => {
       isAutomated: false,
       priceCents: 0,
       isTip: false,
+      tipCents: 0,
+      isOpened: false,
       mediaCount: 0,
       textHash,
       normaliserVersion: 1,

@@ -177,9 +177,9 @@ export const messageFact = pgTable(
     priceCents: integer('price_cents').notNull(),
     isTip: boolean('is_tip').notNull(),
     /** `tipAmount` in cents on a tip, else 0. */
-    tipCents: integer('tip_cents').notNull().default(0),
+    tipCents: integer('tip_cents').notNull(),
     /** OF's `isOpened`: on a priced message, the fan bought it. */
-    isOpened: boolean('is_opened').notNull().default(false),
+    isOpened: boolean('is_opened').notNull(),
     mediaCount: integer('media_count').notNull(),
     /** Sorted media ids, comma-joined; null = no media. */
     mediaKey: text('media_key'),

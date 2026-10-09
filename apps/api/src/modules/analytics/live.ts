@@ -17,9 +17,10 @@ const userId = (user: unknown) => int((user as Raw | null | undefined)?.id);
 /**
  * The `message_fact` row of one live OF message object, derived by the backfill's `deriveMessage`; null when the
  * payload is not a message, names no fan (an outbound message needs `toUser` or OF's `chatUserId`) or has no valid
- * time. The live context has no mass history, welcome message or automation texts: an outbound message with a
- * `queueId` counts as mass and none as automated until a backfill over its range re-derives the row. The fan's names
- * for the script hash come from `chat_coverage`, as the backfill's come from the chat list.
+ * time. The live context has no mass history, welcome message or automation texts, so no message counts as mass or
+ * automated until a backfill over its range re-derives the row (every OF message carries a `queueId`, and
+ * `isFromQueue` is also true on some DMs, so neither marks a broadcast). The fan's names for the script hash come
+ * from `chat_coverage`, as the backfill's come from the chat list.
  */
 async function liveRow(teamId: string, accountId: number, payload: unknown) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
@@ -37,8 +38,7 @@ async function liveRow(teamId: string, accountId: number, payload: unknown) {
   }
   const d = deriveMessage(raw, chatId, deriveContext(accountId, [], null, []), names);
   if (!d || Number.isNaN(d.createdAt.getTime())) return null;
-  // Live policy: with no mass history to check `sentCount` against, any queued outbound message counts as mass.
-  return { teamId, accountId, ...d, isMass: d.direction === 'outbound' && d.queueId !== null, raw, fetchedAt: new Date() };
+  return { teamId, accountId, ...d, raw, fetchedAt: new Date() };
 }
 
 type Apply = (teamId: string, accountId: number, payload: unknown) => Promise<void>;

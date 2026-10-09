@@ -79,7 +79,7 @@ export type BackfillResult = {
   transactions: number;
   /** A welcome message is set on the account. */
   welcome: boolean;
-  /** Distinct queue ids on outbound messages from the mass window on that mass history does not list (an anomaly). */
+  /** Distinct queue ids on outbound messages from the mass window on that mass history does not list: every OF message has a queue id, so this counts DMs mostly, not an anomaly. */
   unmatchedQueueIds: number;
   /** Chats whose walk stopped on a page with no new id before reaching back to `from` (nor to the chat's start). */
   incompleteChats: number;
@@ -111,7 +111,7 @@ export function retryDelay(retryAfter: string | null, attempt: number, cfg: Pick
   return Math.min(ms, cfg.backoffMaxMs);
 }
 
-/** `set` for an upsert: every column but the primary key takes the incoming row's value. */
+/** `set` for an upsert: every column not named in `key` (the primary key, and any column to keep) takes the incoming row's value. */
 function updateAll(table: PgTable, key: string[]): Record<string, SQL> {
   return Object.fromEntries(
     Object.entries(getTableColumns(table))
@@ -138,10 +138,12 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
 
 /**
  * The analytics tables of workspace `teamId`, which must own the account (`claimAccount` or `assignAccount` first).
- * Messages from `massFrom` on upsert on `(account_id, message_id)`; older ones were derived without their mass
- * history, so they are only inserted, never updated: a later run that read it is not undone. A message read again
- * exists upstream, so either way its `deleted_at` is cleared. Coverage merges: it never moves back. Transactions
- * upsert on `(account_id, tx_id)`. `finish` syncs the account's script candidates.
+ * Messages from `massFrom` on upsert every column on `(account_id, message_id)` (`updateAll`, which clears
+ * `deleted_at` too: the derived rows have none). Older ones were derived without their mass history, so on conflict
+ * they update every column but `is_mass`, `is_automated` and `automated_reason`: the flags a run that read the mass
+ * history derived are not undone. A message read again exists upstream, so either way its `deleted_at` is cleared.
+ * Coverage merges: it never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's
+ * script candidates.
  */
 export function dbStore(teamId: string, accountId: number): BackfillStore {
   const owned = { teamId, accountId };
@@ -153,12 +155,14 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
           .values(covered.map((r) => ({ ...owned, ...r })))
           .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
       }
-      // `updateAll` above clears `deleted_at` too: the derived rows have none.
       if (tail.length) {
         await db
           .insert(messageFact)
           .values(tail.map((r) => ({ ...owned, ...r })))
-          .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: { deletedAt: null } });
+          .onConflictDoUpdate({
+            target: [messageFact.accountId, messageFact.messageId],
+            set: { ...updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']), deletedAt: null },
+          });
       }
     },
     async coverage(walk) {
@@ -306,7 +310,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   try {
     // Transactions first: the chat walks can take hours, and a run that dies (an API restart, an expired session) before
     // the end would otherwise store no money at all.
-    result.transactions = await readTransactions(get, store, from, to);
+    await readTransactions(get, store, from, to, (stored) => (result.transactions += stored));
     // Mass history from a day before the range up to now: the walks store outbound messages outside the range too.
     const massFrom = from - DAY_MS;
     const mass: Raw[] = [];
@@ -465,18 +469,19 @@ async function walkChat(
   return { messages: seen.size, unmatchedQueueIds: [...unmatched], incomplete };
 }
 
-/** The range's transactions (newest first from OF) into `store`, stopping at the first page reaching before `from`. */
-async function readTransactions(get: Get, store: BackfillStore, from: number, to: number): Promise<number> {
+/**
+ * The range's transactions (newest first from OF) into `store`, stopping at the first page reaching before `from`.
+ * `onStored` gets each page's count once it is stored, so a run stopped mid-way counts what it stored.
+ */
+async function readTransactions(get: Get, store: BackfillStore, from: number, to: number, onStored: (count: number) => void): Promise<void> {
   const seen = new Set<string>();
-  let read = 0;
   for (let offset = 0; ; offset += PAGE) {
     const page = await get(`/payouts/transactions?limit=${PAGE}&offset=${offset}&startDate=${encodeURIComponent(ofDate(from))}`);
     const list = unique(items(page).filter((tx) => tx.id !== undefined && tx.id !== null), (tx) => String(tx.id), seen);
     if (list.length === 0) break;
     const rows = list.map((raw) => ({ ...derivePurchase(raw), raw })).filter((r) => r.createdAt.getTime() >= from && r.createdAt.getTime() < to);
     await store.transactions(rows);
-    read += rows.length;
+    onStored(rows.length);
     if (!hasMore(page) || list.some((tx) => time(tx.createdAt) < from)) break;
   }
-  return read;
 }

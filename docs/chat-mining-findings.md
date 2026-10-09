@@ -69,7 +69,8 @@ Handoff §4 (2026-10-08 22:41 UTC) counted 111 settled and 19 `loading` message 
 2. **Bulk sends are stored as DMs.** 15 exact texts each reached 20+ chats and 5 queue ids are shared by 8 to 321
    chats: 1,872 rows, 10.6% of DMs. The largest are two texts to 497 and 498 chats (09-14..09-21) and the 10-09 02:39
    UTC send (hypothesis: a mass message; one queue id, 321 chats in 27 s, `isFromQueue` true), which mass history,
-   read once at the run's start 4.5 h earlier (`backfill.ts`), could not list.
+   read once at the run's start 4.5 h earlier (`backfill.ts`), could not list. Mass history covers up to the run's
+   start only: a broadcast sent during a run stays stored as DMs until the next run over its day.
 3. **Incomplete chats: UNPROVEN.** The log flags 1,224 of 1,347: 113 proven complete (the oldest stored message is the
    welcome message, sent on subscribe), 7 proven truncated (a fan quotes a message older than the oldest stored one),
    1,104 unknown. Opener kind is "unknown" on 1,073 of 1,664 openers.

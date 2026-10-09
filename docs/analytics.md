@@ -24,8 +24,8 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/config` | The workspace's windows and timezone, and `freshness` ([Live updates](#live-updates)). The first read creates the default row |
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
-| `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, the latest fan message first (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range). `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
-| `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id: `accountId`, `chatId`, `fanUsername`, `messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text` (plain text), `priceCents`, `isTip`, `mediaCount`, `isMass`, `isAutomated`; `truncated` is true when `limit` cut the list. `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
+| `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, the latest fan message first (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), and `ppvSent`, `ppvOpened`, `tips`, `tipCents` ([below](#stored-messages-and-export)). `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
+| `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list. `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
 | `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `error`, `errorCode` (`session_expired` when OF refused the account's session, else null); or `{ "status": "idle" }` |
 
@@ -91,8 +91,8 @@ at a time.
 Each message carries, as JSON fields (CSV columns in snake_case, in this order): `accountId`, `chatId`, `fanUsername`,
 `messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text`, `priceCents`, `isFree`, `isOpened`, `isTip`,
 `tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `isReply`,
-`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). `isOpened` and `tipCents` are stored columns (migration
-0013 filled them for messages already stored); the other detail fields are read from OF's stored message object
+`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). `isOpened` and `tipCents` are stored columns (the one-time fill
+of migration 0013 handles JSON numbers; rows are re-derived by the next backfill that reads them); the other detail fields are read from OF's stored message object
 (`raw`) when the export runs, so no backfill is needed for messages already stored:
 
 | Field | OF field | Notes |
@@ -100,7 +100,7 @@ Each message carries, as JSON fields (CSV columns in snake_case, in this order):
 | `priceCents` | `price` (dollars) | Stored column; a PPV is an outbound message with a price. |
 | `isFree` | `isFree` | |
 | `isOpened` | `isOpened` | Stored column. On a priced message, the fan bought it (OF's `canPurchaseReason` is then `opened`). OF reports it false on free messages. |
-| `isTip`, `tipCents` | `isTip`, `tipAmount` (dollars) | A tip message has `price` 0 and the amount in `tipAmount`; `tipCents` (stored column) is 0 when not a tip or `tipAmount` is not a number or numeric string, as for `price`. |
+| `isTip`, `tipCents` | `isTip`, `tipAmount` (dollars) | A tip message has `price` 0 and the amount in `tipAmount`; `tipCents` (stored column) is 0 when not a tip or `tipAmount` is not a number or numeric string, as for `price`; the one-time fill of migration 0013 handles JSON numbers only, and rows are re-derived by the next backfill that reads them. |
 | `mediaCount` | `mediaCount`, else `media` length | Stored column. |
 | `photos`, `videos`, `gifs`, `audios` | `media[].type` (`photo`, `video`, `gif`, `audio`) | Counts only; the files are not stored. A GIPHY gif (`giphyId` set) adds 1 to `gifs` and is not in `mediaCount`, as in OF. Other types count only in `mediaCount`. |
 | `hasPreview` | `previews` | Not empty: some media ids are shown free before purchase. |
@@ -118,10 +118,12 @@ Between backfills, the upstream's `messages.received` and `messages.sent` events
 `account_workspace` row) add the message's `message_fact` row, derived with the backfill's own mapper, and
 `messages.deleted` marks it deleted ([unsent messages](#stored-messages-and-export)). Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
 its event socket (OF's own socket, then one hop to the gateway, usually seconds); events missed while the gateway is
-down or reconnecting are not replayed, so a backfill is still the complete view. Only `message_fact` changes live,
-and a row already stored is kept. The live mapper has no mass history, welcome message or automation texts, so an
-outbound message with a `queueId` counts as mass and none counts as automated until a backfill over its range
-re-derives the row. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
+down or reconnecting are not replayed, so a backfill is still the complete view of the messages that exist. It
+cannot see unsends: an unsent message vanishes from OF's history, so a `messages.deleted` missed while the gateway was
+down is never applied, and `deleted_at` null means "no unsend event seen", not "not unsent". Only `message_fact` changes live,
+and a row already stored is kept. The live mapper has no mass history, welcome message or automation texts, so no
+live message counts as mass or automated until a backfill over its range re-derives the row: every OF message
+carries a `queueId`, and `isFromQueue` is true on some DMs too, so neither marks a broadcast. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
 the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under
 its header.

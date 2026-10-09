@@ -50,8 +50,9 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
 ## Before the first run
 
 1. **Migrate.** `pnpm db:migrate` applies `0008_analytics` (tables `account_workspace`, `message_fact`,
-   `chat_coverage`, `purchase_fact`), and `0009` to `0011` for the stats routes
-   ([analytics.md](analytics.md#deploy)).
+   `chat_coverage`, `purchase_fact`), `0009` to `0011` for the stats routes
+   ([analytics.md](analytics.md#deploy)), `0012` (`message_fact.deleted_at`), and `0013` and `0014`
+   (`message_fact.tip_cents` and `is_opened`; `0013` fills them with one `UPDATE` of every stored message).
 2. **Upgrade the upstream.** The backfill reads the welcome message from `GET /of/settings/welcome-message`, which is
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
 3. **Link the workspace** if it is not linked yet: `pnpm --filter @gateway/api link-team <workspace-slug>`. It prints
@@ -75,12 +76,15 @@ relative `--out` is taken from the directory you typed the command in. Keep the 
 ids.
 
 The run reads, in order: the range's transactions (first, so a run that dies during the hours of chat walks still
-stores the money), mass-message history in one-day windows from the day before `--from` up to now (the chat
-walks store messages on both sides of the range, and each outbound message's queue id is looked up there), the
+stores the money), mass-message history in one-day windows from the day before `--from` up to the run's start (the
+chat walks store messages on both sides of the range, and each outbound message's queue id is looked up there; it is
+read once, before the walks, so a broadcast sent during the run is stored as DMs until the next run over its day), the
 welcome message, the chat list (most recent first, with `skip_users=none` so each chat carries the fan's username;
 see below), each chat's messages newest first down to the page that reaches
 `--from`. Messages on that boundary page older than the mass window (before the day
-before `--from`) are stored once and never updated by a later run, since their mass history was not read. Mass history answers
+before `--from`) were derived without their mass history, so a later run that reads them again updates every column
+but `is_mass`, `is_automated` and `automated_reason`, and clears `deleted_at`; only a run whose `--from` covers them
+re-derives those flags. Mass history answers
 one page of 100 per window; a full page may have been cut, so that window is split in halves until a page is not
 full, and a full page for an hour or less fails the run.
 
@@ -93,8 +97,9 @@ active chat listed after two quiet pages in a row is missed. OF lists a chat who
 
 It prints the request count and whether it was stopped, then two checks:
 
-- **unmatched queue ids**: outbound messages from the day before `--from` on carry a queue id that mass history
-  does not list, so they are not counted as mass. A non-zero count means mass history and messages disagree.
+- **unmatched queue ids**: the distinct queue ids of outbound messages from the day before `--from` on that mass
+  history does not list, so those messages are not counted as mass. Every OF message carries a queue id, DMs too, so
+  this counts DMs mostly (17,124 on a 90-day run); it is not an error.
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
   messages before that time are missing.

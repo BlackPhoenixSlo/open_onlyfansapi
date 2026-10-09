@@ -70,7 +70,7 @@ try {
     `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
   );
   console.log(
-    `unmatched queue ids ${result.unmatchedQueueIds} (outbound sends with a queue id mass history does not list); ` +
+    `unmatched queue ids ${result.unmatchedQueueIds} (distinct queue ids of outbound messages mass history does not list: every DM has one, so mostly DMs); ` +
       `incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`,
   );
   const written = await sink.write();

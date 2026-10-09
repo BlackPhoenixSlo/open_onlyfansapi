@@ -296,7 +296,7 @@ describe('analytics backfill', () => {
     expect([byId[105]!.isMass, byId[304]!.isMass, byId[110]!.isMass, byId[110]!.queueId]).toEqual([true, true, false, 999]);
   });
 
-  it('only inserts messages older than the mass window, and counts none of their queue ids', async () => {
+  it('never re-derives the mass flag of messages older than the mass window, and counts none of their queue ids', async () => {
     const of = fake.state.of!;
     of.pageCap = 4; // chat 2001's boundary page now reaches 101 (2026-08-20), before the mass window (from 08-31)
     Object.assign(of.messages[2001]!.find((m) => m.id === 101)!, { fromUser: { id: ACCOUNT }, queueId: 905 });
@@ -305,12 +305,12 @@ describe('analytics backfill', () => {
     const stored = async () => (await db.select().from(messageFact).where(eq(messageFact.messageId, 101)))[0]!;
     expect(await stored()).toMatchObject({ direction: 'outbound', queueId: 905, isMass: false });
 
-    // A wider run reads 905's mass history and derives 101 as mass; a later narrower run leaves it so.
+    // A wider run reads 905's mass history and derives 101 as mass; a later narrower run keeps the flag, updating the rest.
     await backfill(opts({ from: new Date('2026-08-15T00:00:00.000Z') }));
     expect((await stored()).isMass).toBe(true);
     of.messages[2001]!.find((m) => m.id === 101)!.text = '<p>edited</p>';
     expect(await backfill(opts())).toMatchObject({ unmatchedQueueIds: 0 });
-    expect(await stored()).toMatchObject({ isMass: true, raw: expect.objectContaining({ text: '<p>text 101</p>' }) });
+    expect(await stored()).toMatchObject({ isMass: true, raw: expect.objectContaining({ text: '<p>edited</p>' }) });
   });
 
   it('lists chats past an older pinned chat', async () => {
@@ -394,6 +394,22 @@ describe('analytics backfill', () => {
     expect(p.started).toHaveLength(11);
     // Chat 2001's walk was cut short, so it records no coverage; the transactions, read first, are stored.
     expect(await counts()).toMatchObject({ messages: 6, coverage: 1, purchases: 3 });
+  });
+
+  it('counts the transactions stored when the signal aborts between transaction pages', async () => {
+    const stop = new AbortController();
+    const tx = (i: number) => ({ id: `bulk${i}`, descriptionDetails: { type: 'tips' }, amount: 1, net: 0.8, currency: 'USD', createdAt: '2026-09-02T00:00:00Z' });
+    fake.state.of!.transactions = Array.from({ length: 101 }, (_, i) => tx(i)); // two pages of 100
+    const p = probe({
+      before: (n) => {
+        if (n === 1) Object.assign(fake.state.of!, { rateLimit: 1, retryAfter: '42' }); // the second page waits 42 s
+      },
+    });
+    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal }));
+    await until(() => p.answered() === 2);
+    stop.abort();
+    expect(await run).toMatchObject({ stopped: true, requests: 2, transactions: 100 });
+    expect(await counts()).toMatchObject({ purchases: 100 });
   });
 
   it('backs off on 429 for Retry-After, then carries on', async () => {

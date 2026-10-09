@@ -99,6 +99,13 @@
       "when": 1791554085233,
       "tag": "0013_message_tip_opened",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791555483038,
+      "tag": "0014_message_tip_opened_no_default",
+      "breakpoints": true
     }
   ]
 }

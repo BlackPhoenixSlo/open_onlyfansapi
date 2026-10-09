@@ -192,7 +192,9 @@ export type DerivedMessage = {
 
 /**
  * Derived columns of one OF message in chat `chatId`; null when it has no numeric `id`. Outbound = `fromUser.id` is
- * the account. Mass = its `queueId` is a broadcast with `sentCount > 1` (`isFromQueue` is not trusted). Automated =
+ * the account. Mass = its `queueId` is a broadcast with `sentCount > 1`. Every OF message carries a numeric `queueId`;
+ * `isFromQueue` is true on every broadcast but also on some DMs (322 and 411 stored non-mass outbound rows on the two
+ * live accounts, 2026-10-09), so neither is used alone. Automated =
  * it matches the welcome message (text or media) or an automation text. `names` are the fan's names from the chat
  * list; any on the message's fan user object are added.
  */

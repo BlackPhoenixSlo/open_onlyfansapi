@@ -131,18 +131,18 @@ describe('analytics live updates', () => {
     await claimAndBackfill({ upstream, teamId, accountId: ACCOUNT, from: new Date(Date.now() - 86_400_000), to: new Date(), config: { pageDelayMs: 0 } });
     expect(await deletedAt()).toBeNull();
 
-    // A boundary message older than the mass window is only inserted, never re-derived, but is un-deleted too.
+    // A boundary message older than the mass window updates every column but its mass and automated flags, and is un-deleted too.
     await mark();
     const { teamId: _t, accountId: _a, deletedAt: _d, ...walked } = (await facts()).find((r) => r.messageId === inbound.id)!;
-    await dbStore(teamId, ACCOUNT).messages([], [{ ...walked, priceCents: 999 }]);
+    await dbStore(teamId, ACCOUNT).messages([], [{ ...walked, priceCents: 999, isOpened: true, isMass: true, isAutomated: true, automatedReason: 'welcome' }]);
     const [row] = (await facts()).filter((r) => r.messageId === inbound.id);
-    expect([row!.deletedAt, row!.priceCents]).toEqual([null, walked.priceCents]);
+    expect([row!.deletedAt, row!.priceCents, row!.isOpened, row!.isMass, row!.isAutomated, row!.automatedReason]).toEqual([null, 999, true, false, false, null]);
   });
 
-  it('an outbound message with a queueId counts as mass until a backfill re-derives it', async () => {
-    await ingestFrame(messageFrame({ ...outbound, id: 111, queueId: 900, toUser: FAN }), log);
+  it('a live outbound message is not mass, queueId and isFromQueue or not, until a backfill re-derives it', async () => {
+    await ingestFrame(messageFrame({ ...outbound, id: 111, queueId: 900, isFromQueue: true, toUser: FAN }), log);
     const [row] = await db.select().from(messageFact).where(eq(messageFact.messageId, 111));
-    expect(row).toMatchObject({ chatId: FAN.id, direction: 'outbound', isMass: true, queueId: 900, isAutomated: false });
+    expect(row).toMatchObject({ chatId: FAN.id, direction: 'outbound', isMass: false, queueId: 900, isAutomated: false });
     await db.delete(messageFact).where(eq(messageFact.messageId, 111));
   });
 
