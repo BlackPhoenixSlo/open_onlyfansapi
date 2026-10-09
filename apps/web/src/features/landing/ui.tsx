@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-const REPO = 'https://github.com/BlackPhoenixSlo/gateway/blob/master';
+/** The public mirror of this repository. */
+export const GITHUB = 'https://github.com/BlackPhoenixSlo/gateway-public';
+const REPO = `${GITHUB}/blob/master`;
 
 /** A file in the GitHub repository, e.g. `docs/webhooks.md`. */
 export function repoUrl(path: string) {

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Screenshot, Tour } from '@/features/landing/tour';
 import { Tutorial } from '@/features/landing/tutorial';
-import { Pre, RepoLink, Section, repoUrl } from '@/features/landing/ui';
+import { GITHUB, Pre, RepoLink, Section, repoUrl } from '@/features/landing/ui';
 import { authClient } from '@/lib/auth-client';
 import { PRODUCT_NAME } from '@/lib/brand';
 
@@ -53,6 +53,9 @@ function Header() {
       </a>
       <a href={GETTING_STARTED} className={NAV_LINK}>
         Docs
+      </a>
+      <a href={GITHUB} className={NAV_LINK}>
+        GitHub
       </a>
       <AuthButtons />
     </nav>
@@ -222,6 +225,9 @@ function Footer() {
             {label}
           </a>
         ))}
+        <a href={GITHUB} className="underline-offset-4 hover:text-foreground hover:underline">
+          Source on GitHub
+        </a>
       </nav>
       <p>
         Gateway is free software under the AGPL-3.0-only licence. If you run a modified version as a service that others
