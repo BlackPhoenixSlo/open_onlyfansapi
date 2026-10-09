@@ -166,8 +166,8 @@ def test_paging_stops_after_a_page_ending_with_a_read_old_chat(poller, of, frame
     assert paths(of) == ["/chats"] and frames == []
 
 
-def test_paging_continues_past_unread_and_pinned_chats(poller, of, frames):
-    of.respond(chats(chat(2001, 71, -9000, unread=2), chat(2002, 72, -9000, isPinned=True),
+def test_paging_continues_past_unread_chats(poller, of, frames):
+    of.respond(chats(chat(2001, 71, -9000, unread=2), chat(2002, 72, -9000, unread=1),
                      more=True, next_offset=20))
     of.respond(chats(more=False))
     poll(poller)

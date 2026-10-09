@@ -6,7 +6,7 @@ then it reads the queued chats' new messages, first queued first, and publishes 
 `messages.sent` with the chat's `withUser` as `toUser`. Queued sends (`isFromQueue`, which include broadcast copies;
 a mass message does not move a chat in OF's list) are skipped: DMs only.
 
-Limits, each a documented loss: OF's list puts pinned and unread chats first and returns 10-20 chats a page whatever
+Limits, each a documented loss: OF's list puts unread chats first and returns 10-20 chats a page whatever
 `limit` asks, so with more than about 50 unread chats the read chats below them are not reached; a chat is read back
 at most CHAT_PAGES pages (about 30 messages) a poll; past PENDING_MAX queued chats the first queued (within
 one scan, the most recently active) are dropped.
@@ -39,10 +39,6 @@ BACKOFF_MAX_S = 30 * 60
 
 Publish = Callable[[dict], None]
 Changed = dict[int, tuple[int, Any]]   # chat id -> (lastMessage.id, withUser)
-
-
-def _pinned(chat: dict) -> bool:
-    return bool(chat.get("pinned", chat.get("isPinned")))
 
 
 def _page(resp: Any) -> tuple[list[dict], bool]:
@@ -88,8 +84,8 @@ class SentPoller:
 
     async def _scan(self) -> Changed:
         """The top of the chat list: the chats whose last message is not `last_seen`. A chat not seen before whose
-        last message is older than the floor is recorded as read. Stops after a page with a read, unpinned,
-        unchanged chat: read chats come newest first, so the ones below it are unchanged too."""
+        last message is older than the floor is recorded as read. Stops after a page with a read, unchanged
+        chat: read chats come newest first, so the ones below it are unchanged too."""
         changed: Changed = {}
         offset = 0
         for _ in range(MAX_PAGES):
@@ -111,7 +107,7 @@ class SentPoller:
                     self.last_seen[chat_id] = lm_id
                 if lm_id != self.last_seen.get(chat_id):
                     changed.setdefault(chat_id, (lm_id, chat.get("withUser")))
-                elif not events.int_or_none(chat.get("unreadMessagesCount")) and not _pinned(chat):
+                elif not events.int_or_none(chat.get("unreadMessagesCount")):
                     stop = True
             if stop or not more:
                 break
