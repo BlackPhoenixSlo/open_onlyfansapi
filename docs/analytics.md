@@ -178,6 +178,24 @@ since these jobs call OF on their own). They are in-process jobs, so they also n
   those 48 hours hold over 100 transactions), with no pacing, retry or lock beyond that; an account that fails (a
   dead session, the upstream down) is logged (`transactions poll failed`) and tried again next hour. The socket's
   frames carry no transaction id or net, so this poll, not the live events, is the source of sales.
+- **Daily refresh.** Ticked every hour (and once at API start). Once the current time is past today's
+  `STATS_REFRESH_HOUR_UTC`:00 UTC, each claimed account whose `account_workspace.refreshed_at` is null or before that
+  time is due and gets one backfill ([analytics-backfill.md](analytics-backfill.md#running-a-backfill)) from
+  max(now - 7 days, `refreshed_at` - 1 hour) to now. It starts like the dashboard's Run analytics (queued behind the
+  one-account-at-a-time limiter, its status on the Accounts page, `GET /v1/stats/backfill`) and the job does not wait
+  for it. The run walks the window's payers even when the chat list names them as not active in the window, so a PPV
+  bought in the window is read again with its `isOpened` when it is on the payer's pages down to the window start (a
+  PPV older than those pages is not). A run that ends moves `refreshed_at` forward, so the account is not due again
+  until tomorrow's refresh time; one that fails is tried again on the next tick, except a dead session
+  (`session_expired`): it is skipped until tomorrow's refresh time. That skip, like all run state, is in memory, so
+  an API restart forgets it (one more attempt) and ends a run in flight (the next tick starts it again: rows upsert).
+  An account the CLI is backfilling fails its refresh with `backfill_running` and is tried again next hour. A quiet
+  week costs about 0.6 to 1 hour of requests per account at the default cap, a busy one 2.5 to 4.5 hours.
+
+`account_workspace.refreshed_at` is the time up to which the stored data is complete: the start of the latest
+stored backfill that ran to its end (CLI, dashboard or refresh; not a dry run, not a stopped or failed run), or its
+`to` when that is earlier. It never moves back. To see it:
+`SELECT account_id, refreshed_at FROM account_workspace ORDER BY account_id;`
 
 ## Terms
 
@@ -339,6 +357,8 @@ curl -X PUT -H "Authorization: Bearer $API_KEY" -H "content-type: application/js
    unused `script` columns). `0012_message_deleted_at` adds the nullable `message_fact.deleted_at`; existing rows
    stay not deleted, and rows a live `messages.deleted` removed before it are gone.
    `0013_message_tip_opened` adds `message_fact.tip_cents` and `is_opened` and fills them once from `raw`.
+   `0015_account_refreshed_at` adds the nullable `account_workspace.refreshed_at` ([Keeping it fresh](#keeping-it-fresh));
+   it stays null until the next backfill of the account ends.
 2. **Rehash once per account.** Rows stored before `0010` have a null `normaliser_version` and an older
    `text_hash`, so scripts leave them out. For each claimed account run
    `pnpm --filter @gateway/api analytics:rehash --account <id>`. It is safe to run again: a second run updates

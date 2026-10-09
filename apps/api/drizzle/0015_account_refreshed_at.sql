@@ -1,0 +1,1 @@
+ALTER TABLE "account_workspace" ADD COLUMN "refreshed_at" timestamp (3) with time zone;

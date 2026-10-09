@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { apiKey, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
+import { accountWorkspace, apiKey, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
 import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS, readCsv } from '../src/cli/analytics-csv.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
@@ -275,6 +275,26 @@ describe('analytics backfill', () => {
     ]);
   });
 
+  it('moves refreshed_at forward on a stored run that ends: to its start, or `to` when earlier; never back, not on a stop or a dry run', async () => {
+    const refreshedAt = async () => (await db.select({ at: accountWorkspace.refreshedAt }).from(accountWorkspace).where(eq(accountWorkspace.accountId, ACCOUNT)))[0]!.at;
+    await db.update(accountWorkspace).set({ refreshedAt: null }).where(eq(accountWorkspace.accountId, ACCOUNT));
+    await backfill(opts({ store: memoryStore({ messages: [], chats: [], transactions: [] }) }));
+    expect(await refreshedAt()).toBeNull();
+    const stop = new AbortController();
+    stop.abort();
+    expect(await backfill(opts({ signal: stop.signal }))).toMatchObject({ stopped: true });
+    expect(await refreshedAt()).toBeNull();
+
+    await backfill(opts()); // the clock (NOW) is past `to`
+    expect(await refreshedAt()).toEqual(TO);
+    await backfill(opts({ to: new Date(NOW.getTime() + HOUR) })); // `to` is past the run's start
+    const atStart = await refreshedAt();
+    expect(atStart!.getTime()).toBeGreaterThanOrEqual(NOW.getTime());
+    expect(atStart!.getTime()).toBeLessThan(NOW.getTime() + 60_000);
+    await backfill(opts()); // an older range does not move it back
+    expect(await refreshedAt()).toEqual(atStart);
+  });
+
   it('upserts: a second run stores the same rows', async () => {
     await backfill(opts());
     const first = await counts();
@@ -391,24 +411,39 @@ describe('analytics backfill', () => {
     );
   });
 
-  it("walks the chats the list leaves out (the range's payers, then chats with stored messages), skips a 404, counts unreadable entries", async () => {
+  it("walks the range's payers the list leaves out or names inactive, then chats with stored messages it leaves out; skips a 404, counts unreadable entries", async () => {
     const of = fake.state.of!;
     of.transactions.unshift(paid('tx6', 2008), paid('tx5', 2007), paid('tx7', 2010)); // 2008's 404 comes first; 2007 is still walked
     of.messages[2007] = [msg(701, '09-02T11:00', ACCOUNT, { price: 3 }), msg(700, '09-02T10:00', ACCOUNT)]; // a payer's chat OF does not list
     of.chatErrors = { 2008: { status: 404 } }; // a deleted fan's
     of.chats.push(
       { withUser: {}, lastMessage: { id: 1, createdAt: '2026-09-02T10:00:00.000Z' } } as FakeOf['chats'][number], // dropped
-      chat(2010, { id: 1, createdAt: 'not a date' }), // listed, so not seeded though it paid; not active, so not walked
+      chat(2010, { id: 1, createdAt: 'not a date' }, 'fan_ten'), // listed, not active: walked because it paid, with the list's username
     );
-    expect(await backfill(opts())).toMatchObject({ chats: 4, transactions: 6, seededChats: 2, missingChats: 1, failedChats: [], droppedChats: 1 });
+    expect(await backfill(opts())).toMatchObject({ chats: 5, transactions: 6, seededChats: 3, missingChats: 1, failedChats: [], droppedChats: 1 });
     const walked = async () => (await db.select().from(chatCoverage).orderBy(chatCoverage.chatId)).map((c) => [c.chatId, c.reachedStart]);
-    expect(await walked()).toEqual([[2001, false], [2002, false], [2003, true], [2007, true]]);
+    expect(await walked()).toEqual([[2001, false], [2002, false], [2003, true], [2007, true], [2010, true]]);
+    expect(await db.select({ u: chatCoverage.fanUsername }).from(chatCoverage).where(eq(chatCoverage.chatId, 2010))).toEqual([{ u: 'fan_ten' }]);
 
     // Chat 2002, stored by that run, drops out of the list: it is walked from the stored rows, its new message read.
     of.chats = of.chats.filter((c) => c.withUser.id !== 2002);
     of.messages[2002]!.unshift(msg(205, '09-03T10:00', 2002));
-    expect(await backfill(opts())).toMatchObject({ seededChats: 3, missingChats: 1 }); // 2002, 2007, 2008
+    expect(await backfill(opts())).toMatchObject({ seededChats: 4, missingChats: 1 }); // 2002, 2007, 2008, 2010
     expect(await db.$count(messageFact, eq(messageFact.messageId, 205))).toBe(1);
+  });
+
+  it("re-reads a PPV bought in the range in a chat the list names inactive (the payer's newest page): isOpened", async () => {
+    const of = fake.state.of!;
+    const ppv = msg(402, '08-26T10:00', ACCOUNT, { price: 3, isOpened: false });
+    of.messages[2004] = [ppv, msg(401, '08-25T10:00', 2004)];
+    of.chats = of.chats.map((c) => (c.withUser.id === 2004 ? chat(2004, ppv) : c));
+    await backfill(opts()); // no sale yet: 2004 is quiet since before the range, not walked
+    expect(await db.$count(messageFact, eq(messageFact.messageId, 402))).toBe(0);
+
+    of.messages[2004]![0] = { ...ppv, isOpened: true }; // bought in the range
+    of.transactions.unshift(paid('tx9', 2004));
+    expect(await backfill(opts())).toMatchObject({ seededChats: 1 });
+    expect(await db.select({ isOpened: messageFact.isOpened }).from(messageFact).where(eq(messageFact.messageId, 402))).toEqual([{ isOpened: true }]);
   });
 
   it('seeds only fan ids that are safe positive integers and not the account', async () => {

@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { and, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db, pool } from '../../db/index.js';
-import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
+import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
@@ -59,8 +59,11 @@ export interface BackfillStore {
   transactions(rows: WalkedPurchase[]): Promise<void>;
   /** The chats of the account's stored messages: walked too when the chat list leaves them out. */
   chatIds(): Promise<number[]>;
-  /** After the walk, stopped or not. */
-  finish(): Promise<void>;
+  /**
+   * After the walk, stopped or not. `refreshedAt` when the run ran to its end: its start, or `to` when earlier (the
+   * stored data is complete up to then); null when it was stopped.
+   */
+  finish(refreshedAt: Date | null): Promise<void>;
 }
 
 /** What a dry run read: every message walked (both sides of the range), each chat's walk, the range's transactions. */
@@ -91,7 +94,10 @@ export type BackfillResult = {
   welcome: boolean;
   /** Chats whose walk stopped on a page with no new id before reaching back to `from` (nor to the chat's start). */
   incompleteChats: number;
-  /** Chats the chat list did not name, walked as well: the fans of the range's transactions and of stored messages. */
+  /**
+   * Chats walked besides the listed active ones: the fans of the range's transactions that the chat list left out or
+   * names as not active in the range, and the chats of stored messages that it left out.
+   */
   seededChats: number;
   /** Chats whose first messages page OF answered 404 (a deleted fan's): skipped. */
   missingChats: number;
@@ -249,7 +255,7 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
  * they update every column but `is_mass`, `is_automated` and `automated_reason`: the flags a run that read the mass
  * history derived are not undone. A message read again exists upstream, so either way its `deleted_at` is cleared.
  * Coverage merges: it never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's
- * script candidates.
+ * script candidates and, for a run that ran to its end, moves `account_workspace.refreshed_at` forward (never back).
  */
 export function dbStore(teamId: string, accountId: number): BackfillStore {
   const owned = { teamId, accountId };
@@ -308,8 +314,13 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
         .where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId)));
       return rows.map((r) => r.chatId);
     },
-    async finish() {
+    async finish(refreshedAt) {
       await syncScripts(teamId, accountId);
+      if (!refreshedAt) return;
+      await db
+        .update(accountWorkspace)
+        .set({ refreshedAt: sql`greatest(${accountWorkspace.refreshedAt}, ${refreshedAt.toISOString()}::timestamptz)` })
+        .where(and(eq(accountWorkspace.accountId, accountId), eq(accountWorkspace.teamId, teamId)));
     },
   };
 }
@@ -341,7 +352,8 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * Backfills one account's range (spec §4.2): first the range's transactions (a few pages, so a long run that dies
  * still has them), then mass history in one-day windows from a day before `from` up to now (the walks store messages
  * on both sides of the range) and the welcome template (both feed the derived columns), then the chats active in the
- * range in the chat list's order, then the range's payers and the chats with stored messages that the list left out,
+ * range in the chat list's order, then the range's payers the list left out or names as not active in the range and
+ * the chats with stored messages that the list left out,
  * each chat's messages newest first down to the range start, all into `store` (`dbStore` upserts, so a re-run never
  * double counts). A chat whose first messages page OF answers 404 is skipped, as is one the upstream answers another
  * 4xx (not 401 or 429). Paced per account within the run (the hourly cap spread evenly: a request starts every hour
@@ -369,6 +381,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   const to = opts.to.getTime();
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
   const cfg = backfillConfig(opts.config);
+  const startedAt = Date.now();
 
   const result: BackfillResult = {
     phase: 'transactions',
@@ -476,15 +489,17 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     const list = await listChats(get, from);
     result.droppedChats = list.dropped;
     // OF's chat list leaves some chats out (a deleted or deactivated fan's; its offset still counts them), so the
-    // range's payers and the chats with stored messages are walked too when the list did not name them.
-    const seeded = [...new Set([...payers, ...(await store.chatIds())])].filter(
-      (id) => Number.isSafeInteger(id) && id > 0 && id !== accountId && !list.listed.has(id),
-    );
+    // chats with stored messages are walked too when the list did not name them, and the range's payers whenever the
+    // list does not name them active: a fan who bought an older PPV in the range has no newer message, and the walk
+    // re-reads the PPV's `isOpened` when it is on the chat's pages down to the range start.
+    const active = new Set(list.active.map((c) => c.id));
+    const stored = (await store.chatIds()).filter((id) => !list.listed.has(id));
+    const seeded = [...new Set([...payers, ...stored])].filter((id) => Number.isSafeInteger(id) && id > 0 && id !== accountId && !active.has(id));
     result.seededChats = seeded.length;
     result.chatsTotal = list.active.length + seeded.length;
     result.phase = 'chats';
     let refusedInARow = 0;
-    for (const chat of [...list.active, ...seeded.map((id) => ({ id, username: null, name: null, customName: null }))]) {
+    for (const chat of [...list.active, ...seeded.map((id) => list.listed.get(id) ?? { id, username: null, name: null, customName: null })]) {
       // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the
       // run. `refused`: OF's own 400 or 403, its answer to a dead session's chat reads; DEAD_SESSION_CHATS in a row end
       // the run. Another 4xx (`failed`) or a missing chat neither counts nor resets the run of refusals.
@@ -512,7 +527,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     if (!signal?.aborted) throw err;
     result.stopped = true;
   }
-  await store.finish();
+  await store.finish(result.stopped ? null : new Date(Math.min(startedAt, to)));
   return result;
 }
 
@@ -561,7 +576,7 @@ type Chat = { id: number; username: string | null; name: string | null; customNa
 
 /**
  * The whole chat list (`skip_users=none` so OF sends the full `withUser`): `active`, the chats active since `from`;
- * `listed`, every fan id it named; `dropped`, the entries without a readable fan id. Pages by the page's `nextOffset`
+ * `listed`, every chat it named, by fan id; `dropped`, the entries without a readable fan id. Pages by the page's `nextOffset`
  * (else by the chats it returned) until a page is empty, says `hasMore` false, or STALE_CHAT_PAGES pages in a row add
  * no new chat (the bound when OF repeats itself; one page of repeats is the list moving while it is read). No quiet
  * page ends it: OF's order is not by the last message (unread chats first, a mass message does not move a chat, and a
@@ -569,9 +584,9 @@ type Chat = { id: number; username: string | null; name: string | null; customNa
  * with `lastMessage: null` (its latest message deleted) counts as active; one without a readable last-message time
  * does not.
  */
-async function listChats(get: Get, from: number): Promise<{ active: Chat[]; listed: Set<number>; dropped: number }> {
+async function listChats(get: Get, from: number): Promise<{ active: Chat[]; listed: Map<number, Chat>; dropped: number }> {
   const active: Chat[] = [];
-  const listed = new Set<number>();
+  const listed = new Map<number, Chat>();
   let dropped = 0;
   let stale = 0;
   for (let offset = 0; ; ) {
@@ -585,13 +600,14 @@ async function listChats(get: Get, from: number): Promise<{ active: Chat[]; list
         continue;
       }
       if (listed.has(id)) continue; // a repeat: the list moved while it was read
-      listed.add(id);
+      const entry = { id, username: username(chat.withUser), name: field(chat.withUser, 'name'), customName: field(chat.withUser, 'displayName') };
+      listed.set(id, entry);
       added++;
       // `lastMessage: null`: OF's answer when the chat's latest message was deleted. Walked and counted active, so
       // its other messages are read.
       const lastAt = chat.lastMessage === null ? from : time((chat.lastMessage as Raw | undefined)?.createdAt);
       if (!(lastAt >= from)) continue; // quiet since before the range, or no readable last message
-      active.push({ id, username: username(chat.withUser), name: field(chat.withUser, 'name'), customName: field(chat.withUser, 'displayName') });
+      active.push(entry);
     }
     stale = added ? 0 : stale + 1;
     if (list.length === 0 || !hasMore(page) || stale >= STALE_CHAT_PAGES) return { active, listed, dropped };

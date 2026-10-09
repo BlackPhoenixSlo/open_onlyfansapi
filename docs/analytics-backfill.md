@@ -31,6 +31,9 @@ Limits:
 - **The status is in memory.** Restarting the API ends a run in flight and forgets its status (the account shows the
   button again). The rows already stored stay; press the button again (rows upsert, it requests everything again).
 - **No stop button.** A run ends on its own, on an error, or with the API process.
+- **Daily refresh.** With `STATS_REFRESH_HOUR_UTC` set, the API also starts a run of each claimed account once a day
+  over the days since its last run (at most 7), shown on this page like a button run
+  ([analytics.md](analytics.md#keeping-it-fresh)).
 
 ## From the command line
 
@@ -55,8 +58,9 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
 
 1. **Migrate.** `pnpm db:migrate` applies `0008_analytics` (tables `account_workspace`, `message_fact`,
    `chat_coverage`, `purchase_fact`), `0009` to `0011` for the stats routes
-   ([analytics.md](analytics.md#deploy)), `0012` (`message_fact.deleted_at`), and `0013` and `0014`
-   (`message_fact.tip_cents` and `is_opened`; `0013` fills them with one `UPDATE` of every stored message).
+   ([analytics.md](analytics.md#deploy)), `0012` (`message_fact.deleted_at`), `0013` and `0014`
+   (`message_fact.tip_cents` and `is_opened`; `0013` fills them with one `UPDATE` of every stored message), and
+   `0015` (`account_workspace.refreshed_at`).
 2. **Upgrade the upstream.** The backfill reads the welcome message from `GET /of/settings/welcome-message`, which is
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
 3. **Link the workspace** if it is not linked yet: `pnpm --filter @gateway/api link-team <workspace-slug>`. It prints
@@ -102,9 +106,11 @@ read. A chat listed without a readable last-message time is not walked.
 
 OF's offset also counts chats the list does not return: a page of 20 places held 13 to 19 chats on 2026-10-09, and
 a chat with messages in the range (a fan with `isActive: false`) was never listed. So after the listed chats the run
-walks the range's payers (the fans of its transactions) and the chats with stored messages (from earlier runs and
-live events) that the list did not name (fan ids that are positive safe integers, not the account's own); a dry run
-seeds from the transactions only. A chat whose first messages page OF answers 404 (a deleted fan's) is skipped and
+walks the range's payers (the fans of its transactions) that the list did not name or names as not active in the
+range (a fan who bought an older PPV in the range has no newer message; the walk reads the PPV again, with its
+`isOpened`, when it is on the pages down to `--from`), with the list's names when it named them, and the chats with
+stored messages (from earlier runs and live events) that the list did not name (fan ids that are positive safe
+integers, not the account's own); a dry run seeds from the transactions only. A chat whose first messages page OF answers 404 (a deleted fan's) is skipped and
 counted as not found. A chat the list leaves out that neither paid in the range nor has a stored message is still
 missed.
 
@@ -134,7 +140,12 @@ It prints the request count and whether it was stopped (`failed` after an error)
   the list entries dropped for no readable fan id; and the chats failed on another 4xx (skipped), with the first 20
   ids.
 
-Then the row count of each file.
+Then the row count of each file. Last, stopped or not, it records the account's script candidates
+([analytics.md](analytics.md#scripts)), and a stored run that ran to its end moves `account_workspace.refreshed_at`
+forward to its start (or `--to`, when earlier; [analytics.md](analytics.md#keeping-it-fresh)), which the daily
+refresh reads. Rows upsert, so a re-run never double counts, but it does request everything
+again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
+`reached_start` an earlier run reached.
 
 **One run per account across processes.** A run (CLI, dry run included, or the API's) holds a Postgres advisory lock
 on the account id, `pg_try_advisory_lock(<account id>)`, on a connection of its own from its start to its end, and
@@ -142,10 +153,7 @@ releases it with `pg_advisory_unlock` on that connection (a lost connection drop
 account on the same database, from any process, fails at once with "A backfill of account <id> is already running
 (…): wait for it to end, then run again" (`409 backfill_running` from the dashboard), and the CLI exits 1. Runs of
 different accounts in different processes still run side by side. To see who holds it: `SELECT pid, objid FROM
-pg_locks WHERE locktype = 'advisory'`. Last, stopped or not, it records the account's script candidates
-([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
-again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
-`reached_start` an earlier run reached.
+pg_locks WHERE locktype = 'advisory'`.
 
 `--dry-run` makes the same requests (less the walks of chats seeded from stored messages) but stores nothing (no
 claim, rows, coverage or script candidates) and writes the CSVs from what it read, for comparing a fresh re-read with

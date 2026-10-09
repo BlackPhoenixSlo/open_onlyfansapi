@@ -3,9 +3,13 @@ import { db } from '../db/index.js';
 import { accountWorkspace } from '../db/schema.js';
 import { newId } from '../lib/ids.js';
 import type { Upstream } from '../lib/upstream.js';
+import { backfillRun, startBackfillRun } from '../modules/analytics/backfill-runs.js';
 import { dbStore, readTransactions, type Get } from '../modules/analytics/backfill.js';
 
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+/** The daily refresh's longest window. */
+const REFRESH_MAX_MS = 7 * DAY_MS;
 /** The poll's window: OF's ledger lagged real time by 3.5 to 10.5 hours, so a sale shows up well within it. */
 const POLL_WINDOW_MS = 48 * HOUR_MS;
 
@@ -36,4 +40,35 @@ export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogge
     }
   }
   return stored;
+}
+
+/** Today's refresh time: `hour`:00 UTC on `now`'s UTC day. */
+export const refreshBoundary = (now: Date, hour: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour));
+
+/**
+ * The daily refresh (docs/analytics.md, Keeping it fresh), ticked hourly: once `now` is past today's `hour`:00 UTC,
+ * each claimed account whose `refreshed_at` is null or before it gets one backfill from max(now - 7 days,
+ * refreshed_at - 1 hour) to now, started like the dashboard's (`startBackfillRun`: queued behind the one-at-a-time
+ * limiter, its status on the Accounts page) and never awaited here. Skipped: an account whose run is queued or running,
+ * and one whose last run (since the API started: the state is in memory) ended `session_expired` after today's
+ * refresh time, until tomorrow's. Returns the runs started.
+ */
+export async function refreshDue(upstream: Upstream, log: FastifyBaseLogger, hour: number, now = new Date()): Promise<number> {
+  const boundary = refreshBoundary(now, hour).getTime();
+  if (now.getTime() < boundary) return 0;
+  let started = 0;
+  for (const { accountId, teamId, refreshedAt } of await db.select().from(accountWorkspace)) {
+    if (refreshedAt && refreshedAt.getTime() >= boundary) continue;
+    const last = backfillRun(teamId, accountId);
+    if (last.status === 'queued' || last.status === 'running') continue;
+    if (last.status === 'error' && last.errorCode === 'session_expired' && Date.parse(last.finishedAt ?? '') >= boundary) continue;
+    const from = Math.max(now.getTime() - REFRESH_MAX_MS, (refreshedAt?.getTime() ?? -Infinity) - HOUR_MS);
+    try {
+      startBackfillRun({ upstream, teamId, accountId, from: new Date(from), to: now });
+      started++;
+    } catch (err) {
+      log.error({ err, accountId }, 'stats refresh failed to start');
+    }
+  }
+  return started;
 }

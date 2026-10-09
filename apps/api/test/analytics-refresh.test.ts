@@ -1,20 +1,24 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { purchaseFact } from '../src/db/schema.js';
+import { accountWorkspace, purchaseFact } from '../src/db/schema.js';
 import { envSchema } from '../src/env.js';
-import { pollTransactions } from '../src/jobs/analytics-refresh.js';
+import { pollTransactions, refreshBoundary, refreshDue } from '../src/jobs/analytics-refresh.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
+import { backfillRun } from '../src/modules/analytics/backfill-runs.js';
 import { assignAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { linkTeam, resetDb, signUp } from './helpers.js';
 
 // The jobs are tested by calling them: RUN_JOBS is false in tests, so no job ticks, and every OF call goes to the fake upstream.
 const TOKEN = 'test-only-upstream-token';
-const ACCOUNTS = [1001, 1002];
+const ACCOUNTS = [1001, 1002, 1003];
 const NOW = new Date('2026-09-10T12:00:00.000Z');
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
 const app = await buildApp({ logger: false });
 const fake = await startFakeUpstream(TOKEN);
@@ -73,17 +77,17 @@ describe('STATS_REFRESH_HOUR_UTC', () => {
 describe('hourly transactions poll', () => {
   it('reads the last 48 hours of each claimed account in one request each and upserts them', async () => {
     const start = fake.requests.length;
-    expect(await pollTransactions(upstream, log(), NOW)).toBe(4);
+    expect(await pollTransactions(upstream, log(), NOW)).toBe(6);
     expect(ofCalls(start)).toEqual(
       ACCOUNTS.map(() => `/of/payouts/transactions?limit=100&offset=0&startDate=${encodeURIComponent('2026-09-08 12:00:00')}`),
     );
     const rows = await db.select({ accountId: purchaseFact.accountId, txId: purchaseFact.txId, teamId: purchaseFact.teamId }).from(purchaseFact);
-    expect(rows.map((r) => `${r.accountId}:${r.txId}`).sort()).toEqual(['1001:tx2', '1001:tx3', '1002:tx2', '1002:tx3']);
+    expect(rows.map((r) => `${r.accountId}:${r.txId}`).sort()).toEqual(['1001:tx2', '1001:tx3', '1002:tx2', '1002:tx3', '1003:tx2', '1003:tx3']);
     expect(rows.every((r) => r.teamId === teamId)).toBe(true);
 
     // The next tick upserts: no double count.
-    expect(await pollTransactions(upstream, log(), NOW)).toBe(4);
-    expect(await db.$count(purchaseFact)).toBe(4);
+    expect(await pollTransactions(upstream, log(), NOW)).toBe(6);
+    expect(await db.$count(purchaseFact)).toBe(6);
   });
 
   it('logs an account that fails and still polls the others', async () => {
@@ -93,9 +97,72 @@ describe('hourly transactions poll', () => {
         req.accountId === 1001 ? { status: 401, ok: false, headers: new Headers(), body: Buffer.from('{}') } : upstream.forward(req),
     };
     const spy = log();
-    expect(await pollTransactions(failing, spy, NOW)).toBe(2);
+    expect(await pollTransactions(failing, spy, NOW)).toBe(4);
     expect(spy.error).toHaveBeenCalledTimes(1);
     expect(spy.error.mock.calls[0]![0]).toMatchObject({ accountId: 1001 });
-    expect(await db.$count(purchaseFact)).toBe(2);
+    expect(await db.$count(purchaseFact)).toBe(4);
+  });
+});
+
+describe('daily refresh', () => {
+  const setRefreshed = (accountId: number, at: Date | null) => db.update(accountWorkspace).set({ refreshedAt: at }).where(eq(accountWorkspace.accountId, accountId));
+  const run = (accountId: number) => backfillRun(teamId, accountId);
+  /** Waits until no run of ACCOUNTS is queued or running. */
+  async function settle() {
+    while (ACCOUNTS.some((id) => ['queued', 'running'].includes(run(id).status))) await sleep(20);
+  }
+  // Real time: a started run reads mass history up to the real now. The refresh hour is the current UTC hour, so
+  // today's refresh time has passed.
+  const at = (t: Date) => ({ t, h: t.getUTCHours() });
+
+  it('starts one run per due account (null or before today\'s refresh time), none for the others, and does not wait for them', async () => {
+    const { t, h } = at(new Date());
+    const boundary = refreshBoundary(t, h);
+    await setRefreshed(1001, null);
+    await setRefreshed(1002, new Date(boundary.getTime() + 1000)); // refreshed today: not due
+    await setRefreshed(1003, new Date(t.getTime() - 2 * DAY)); // two days ago: from an hour before that
+    const before = run(1002);
+    expect(await refreshDue(upstream, log(), h, t)).toBe(2);
+    // Returned with the runs still queued or running: the job never awaits a run.
+    expect(['queued', 'running']).toContain(run(1001).status);
+    expect(run(1001)).toMatchObject({ from: new Date(t.getTime() - 7 * DAY).toISOString(), to: t.toISOString() });
+    expect(run(1003)).toMatchObject({ from: new Date(t.getTime() - 2 * DAY - HOUR).toISOString(), to: t.toISOString() });
+    expect(run(1002)).toEqual(before);
+    // A tick while they run starts nothing more.
+    expect(await refreshDue(upstream, log(), h, t)).toBe(0);
+    await settle();
+    expect([run(1001).status, run(1003).status]).toEqual(['done', 'done']);
+    // Each run ran to its end, so refreshed_at moved to its `to`: no account is due until tomorrow.
+    const rows = await db.select().from(accountWorkspace);
+    expect(rows.filter((r) => r.accountId !== 1002).map((r) => r.refreshedAt)).toEqual([t, t]);
+    expect(await refreshDue(upstream, log(), h, new Date())).toBe(0);
+  });
+
+  it('starts nothing before today\'s refresh time', async () => {
+    await setRefreshed(1001, null);
+    const before = run(1001);
+    expect(await refreshDue(upstream, log(), 5, new Date('2026-09-10T04:59:59.000Z'))).toBe(0);
+    expect(run(1001)).toEqual(before);
+  });
+
+  it('tries a dead-session account once, then skips it until the next day', async () => {
+    const { t, h } = at(new Date());
+    for (const id of ACCOUNTS) await setRefreshed(id, id === 1001 ? null : t);
+    fake.state.of!.unauthorized = true;
+    try {
+      expect(await refreshDue(upstream, log(), h, t)).toBe(1);
+      await settle();
+      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired' });
+      const requests = fake.requests.length;
+      expect(await refreshDue(upstream, log(), h, new Date())).toBe(0);
+      expect(await refreshDue(upstream, log(), h, new Date(refreshBoundary(t, h).getTime() + DAY - 1000))).toBe(0); // later today
+      expect(fake.requests.length).toBe(requests);
+      // Tomorrow's refresh time: tried again (1002 and 1003, refreshed today, are due again too).
+      expect(await refreshDue(upstream, log(), h, new Date(refreshBoundary(t, h).getTime() + DAY))).toBe(3);
+      await settle();
+      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired' });
+    } finally {
+      fake.state.of!.unauthorized = false;
+    }
   });
 });

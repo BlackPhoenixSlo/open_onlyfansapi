@@ -157,6 +157,8 @@ const analyticsAt = (name: string) => timestamp(name, { withTimezone: true, prec
 export const accountWorkspace = pgTable('account_workspace', {
   accountId: integer('account_id').primaryKey(),
   teamId: analyticsTeamId(),
+  /** The stored data is complete up to here: the start (or `to`, when earlier) of the latest stored backfill that ran to its end; never moves back. */
+  refreshedAt: analyticsAt('refreshed_at'),
 });
 
 /** One OF chat message as fetched, with columns derived from `raw` (§2): rebuilt from `raw`, never re-scraped. */
