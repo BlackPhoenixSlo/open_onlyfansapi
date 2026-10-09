@@ -4,11 +4,9 @@ import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream } from '../../lib/upstream.js';
-import { backfillConfig, type BackfillConfig } from './config.js';
+import { backfillConfig, DAY_MS, HOUR_MS, type BackfillConfig } from './config.js';
 import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type DerivedMessage, type DerivedPurchase, type Raw } from './derive.js';
 
-const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 /** How far before the range start a stored sale still seeds its payer's chat: OF's ledger lags real time by hours. */
 const PAYER_LAG_MS = 12 * HOUR_MS;
 const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers 10 to 20 a page whatever the limit

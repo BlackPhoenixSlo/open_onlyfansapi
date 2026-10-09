@@ -14,7 +14,6 @@ type Run = {
   accountId: number;
   from: Date;
   /** When the run was asked for; it reads up to when it starts (later, if it was queued). */
-  to: Date;
   startedAt: Date;
   finishedAt: Date | null;
   status: 'queued' | 'running' | 'done' | 'error';
@@ -36,7 +35,6 @@ export function backfillRun(teamId: string, accountId: number): StatsBackfillRun
     runId: run.runId,
     accountId: run.accountId,
     from: run.from.toISOString(),
-    to: run.to.toISOString(),
     startedAt: run.startedAt.toISOString(),
     finishedAt: run.finishedAt?.toISOString() ?? null,
     requests: progress?.requests ?? 0,
@@ -66,14 +64,12 @@ export function assertBackfillIdle(accountId: number): void {
 export function startBackfillRun(opts: { upstream: Upstream; teamId: string; accountId: number; from: Date }): string {
   const { upstream, teamId, accountId, from } = opts;
   assertBackfillIdle(accountId);
-  const startedAt = new Date();
   const run: Run = {
     teamId,
     runId: newId('bfr'),
     accountId,
     from,
-    to: startedAt,
-    startedAt,
+    startedAt: new Date(),
     finishedAt: null,
     status: 'queued',
     progress: null,

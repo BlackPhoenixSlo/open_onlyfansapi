@@ -47,6 +47,7 @@ import {
 import { connectedAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { assertBackfillUnlocked } from '../analytics/backfill.js';
+import { DAY_MS } from '../analytics/config.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
 import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } from '../analytics/messages.js';
@@ -54,7 +55,7 @@ import { scopedRevenue } from '../analytics/revenue.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
-import { assertAccountAllowed, DAY_MS, daysBetween, range, scopedAccounts } from './scope.js';
+import { assertAccountAllowed, daysBetween, range, scopedAccounts } from './scope.js';
 
 function metricId(id: string): MetricId {
   if (!isMetricId(id)) throw new AppError(404, 'metric_not_found', `No metric ${JSON.stringify(id)}`);

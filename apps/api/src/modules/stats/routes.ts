@@ -6,7 +6,8 @@ import { event } from '../../db/schema.js';
 import { stats, statsQuery, type Stats } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
-import { DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
+import { DAY_MS } from '../analytics/config.js';
+import { DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const day = sql<string>`to_char(${event.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
 

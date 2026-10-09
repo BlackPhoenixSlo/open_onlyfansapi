@@ -1,6 +1,7 @@
 import { env } from '../../env.js';
 
-const HOUR_MS = 3_600_000;
+export const HOUR_MS = 3_600_000;
+export const DAY_MS = 86_400_000;
 
 // The default reply cap (spec §4.5), used by the step 0 CSV export; the stats routes read the workspace's own from
 // `stats_config`. Not baked in at ingest: it applies at query time.

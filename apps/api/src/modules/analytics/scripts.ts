@@ -2,6 +2,7 @@ import { and, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
+import { DAY_MS } from './config.js';
 import { fanNames, messageFanNames, NORMALISER_VERSION, normaliseText, scriptHash } from './derive.js';
 import { dm } from './facts.js';
 import { statusAsOf, workspaceAccounts } from './metrics.js';
@@ -9,7 +10,6 @@ import { statusAsOf, workspaceAccounts } from './metrics.js';
 // Script candidates (spec §2 "Script", "Script sends", "Script reply rate"; §6 step 3): auto-detected DM text
 // hashes with their exact variants, sends and reply rate. No money.
 
-const DAY_MS = 86_400_000;
 export const SCRIPT_MIN_SENDS = 5;
 export const SCRIPT_MIN_CHATS = 3;
 export const SCRIPT_WINDOW_MS = 30 * DAY_MS;

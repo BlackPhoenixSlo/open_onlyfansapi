@@ -1,11 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
+import { HOUR_MS } from '../modules/analytics/config.js';
 import { startEventSource } from '../modules/events/source.js';
 import { deliverDue } from '../modules/webhooks/worker.js';
 import { pollTransactions, refreshDue } from './analytics-refresh.js';
 import { deleteExpired } from './retention.js';
-
-const HOUR_MS = 3_600_000;
 
 /**
  * In-process interval jobs (only when RUN_JOBS=true). Each runs once at start, then on its interval; stopped on close.

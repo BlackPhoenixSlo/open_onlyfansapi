@@ -418,7 +418,6 @@ export const statsBackfillRun = z.union([
     runId: z.string(),
     accountId: z.number().int(),
     from: z.string(),
-    to: z.string(),
     startedAt: z.string(),
     finishedAt: z.string().nullable(),
     /** Upstream requests made, 429s and retries included. */

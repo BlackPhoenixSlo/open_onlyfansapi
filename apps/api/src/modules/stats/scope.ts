@@ -1,10 +1,10 @@
 import { AppError } from '../../lib/errors.js';
 import type { Actor } from '../../plugins/actor.js';
+import { DAY_MS } from '../analytics/config.js';
 import { zonedMidnight, zonedToday } from '../analytics/metrics.js';
 
 // Range and account scope shared by `GET /v1/stats` and the `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/revenue` routes.
 
-export const DAY_MS = 86_400_000;
 export const DEFAULT_DAYS = 30;
 export const MAX_DAYS = 366;
 

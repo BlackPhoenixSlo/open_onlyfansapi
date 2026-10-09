@@ -6,10 +6,9 @@ import type { Upstream } from '../lib/upstream.js';
 import { backfillRun, startBackfillRun } from '../modules/analytics/backfill-runs.js';
 import { dbStore } from '../modules/analytics/backfill-store.js';
 import { readTransactions, type Get } from '../modules/analytics/backfill.js';
+import { DAY_MS, HOUR_MS } from '../modules/analytics/config.js';
 import { refreshBoundary } from '../modules/analytics/refresh.js';
-import { DAY_MS } from '../modules/stats/scope.js';
 
-const HOUR_MS = 3_600_000;
 /** The daily refresh's longest window. */
 const REFRESH_MAX_MS = 7 * DAY_MS;
 /** The poll's window: OF's ledger lagged real time by 3.5 to 10.5 hours, so a sale shows up well within it. */
