@@ -14,6 +14,7 @@ import keysRoutes from './modules/keys/routes.js';
 import { captureRequestLogs } from './modules/logs/capture.js';
 import logsRoutes from './modules/logs/routes.js';
 import openapiRoutes from './modules/openapi/routes.js';
+import proxiesRoutes from './modules/proxies/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
 import realtimeRoutes from './modules/realtime/routes.js';
 import statsMetricsRoutes from './modules/stats/metrics-routes.js';
@@ -74,6 +75,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(keysRoutes, { prefix: '/api/keys' });
   await app.register(logsRoutes, { prefix: '/api/logs' });
   await app.register(accountsConnectRoutes, { prefix: '/api/accounts' });
+  await app.register(proxiesRoutes, { prefix: '/api' });
   await app.register(usageRoutes, { prefix: '/api' });
   await app.register(webhookStreamRoutes, { ...opts.stream, prefix: '/api' });
 

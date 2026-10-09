@@ -17,6 +17,12 @@ export interface Upstream {
   listAccounts(requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/session/bootstrap` with a JSON `{ curl, nickname?, proxy_url? }` body (it carries live OF cookies). */
   bootstrapSession(body: string, requestId: string): Promise<UpstreamResponse>;
+  /** `PATCH {origin}/of-accounts/{id}` with a JSON `{ nickname?, proxy? }` body → the updated account row. */
+  updateAccount(id: number, body: string, requestId: string): Promise<UpstreamResponse>;
+  /** `GET {origin}/proxies` → JSON array of proxy entries with their traffic stats (never a password). */
+  listProxies(requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/proxies/{label}/probe` → the entry with its fresh egress IP, or 502 `proxy_error`. */
+  probeProxy(label: string, requestId: string): Promise<UpstreamResponse>;
   /** `{method} {origin}/of{path}` with `x-of-proxy-account-id: {accountId}`. */
   forward(req: ForwardRequest): Promise<UpstreamResponse>;
   /** `GET {origin}/docs/json` → OpenAPI 3 document. It is optional: without it the gateway serves its own routes only. */
@@ -64,6 +70,19 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
         body,
+      }),
+    updateAccount: (id, body, requestId) =>
+      request(new URL(`/of-accounts/${id}`, origin), {
+        method: 'PATCH',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
+        body,
+      }),
+    listProxies: (requestId) =>
+      request(new URL('/proxies', origin), { headers: { accept: 'application/json', 'x-request-id': requestId } }),
+    probeProxy: (label, requestId) =>
+      request(new URL(`/proxies/${encodeURIComponent(label)}/probe`, origin), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'x-request-id': requestId },
       }),
     forward: async ({ accountId, path, method, headers, body }) => {
       const url = new URL(`/of${path}`, origin);

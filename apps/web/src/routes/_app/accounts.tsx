@@ -1,11 +1,16 @@
+import type { Account } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
+import { MoreHorizontal } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
+import { EditAccountDialog } from '@/features/accounts/EditAccountDialog';
+import { ProxiesCard } from '@/features/accounts/ProxiesCard';
 import { RunAnalytics } from '@/features/accounts/RunAnalytics';
 import { SessionExpiredBadge } from '@/features/accounts/status-badge';
 import { ApiError, accountsQuery } from '@/lib/api';
@@ -15,6 +20,7 @@ export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
 function Accounts() {
   const accounts = useQuery(accountsQuery);
   const [connecting, setConnecting] = useState(false);
+  const [editing, setEditing] = useState<Account | null>(null);
   const unlinked = accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked';
 
   return (
@@ -52,6 +58,7 @@ function Accounts() {
               <TableHead>ID</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Analytics</TableHead>
+              <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -77,11 +84,25 @@ function Accounts() {
                 </TableCell>
                 {/* Only an active account can run; a session_expired one shows no Run analytics until it is re-connected. */}
                 <TableCell>{a.status === 'active' && <RunAnalytics accountId={a.id} />}</TableCell>
+                <TableCell>
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" aria-label={`Actions for ${a.label ?? a.id}`}>
+                        <MoreHorizontal />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => setEditing(a)}>Edit</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
+      {accounts.isSuccess && <ProxiesCard accounts={accounts.data.items} />}
+      {editing && <EditAccountDialog key={editing.id} account={editing} onClose={() => setEditing(null)} />}
       {/* Mounted only while open: closing it drops the cURL (live cookies) from React state. */}
       {connecting && <ConnectDialog onClose={() => setConnecting(false)} />}
     </div>

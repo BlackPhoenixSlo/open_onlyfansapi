@@ -8,6 +8,7 @@ import type {
   LogList,
   LogStatus,
   Overview,
+  ProxyInfo,
   StatsBackfillRun,
   StatsConfig,
   StatsFans,
@@ -88,6 +89,12 @@ export const keysQuery = queryOptions({
 export const accountsQuery = queryOptions({
   queryKey: ['accounts'],
   queryFn: () => api<{ items: Account[] }>('/v1/accounts'),
+});
+
+/** The upstream's proxy registry with bound accounts and traffic stats (dashboard only; never credentials). */
+export const proxiesQuery = queryOptions({
+  queryKey: ['proxies'],
+  queryFn: () => api<{ items: ProxyInfo[] }>('/api/proxies'),
 });
 
 export const whoamiQuery = queryOptions({

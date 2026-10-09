@@ -169,7 +169,8 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
  * Stand-in for the upstream: every route needs `authorization: Bearer <token>`, `/of/*` is echoed (JSON),
  * `/of/shaped?status&type&body&next&gzip` answers as told (`next` becomes `x-next-page`),
  * `/of-accounts` serves one account list, `/docs/json` a small OpenAPI spec and `/session/bootstrap` answers 200 for a
- * curl with a numeric `user-id` header, else 400 `invalid_curl` (shaped like the upstream). `/ws` (plan-v4 §2.2) instead needs
+ * curl with a numeric `user-id` header, else 400 `invalid_curl` (shaped like the upstream). `PATCH /of-accounts/:id` edits a
+ * listed account, and `/proxies` and `/proxies/:label/probe` serve `proxies` (probing `dead` answers 502 `proxy_error`). `/ws` (plan-v4 §2.2) instead needs
  * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
  * `pushFrame()` is given.
  */
@@ -180,6 +181,24 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
   /** Open `/ws` sockets, and how many were ever accepted. */
   const sockets = new Set<WebSocket>();
   const ws = { connections: 0, maxOpen: 0 };
+  /** `/proxies` entries, shaped like the upstream's (`username` and `password` here prove the gateway whitelists). */
+  const proxies: (Record<string, unknown> & { label: string })[] = [
+    {
+      label: 'acct-1001',
+      scheme: 'http',
+      host: '203.0.113.10',
+      port: 8080,
+      username: 'proxy-user',
+      password: 'proxy-secret',
+      assigned_account_ids: ['1001'],
+      verified_ip: null,
+      verified_at: null,
+      verified_geo: null,
+      stats: { ok: 3, failed: 1, last_error: 'timeout: slow', last_error_at: '2026-10-09T11:00:00Z', last_used_at: '2026-10-09T11:30:00Z' },
+      since: '2026-10-09T10:00:00Z',
+    },
+    { label: 'dead', scheme: 'socks5', host: '203.0.113.99', port: 1080, assigned_account_ids: [], stats: {}, since: '2026-10-09T10:00:00Z' },
+  ];
   const app = Fastify({ forceCloseConnections: true });
   await app.register(websocket, { options: { handleProtocols: (p) => (p.has('bearer') ? 'bearer' : false) } });
   app.removeContentTypeParser('application/json');
@@ -207,6 +226,28 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     const uid = /user-id: (\d+)/.exec(curl)?.[1];
     if (!uid) return reply.status(400).send({ error: { code: 'invalid_curl', message: 'the curl has no numeric user-id header' } });
     return { accountId: Number(uid), username: 'fresh', status: 'connecting' };
+  });
+  app.patch('/of-accounts/:id', async (request, reply) => {
+    const row = accounts.find((a) => a.id === Number((request.params as { id: string }).id));
+    if (!row) return reply.status(404).send({ error: { code: 'account_not_found' } });
+    const body = JSON.parse(String(request.body)) as { nickname?: string; proxy?: { label?: string; url?: string } | null };
+    if (body.proxy?.label && !proxies.some((p) => p.label === body.proxy!.label)) {
+      return reply.status(404).send({ error: { code: 'proxy_not_found' } });
+    }
+    if (body.proxy?.url && !/^(https?|socks5h?):\/\//.test(body.proxy.url)) {
+      return reply.status(400).send({ error: { code: 'invalid_proxy_url', message: 'expected scheme://[user:pass@]host:port' } });
+    }
+    if (body.nickname) row.label = body.nickname;
+    if (body.proxy !== undefined) row.proxyLabel = body.proxy ? (body.proxy.label ?? `acct-${row.id}`) : null;
+    return row;
+  });
+  app.get('/proxies', async () => proxies);
+  app.post('/proxies/:label/probe', async (request, reply) => {
+    const entry = proxies.find((p) => p.label === (request.params as { label: string }).label);
+    if (!entry) return reply.status(404).send({ error: { code: 'proxy_not_found' } });
+    if (entry.label === 'dead') return reply.status(502).send({ error: { code: 'proxy_error', message: 'proxy_probe_failed: refused' } });
+    Object.assign(entry, { verified_ip: '198.51.100.7', verified_geo: 'Ljubljana, SI', verified_at: '2026-10-09T12:00:00Z' });
+    return entry;
   });
   app.get('/ws', { websocket: true }, (socket) => {
     sockets.add(socket);
@@ -266,6 +307,7 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     url: address,
     requests,
     state,
+    proxies,
     sockets,
     ws,
     /** Sends one text frame (an object is JSON-encoded) to every open `/ws` socket. */

@@ -5,7 +5,7 @@ import { assertTeamLinked } from '../../lib/team-link.js';
 import { connectedAccounts, type UpstreamAccount } from './service.js';
 
 /** Whitelists the upstream row: internal fields (proxy, agency, creator ids) never leave the gateway. */
-function toAccount(a: UpstreamAccount): Account {
+export function toAccount(a: UpstreamAccount): Account {
   return {
     id: a.id,
     label: a.label ?? null,

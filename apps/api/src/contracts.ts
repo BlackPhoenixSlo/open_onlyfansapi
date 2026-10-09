@@ -61,6 +61,45 @@ export type ConnectAccountBody = z.infer<typeof connectAccountBody>;
 /** The upstream's `/session/bootstrap` success body, passed through unchanged. */
 export type ConnectedAccount = { accountId: number; username: string | null; status: string };
 
+/**
+ * `PATCH /api/accounts/:id` (dashboard only): an omitted field is left unchanged. `proxy`: `{ label }` moves the account
+ * onto an existing proxy, `{ url }` (`scheme://[user:pass@]host:port`, checked by the upstream) stores a new one for it,
+ * `null` unbinds it.
+ */
+export const updateAccountBody = z.object({
+  label: z.string().trim().min(1).max(100).optional(),
+  proxy: z
+    .union([z.strictObject({ label: z.string().min(1).max(128) }), z.strictObject({ url: z.string().trim().min(1).max(2048) })])
+    .nullable()
+    .optional(),
+});
+export type UpdateAccountBody = z.infer<typeof updateAccountBody>;
+
+/**
+ * A proxy in the upstream's registry (`GET /api/proxies`, dashboard only); never its credentials. `stats` count the OF
+ * calls made through it since `since` (the upstream's start: they reset when it restarts).
+ */
+export const proxy = z.object({
+  label: z.string(),
+  scheme: z.string(),
+  host: z.string().nullable(),
+  port: z.number().int().nullable(),
+  assignedAccountIds: z.array(z.number().int()),
+  verifiedIp: z.string().nullable(),
+  verifiedAt: z.string().nullable(),
+  verifiedGeo: z.string().nullable(),
+  stats: z.object({
+    ok: z.number().int(),
+    failed: z.number().int(),
+    lastError: z.string().nullable(),
+    lastErrorAt: z.string().nullable(),
+    lastUsedAt: z.string().nullable(),
+  }),
+  since: z.string(),
+});
+export type ProxyInfo = z.infer<typeof proxy>;
+export const proxyList = z.object({ items: z.array(proxy) });
+
 export const whoami = z.object({
   team: z.object({
     id: z.string(),
