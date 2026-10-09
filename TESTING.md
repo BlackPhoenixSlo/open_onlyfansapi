@@ -22,7 +22,7 @@ Variables in the root `.env`. Copy it from `.env.example` and do not commit it. 
 
 | Variable | What it is for | Where to get it |
 |---|---|---|
-| `DATABASE_URL`, `TEST_DATABASE_URL` | Gateway DB and the vitest DB (`TEST_…` is read from the shell only, not `.env`) | `.env.example` defaults point at compose Postgres :5434 |
+| `DATABASE_URL`, `TEST_DATABASE_URL` | OpenOnlyfansAPI DB and the vitest DB (`TEST_…` is read from the shell only, not `.env`) | `.env.example` defaults point at compose Postgres :5434 |
 | `BETTER_AUTH_SECRET` | Session signing | `openssl rand -base64 32` |
 | `APP_URL`, `BETTER_AUTH_URL` | Dashboard origin (the only Origin allowed on cookie writes) and the API's auth base | Set `APP_URL` to the dashboard's real port. Vite moves to :5174 when :5173 is taken (check) |
 | `UPSTREAM_URL`, `UPSTREAM_TOKEN` | Where the gateway forwards and the bearer it sends | `http://localhost:3001`. The token must equal the one the upstream container gets (compose reads `UPSTREAM_TOKEN` from the shell or root `.env`) |
@@ -120,7 +120,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 | Rate limit | More than 120 req/min on one key | `429 rate_limited` | 429 seen | none recorded |
 | Logs and usage | Dashboard **Logs** and **Usage** after the calls above | Rows with status, latency, key and account. No credential headers stored | Your calls appear, redacted | none recorded |
 | Playground | Dashboard `/playground`, pick an op and the account, Send | `limit` 20 and last-7-days dates prefilled, Table view, Copy curl | Real response rendered | `pnpm media` (screenshot script) Playground selector is broken (earlier session notes). The Playground itself is not affected |
-| OpenAPI and docs | `GET /openapi.json`, `/docs` | Gateway plus upstream ops under `platform` | Upstream ops present | Spec is cached 10 min |
+| OpenAPI and docs | `GET /openapi.json`, `/docs` | OpenOnlyfansAPI plus upstream ops under `platform` | Upstream ops present | Spec is cached 10 min |
 | Email verification | Sign up a new user | `403 EMAIL_NOT_VERIFIED` until the link is opened. Login page has Resend | Real email received with `SMTP_*` set | Live SMTP send untested |
 | Webhooks | Set `ALLOW_HTTP_WEBHOOKS=true`. Run `WEBHOOK_SECRET=whsec_… pnpm --filter @gateway/api exec tsx src/db/webhook-receiver.ts` (:4100). Create an endpoint `http://localhost:4100/hook` with `$WRITE`, then `POST /v1/webhooks/$ID/test` | Receiver logs `signature ok`, delivery `succeeded` | A real OF event (e.g. a fan message) delivered | `$WRITE` is allowlisted, and any allowlisted key gets `403 account_not_allowed` on webhook routes. Create the endpoint from the dashboard (session) or with an un-allowlisted write key (check). Events are at-most-once and lost during reconnects. `upstream.*` names may change |
 | Webhook SSE and live events | Dashboard **Webhooks**: Live events card, **Emit test event** button | Card lists the newest ledger events on open; toast per delivery attempt, `webhook.test` in the card, desktop notification when the tab is hidden | Real event from the account shows in the card | Stream lives 10 min, then the browser reconnects (check) |

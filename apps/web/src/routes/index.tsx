@@ -93,7 +93,7 @@ function Hero() {
         A self-hosted API gateway and dashboard for a creator-platform service, with the upstream service included.
       </p>
       <p className="max-w-[46rem] text-muted-foreground">
-        Each workspace creates its own scoped API keys and calls <code>{'/v1/{account}/...'}</code>. Gateway checks the
+        Each workspace creates its own scoped API keys and calls <code>{'/v1/{account}/...'}</code>. OpenOnlyfansAPI checks the
         key, forwards the call with one upstream bearer token, and records it. Your upstream stays private, your users
         never see its credential, and you get logs, usage, a playground and an API reference without building them.
       </p>
@@ -112,7 +112,7 @@ function Hero() {
       </p>
       <Screenshot
         name="home"
-        alt="The Gateway dashboard home page: requests, error rate and active keys for the last 24 hours"
+        alt="The OpenOnlyfansAPI dashboard home page: requests, error rate and active keys for the last 24 hours"
         className="mt-10 shadow-[0_12px_40px_rgba(0,0,0,.12)]"
       />
     </section>
@@ -160,7 +160,7 @@ function Features() {
           session, so no key is pasted into the browser.
         </Feature>
         <Feature title="Merged OpenAPI reference">
-          <code>/openapi.json</code> holds Gateway's own routes plus the upstream's operations rewritten to{' '}
+          <code>/openapi.json</code> holds OpenOnlyfansAPI's own routes plus the upstream's operations rewritten to{' '}
           <code>{'/v1/{account}/...'}</code>, and <code>/docs</code> renders it as an interactive reference.
         </Feature>
         <Feature title="Webhooks and live events">
@@ -188,10 +188,10 @@ function HowItFits() {
       title="How it fits"
       intro={
         <>
-          Clients call Gateway with a <code>gk_</code> key. Gateway forwards <code>{'/v1/{account}/<path>'}</code> to
+          Clients call OpenOnlyfansAPI with a <code>gk_</code> key. OpenOnlyfansAPI forwards <code>{'/v1/{account}/<path>'}</code> to
           the upstream's <code>{'/of/<path>'}</code> with <code>Authorization: Bearer $UPSTREAM_TOKEN</code> and never
           forwards the client's own credentials. The bundled upstream in <code>services/upstream</code> holds each
-          account's session and proxy, and streams its events back over one WebSocket, which Gateway fans out to
+          account's session and proxy, and streams its events back over one WebSocket, which OpenOnlyfansAPI fans out to
           webhooks and <code>/v1/ws</code> clients. Any service that answers the same calls can replace it; the{' '}
           <RepoLink path="README.md#how-it-fits">README</RepoLink> lists the contract.
         </>
@@ -230,7 +230,7 @@ function Footer() {
         </a>
       </nav>
       <p>
-        Gateway is free software under the AGPL-3.0-only licence. If you run a modified version as a service that others
+        OpenOnlyfansAPI is free software under the AGPL-3.0-only licence. If you run a modified version as a service that others
         use over a network, you must offer those users the source of your version.
       </p>
     </footer>
@@ -241,7 +241,7 @@ const DIAGRAM = ` client (curl, script, browser)
         │  HTTPS · Authorization: Bearer gk_... · REST and /v1/ws
         ▼
  ┌──────────────┐  http   ┌────────────────────────┐  Bearer UPSTREAM_TOKEN  ┌────────────────────────┐
- │ Caddy (TLS)  │───────▶ │ Gateway :4000          │───────────────────────▶ │ upstream :8000         │
+ │ Caddy (TLS)  │───────▶ │ OpenOnlyfansAPI :4000  │───────────────────────▶ │ upstream :8000         │
  └──────────────┘         │ API + dashboard        │◀──── events (/ws) ──────│ services/upstream      │
                           │ webhooks, /v1/ws       │                         │ OF sessions, proxies   │
                           └───────────┬────────────┘                         └───────────┬────────────┘

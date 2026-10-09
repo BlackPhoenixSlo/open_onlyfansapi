@@ -84,7 +84,7 @@ export function Tutorial() {
             carry the cookies as <code>-b '…'</code>. On <strong>Accounts</strong>, press{' '}
             <strong>Connect account</strong>, paste it, add a nickname if you like, and a proxy URL for that account (
             <code>http://user:pass@host:port</code> or <code>socks5h://…</code>; without one the account connects from
-            the server's own IP). Gateway hands the cURL to the upstream and never stores it in the request log. Or
+            the server's own IP). OpenOnlyfansAPI hands the cURL to the upstream and never stores it in the request log. Or
             connect from the shell:
           </p>
           <Pre>{CONNECT_FROM_SHELL}</Pre>
@@ -128,7 +128,7 @@ export function Tutorial() {
             lists the accounts the key may use. Anything under <code>{'/v1/{account}/'}</code> is forwarded to the
             upstream for that account. A successful JSON answer comes back wrapped in{' '}
             <code>{'{"data": …, "_meta": {}}'}</code>, plus <code>{'"_pagination": {"next_page": …}'}</code> when there
-            is a next page; the upstream's errors come back unchanged. Gateway's own errors look like{' '}
+            is a next page; the upstream's errors come back unchanged. OpenOnlyfansAPI's own errors look like{' '}
             <code>{'{ "error": { "code": "...", "message": "...", "requestId": "req_..." } }'}</code>, and every response
             carries an <code>x-request-id</code> header.
           </p>
@@ -185,7 +185,7 @@ export function Tutorial() {
         <Step title="Run analytics and read the stats">
           <p>
             This needs a real, active account. On <strong>Accounts</strong>, pick 30, 90 or 180 days and press{' '}
-            <strong>Run analytics</strong>. Gateway claims the account for your workspace and reads its chats, messages
+            <strong>Run analytics</strong>. OpenOnlyfansAPI claims the account for your workspace and reads its chats, messages
             and transactions through the upstream in the background; the row shows{' '}
             <em>Running… N chats, M messages</em>, then <em>Done · view Stats</em>. Long ranges take hours at the
             per-hour request cap, one account runs at a time, and restarting the API ends a run in flight (the rows

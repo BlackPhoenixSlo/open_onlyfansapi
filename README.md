@@ -1,4 +1,4 @@
-# Gateway
+# OpenOnlyfansAPI
 
 A self-hosted API gateway and dashboard for a creator-platform service, with the upstream service included.
 
@@ -8,8 +8,8 @@ A self-hosted API gateway and dashboard for a creator-platform service, with the
 The dashboard's root `/` is the landing page, with screenshots and a tutorial: signed-out visitors get Log in and
 Register there, signed-in users an Open dashboard button. The dashboard home is `/dashboard`.
 
-Gateway sits in front of an upstream service, the one in `services/upstream` or your own. Each workspace creates
-its own scoped API keys and calls `/v1/{account}/...`. Gateway checks the key, forwards the call with one upstream
+OpenOnlyfansAPI sits in front of an upstream service, the one in `services/upstream` or your own. Each workspace creates
+its own scoped API keys and calls `/v1/{account}/...`. OpenOnlyfansAPI checks the key, forwards the call with one upstream
 bearer token, and records it. Your upstream stays private, your users never see its credential, and you get logs,
 usage, a playground and an API reference without building them.
 
@@ -37,7 +37,7 @@ usage, a playground and an API reference without building them.
 - **Usage.** Requests and errors per day, broken down by key, account or endpoint.
 - **Playground.** Pick an operation and an account, edit parameters and body, send, and copy the curl. It uses
   your dashboard session, so no key is pasted into the browser.
-- **Merged OpenAPI reference.** `/openapi.json` holds Gateway's own routes plus the upstream's operations
+- **Merged OpenAPI reference.** `/openapi.json` holds OpenOnlyfansAPI's own routes plus the upstream's operations
   rewritten to `/v1/{account}/...`. `/docs` renders it as an interactive reference.
 - **Workspace isolation.** Keys, logs and usage belong to one workspace, and every query is scoped to it.
   Sign-up is open, but a workspace reaches the upstream only after the operator links it.
@@ -49,7 +49,7 @@ usage, a playground and an API reference without building them.
         │  HTTPS · Authorization: Bearer gk_... · REST and /v1/ws
         ▼
  ┌──────────────┐  http   ┌────────────────────────┐  Bearer UPSTREAM_TOKEN  ┌────────────────────────┐
- │ Caddy (TLS)  │───────▶ │ Gateway :4000          │───────────────────────▶ │ upstream :8000         │
+ │ Caddy (TLS)  │───────▶ │ OpenOnlyfansAPI :4000  │───────────────────────▶ │ upstream :8000         │
  └──────────────┘         │ API + dashboard        │◀──── events (/ws) ──────│ services/upstream      │
                           │ webhooks, /v1/ws       │                         │ OF sessions, proxies   │
                           └───────────┬────────────┘                         └───────────┬────────────┘
@@ -62,20 +62,20 @@ usage, a playground and an API reference without building them.
 ```
 
 The upstream lives in [services/upstream](services/upstream). It holds each OF account's session and proxy, signs
-the account's calls to OF, and streams its events to Gateway over one WebSocket, which Gateway fans out to
+the account's calls to OF, and streams its events to OpenOnlyfansAPI over one WebSocket, which OpenOnlyfansAPI fans out to
 webhooks and `/v1/ws` clients. The deploy stack runs it under the `upstream` compose profile with no published
-port; accounts are connected to it from the VPS shell, not in Gateway
+port; accounts are connected to it from the VPS shell, not in OpenOnlyfansAPI
 ([deploy guide §7](deploy/hostinger.md#7-connect-an-of-account)). Any service that answers the same calls can
 replace it. Each call carries `Authorization: Bearer $UPSTREAM_TOKEN`:
 
-| Call | Gateway sends | Upstream returns |
+| Call | OpenOnlyfansAPI sends | Upstream returns |
 |---|---|---|
 | `listAccounts` | `GET /of-accounts` | A JSON array of accounts, each with a numeric `id`. |
 | `forward` | `<METHOD> /of/<rest>` with `x-of-proxy-account-id: <account>` | Anything. It is passed through unchanged. |
 | `openapi` (optional) | `GET /docs/json` | An OpenAPI 3 document. Operations under `/of/` tagged `of-api` are merged into `/openapi.json`. |
 | `events` (optional, `UPSTREAM_WS_URL`) | WebSocket `GET /ws`, subprotocols `bearer` + `bearer.<token>`; the server must select `bearer` | One JSON event per text frame (plan-v4 §2.2) and a `heartbeat` frame at least every 90 s (the gateway reconnects after 90 s of silence). |
 
-Everything a client sends to `/v1/{account}/<rest>` lands on `/of/<rest>`, and Gateway refuses any path that
+Everything a client sends to `/v1/{account}/<rest>` lands on `/of/<rest>`, and OpenOnlyfansAPI refuses any path that
 would leave that prefix. The client's `authorization`, `cookie` and `host` headers are never forwarded. The
 interface is specified in [docs/spec/plan-v2.md §4](docs/spec/plan-v2.md#4-upstream-adapter-appsapisrclibupstreamts)
 and [docs/spec/plan-v4.md §2](docs/spec/plan-v4.md#2-contracts-every-phase-codes-against-these), and implemented
@@ -168,24 +168,24 @@ pnpm build               # both apps; in production the API serves the dashboard
 
 Create a key on the **API keys** page and copy it; it is shown once. `GET /v1/accounts` lists the account ids
 the key may use, and `GET /v1/whoami` shows the key's scope and allowlist. Then call the upstream through
-Gateway:
+OpenOnlyfansAPI:
 
 ```sh
 curl -H "Authorization: Bearer gk_..." https://gw.example.com/v1/123/me
 ```
 
-Gateway's own errors look like `{ "error": { "code": "...", "message": "...", "requestId": "req_..." } }`.
+OpenOnlyfansAPI's own errors look like `{ "error": { "code": "...", "message": "...", "requestId": "req_..." } }`.
 Upstream responses, errors included, come back as the upstream sent them. Every response carries an
 `x-request-id` header.
 
-A running Gateway serves the full reference at `/docs` and the spec at `/openapi.json`, with no login needed.
+A running OpenOnlyfansAPI serves the full reference at `/docs` and the spec at `/openapi.json`, with no login needed.
 [docs/authentication.md](docs/authentication.md) covers keys, scopes, sessions, rate limits and every error
 code. [docs/webhooks.md](docs/webhooks.md) covers signed event delivery to your endpoints, and
 [docs/realtime.md](docs/realtime.md) the `/v1/ws` event socket.
 
 ## Security
 
-- The upstream token lives only in the server's environment. Gateway adds it to outbound calls only, never
+- The upstream token lives only in the server's environment. OpenOnlyfansAPI adds it to outbound calls only, never
   logs it, and never forwards the client's own credentials upstream.
 - API keys are stored as SHA-256 hashes, so the database alone does not yield usable keys.
 - Dashboard writes need both an `Origin` matching `APP_URL` and an `x-dashboard: 1` header, and a bearer key

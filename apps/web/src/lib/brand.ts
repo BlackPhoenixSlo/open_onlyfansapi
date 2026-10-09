@@ -1,1 +1,1 @@
-export const PRODUCT_NAME = 'Gateway';
+export const PRODUCT_NAME = 'OpenOnlyfansAPI';

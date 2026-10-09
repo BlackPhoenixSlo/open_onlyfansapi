@@ -57,7 +57,7 @@ export async function buildApp(opts: AppOptions = {}) {
 
   await app.register(swagger, {
     openapi: {
-      info: { title: 'Gateway API', version: '2.1.0' },
+      info: { title: 'OpenOnlyfansAPI', version: '2.1.0' },
       components: { securitySchemes: { ApiKey: { type: 'http', scheme: 'bearer', description: 'An API key (`gk_…`)' } } },
       security: [{ ApiKey: [] }],
     },

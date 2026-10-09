@@ -19,7 +19,7 @@ separately and lay it over the shots.
 | Shot | On screen | Narration (spoken) | Duration |
 |---|---|---|---|
 | A1 | `docs/media/home.png`, slow zoom on the KPI cards | You run an upstream service with one bearer token. Your users want their own keys, logs and usage, never that token. | 0:08 |
-| A2 | README, the "How it fits" diagram | Gateway is a self-hosted API gateway and dashboard that sits in front of it, issues scoped keys and records every call. | 0:08 |
+| A2 | README, the "How it fits" diagram | OpenOnlyfansAPI is a self-hosted API gateway and dashboard that sits in front of it, issues scoped keys and records every call. | 0:08 |
 | A3 | Quick cuts: `keys.png`, `logs.png`, a terminal | Here's the dashboard, local setup, and a VPS deploy. | 0:04 |
 
 ## (b) Dashboard tour (1:00)
@@ -35,7 +35,7 @@ longer than the clip.
 | B4 | [0:12–0:20] Playground: search "me", pick `GET /me`, Send, 200, open Headers | The playground lists every operation from the merged spec. Pick one, pick an account, send. You get status, latency, headers and a curl snippet. | 0:10 |
 | B5 | [0:21–0:27] Logs list, then one request's detail page | Every authenticated call lands in Logs with key, account and timing. Credential headers are never stored; bodies are kept only for failed requests by default. | 0:10 |
 | B6 | [0:28–0:34] Usage: daily chart, then grouped by key and by endpoint | Usage charts requests and errors per day, broken down by key, account or endpoint, with a CSV export. | 0:08 |
-| B7 | [0:35–0:47] `/docs`: the API reference, scrolling to the platform operations | And slash docs is an interactive API reference: Gateway's own routes plus your upstream's operations, rewritten under slash v1 slash account. | 0:08 |
+| B7 | [0:35–0:47] `/docs`: the API reference, scrolling to the platform operations | And slash docs is an interactive API reference: OpenOnlyfansAPI's own routes plus your upstream's operations, rewritten under slash v1 slash account. | 0:08 |
 
 ## (c) Develop locally (0:56)
 
@@ -71,6 +71,6 @@ SSH session on a Docker VPS (`ssh root@<vps-ip>`), browser on the right. This is
 
 | Shot | On screen | Narration (spoken) | Duration |
 |---|---|---|---|
-| E1 | README, the Licence section | Gateway is AGPL-licensed open source. If you run a modified version as a service, share its source. | 0:06 |
+| E1 | README, the Licence section | OpenOnlyfansAPI is AGPL-licensed open source. If you run a modified version as a service, share its source. | 0:06 |
 | E2 | The repo's Issues tab, then `SECURITY.md` | Report bugs in GitHub issues. Report security problems privately, as SECURITY.md describes. | 0:05 |
-| E3 | README, the "Not affiliated" note, then the repo URL | Gateway is unofficial and not affiliated with any platform. Thanks for watching. | 0:04 |
+| E3 | README, the "Not affiliated" note, then the repo URL | OpenOnlyfansAPI is unofficial and not affiliated with any platform. Thanks for watching. | 0:04 |

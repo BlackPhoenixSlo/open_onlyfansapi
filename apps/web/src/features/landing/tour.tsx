@@ -131,7 +131,7 @@ const STOPS: { name: string; title: string; alt: string; caption: ReactNode }[] 
     alt: 'Interactive API reference at /docs listing the gateway operations',
     caption: (
       <>
-        <code>/docs</code> renders the merged OpenAPI spec: Gateway's own routes plus every upstream operation as{' '}
+        <code>/docs</code> renders the merged OpenAPI spec: OpenOnlyfansAPI's own routes plus every upstream operation as{' '}
         <code>{'/v1/{account}/...'}</code>. It is public on any running gateway, next to <code>/openapi.json</code>.
       </>
     ),
