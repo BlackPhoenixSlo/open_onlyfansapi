@@ -284,15 +284,18 @@ class OFClient:
         Also the single place we passively observe OF's current build hash:
         every response carries `x-of-rev` in the headers, which feeds the
         global live-rev cache for drift detection (see live_rev.py)."""
-        headers = self._signed_headers(url)
-        if json_body is not None:
-            headers["Content-Type"] = "application/json"
+        # The x-hash warmup runs its own _proxy_retry here, never nested in the one below.
+        self._ensure_x_hash()
         try:
             # Datacenter proxy providers sporadically 403 on CONNECT
             # under load; the same IP works again moments later. _proxy_retry()
             # retries with growing pauses against the SAME self.http session (sticky IP,
             # no rotation) — shared with every raw self.http call below.
             def _do() -> requests.Response:
+                # Signed per attempt: a retry can come seconds later, and Sign/Time must be fresh.
+                headers = self._signed_headers(url)
+                if json_body is not None:
+                    headers["Content-Type"] = "application/json"
                 if method == "GET":
                     return self.http.get(url, headers=headers, timeout=self.timeout_s)
                 return self.http.request(method, url, json=json_body,
@@ -353,12 +356,13 @@ class OFClient:
         pause doubles between attempts: 0.4, 0.8, 1.6, 3.2 s (~6 s over 5
         tries). Retries run against the SAME self.http session — no proxy
         lookup, no rebuild, no rotation — so OF still sees one sticky IP. This
-        is the single retry policy: both _http_call AND the handful of raw
-        self.http.get/post calls (CDN media download, /users/list, convert
-        upload) funnel through it, so a proxy blip no longer hard-fails a
-        request. It is also where proxy_stats counts each proxied call: ok (and
-        blocked on a 403/429), or failed once when the call finally fails in
-        transport (a blip a retry rescues is not counted as failed)."""
+        is the single retry policy: _http_call and the raw self.http calls
+        (egress_ip, the x-hash warmup, /users/list) funnel through it, so a
+        proxy blip no longer hard-fails a request. It is also where proxy_stats
+        counts each proxied call: ok (and blocked on a 403/429), or failed once
+        when the call finally fails in transport; a retried attempt only
+        records its error, so a blip a retry rescues is visible without
+        counting as failed."""
         for attempt in range(tries):
             try:
                 r = fn()
@@ -369,6 +373,8 @@ class OFClient:
                         self.account_id, self.proxy_label or "—", self._proxy_ip(),
                         attempt + 1, tries, what, str(e)[:200],
                     )
+                    if self.proxy_label:
+                        proxy_stats.record_retry(self.proxy_label, f"proxy_error: {str(e)[:160]}")
                     time.sleep(pause_s * 2 ** attempt)
                     continue
                 if self.proxy_label:
@@ -579,6 +585,9 @@ class OFClient:
         from urllib.parse import urlencode
         qs = urlencode([(f"{view}[]", str(uid)) for uid in user_ids])
         url = f"{API_BASE}/users/list?{qs}"
+        # As in _http_call: the x-hash warmup (its own _proxy_retry) runs first, not
+        # nested in the retry below, and each attempt is signed afresh.
+        self._ensure_x_hash()
         r = self._proxy_retry(
             lambda: self.http.get(url, headers=self._signed_headers(url), timeout=self.timeout_s),
             what="GET /users/list",

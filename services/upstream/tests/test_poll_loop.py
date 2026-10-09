@@ -69,16 +69,27 @@ def test_any_other_failure_is_logged_once_and_backed_off(caplog):
         f"sent poller recovered account={ACCT}"]
 
 
+def transport_error():
+    """A proxy blip as curl_cffi raises it: the attached response is `<Response [0]>`."""
+    e = curl_errors.ProxyError("CONNECT tunnel failed, response 403")
+    e.response = SimpleNamespace(status_code=0, headers={})
+    return e
+
+
 def test_a_first_transport_failure_waits_the_interval_then_doubles_and_resets(caplog):
-    blip = curl_errors.ProxyError("CONNECT tunnel failed, response 403")
-    poller = StubPoller(blip, None, blip, blip, blip, None)
+    poller = StubPoller(transport_error(), None, transport_error(), transport_error(), transport_error(), None)
     with caplog.at_level(logging.INFO, logger="upstream.poll_loop"):
         assert run_loop(poller, 6) == [INTERVAL, INTERVAL, INTERVAL, 2 * INTERVAL, 4 * INTERVAL, INTERVAL]
     assert [r.getMessage() for r in caplog.records] == [
-        f"sent poller failed account={ACCT} status=None: retrying in {INTERVAL}s",
+        f"sent poller failed account={ACCT} status=0: retrying in {INTERVAL}s",
         f"sent poller recovered account={ACCT}",
-        f"sent poller failed account={ACCT} status=None: retrying in {INTERVAL}s",
+        f"sent poller failed account={ACCT} status=0: retrying in {INTERVAL}s",
         f"sent poller recovered account={ACCT}"]
+
+
+def test_a_first_failure_without_any_response_also_waits_the_interval():
+    poller = StubPoller(RuntimeError("boom"), RuntimeError("boom"), None)
+    assert run_loop(poller, 3) == [INTERVAL, 2 * INTERVAL, INTERVAL]
 
 
 @pytest.mark.parametrize(("status", "code"), [(401, 0), (400, 301)])

@@ -57,7 +57,7 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
           Optional if you self-host for a single account. OK counts responses through each proxy, Blocked those OnlyFans answered 403 or 429, and Failed the
           calls that still failed after retries
           {since ? ` since ${new Date(since).toLocaleString()}` : ''}; they reset when the upstream restarts. Test
-          checks the proxy's egress IP.
+          checks the egress IP and onlyfans.com.
         </CardDescription>
       </CardHeader>
       <CardContent>

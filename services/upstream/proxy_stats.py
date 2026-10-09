@@ -1,6 +1,7 @@
 """Per-proxy traffic counters, keyed by proxy label: how many OF calls went through
 each proxy, how many failed in transport (once per call, after its retries ran out),
-how many OF answered 403/429 (`blocked`), and the last error, success and use.
+how many OF answered 403/429 (`blocked`), and the last error (a retried attempt's
+included), success and use.
 
 In-process only: nothing is persisted, so every counter resets when upstream
 restarts. `SINCE` is that start, and the dashboard shows "since <SINCE>" next to them.
@@ -47,6 +48,14 @@ def record_failed(label: str, error: str) -> None:
     with _lock:
         e = _entry(label)
         e["failed"] += 1
+        e["last_used_at"] = e["last_error_at"] = _now()
+        e["last_error"] = error[:200]
+
+
+def record_retry(label: str, error: str) -> None:
+    """A failed attempt that will be retried: its error shows, `failed` is left alone."""
+    with _lock:
+        e = _entry(label)
         e["last_used_at"] = e["last_error_at"] = _now()
         e["last_error"] = error[:200]
 

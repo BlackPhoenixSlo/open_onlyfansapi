@@ -319,7 +319,7 @@ def test_a_proxy_error_is_retried_5_times_with_growing_pauses(monkeypatch, caplo
     assert (s["ok"], s["failed"], s["last_error"]) == (0, 1, "proxy_error: CONNECT 403")
 
 
-def test_a_retry_that_recovers_is_not_counted_as_failed(monkeypatch):
+def test_a_retry_that_recovers_shows_the_blip_without_counting_it_as_failed(monkeypatch):
     sleeps = []
     monkeypatch.setattr("of_client.time.sleep", sleeps.append)
     c = OFClient(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"}, proxy_label="p")
@@ -327,7 +327,56 @@ def test_a_retry_that_recovers_is_not_counted_as_failed(monkeypatch):
     assert c._proxy_retry(_flaky(blip, blip, blip, SimpleNamespace(status_code=200))).status_code == 200
     assert sleeps == [0.4, 0.8, 1.6]
     s = proxy_stats.get("p")
-    assert (s["ok"], s["failed"], s["last_error"]) == (1, 0, None)
+    assert (s["ok"], s["failed"], s["last_error"]) == (1, 0, "proxy_error: blip")
+    assert s["failed"] == 0 and s["last_error_at"] <= s["last_ok_at"]  # the card does not paint it failing
+
+
+def _cold_client(monkeypatch, *answers):
+    """A proxied client with no cached x-hash whose raw GETs answer `answers` in turn."""
+    c = OFClient(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"}, proxy_label="p")
+    c.gets, c.sleeps, answer = [], [], _flaky(*answers)
+
+    def get(url, **kw):
+        c.gets.append(url)
+        return answer()
+
+    c.http = SimpleNamespace(get=get)
+    monkeypatch.setattr("of_client.time.sleep", c.sleeps.append)
+    return c
+
+
+def test_list_users_does_not_nest_the_x_hash_retry(monkeypatch):
+    c = _cold_client(monkeypatch, *[curl_errors.ProxyError("CONNECT 403")] * 25)
+    with pytest.raises(curl_errors.ProxyError):
+        c.list_users(["1"])
+    assert (len(c.gets), c.sleeps, proxy_stats.get("p")["failed"]) == (5, [0.4, 0.8, 1.6, 3.2], 1)
+
+
+def test_list_users_rescued_from_a_warmup_blip_counts_no_failure(monkeypatch):
+    ok = SimpleNamespace(status_code=200, ok=True, text="hash", raise_for_status=lambda: None,
+                         json=lambda: {"1": {"id": 1}})
+    c = _cold_client(monkeypatch, curl_errors.ProxyError("blip"), ok, ok)
+    assert c.list_users(["1"]) == {"1": {"id": 1}}
+    s = proxy_stats.get("p")
+    assert (len(c.gets), c.sleeps, s["ok"], s["failed"]) == (3, [0.4], 2, 0)
+
+
+def test_each_http_call_attempt_is_signed_afresh(monkeypatch):
+    stamps = iter(range(1, 10))
+
+    def sign(url, user_id, rules):
+        n = next(stamps)
+        return {"sign": f"sign-{n}", "time": str(n)}
+
+    monkeypatch.setattr("of_client.sign", sign)
+    c = _cold_client(monkeypatch, curl_errors.ProxyError("blip"),
+                     SimpleNamespace(status_code=200, ok=True, headers={}))
+    c._x_hash = "cached"
+    sent = []
+    get = c.http.get
+    c.http = SimpleNamespace(get=lambda url, **kw: sent.append(kw["headers"]) or get(url, **kw))
+    assert c.get("/api2/v2/users/me").status_code == 200
+    assert [(h["Sign"], h["Time"]) for h in sent] == [("sign-1", "1"), ("sign-2", "2")]
 
 
 def test_unproxied_calls_are_not_counted():
