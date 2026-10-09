@@ -719,3 +719,15 @@ describe('analytics CSV export', () => {
     });
   });
 });
+
+describe('database pool', () => {
+  it('logs an idle connection error (a Postgres restart) instead of crashing the process', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(() => pool.emit('error', new Error('terminating connection due to administrator command'))).not.toThrow();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('postgres'), 'terminating connection due to administrator command');
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
