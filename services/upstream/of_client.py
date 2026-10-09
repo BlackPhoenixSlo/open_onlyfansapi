@@ -357,7 +357,7 @@ class OFClient:
         tries). Retries run against the SAME self.http session — no proxy
         lookup, no rebuild, no rotation — so OF still sees one sticky IP. This
         is the single retry policy: _http_call and the raw self.http calls
-        (egress_ip, the x-hash warmup, /users/list) funnel through it, so a
+        (egress_ip, the x-hash warmup) funnel through it, so a
         proxy blip no longer hard-fails a request. It is also where proxy_stats
         counts each proxied call: ok (and blocked on a 403/429), or failed once
         when the call finally fails in transport; a retried attempt only
@@ -584,17 +584,7 @@ class OFClient:
             raise ValueError(f"view must be 'm' or 'x', got {view!r}")
         from urllib.parse import urlencode
         qs = urlencode([(f"{view}[]", str(uid)) for uid in user_ids])
-        url = f"{API_BASE}/users/list?{qs}"
-        # As in _http_call: the x-hash warmup (its own _proxy_retry) runs first, not
-        # nested in the retry below, and each attempt is signed afresh.
-        self._ensure_x_hash()
-        r = self._proxy_retry(
-            lambda: self.http.get(url, headers=self._signed_headers(url), timeout=self.timeout_s),
-            what="GET /users/list",
-        )
-        if not r.ok:
-            raise OFAPIError(f"{r.status_code} for {r.url}\n{r.text[:500]}", response=r)
-        return r.json()
+        return self.get_json(f"{API_BASE}/users/list?{qs}")
 
     # ── Dashboard / init / notifications ───────────────────────
 

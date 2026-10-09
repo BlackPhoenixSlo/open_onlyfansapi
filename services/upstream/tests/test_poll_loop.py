@@ -85,6 +85,7 @@ def test_a_first_transport_failure_waits_the_interval_then_doubles_and_resets(ca
         f"sent poller recovered account={ACCT}",
         f"sent poller failed account={ACCT} status=0: retrying in {INTERVAL}s",
         f"sent poller recovered account={ACCT}"]
+    assert caplog.records[0].exc_info  # the transport error's text and traceback are logged
 
 
 def test_a_first_failure_without_any_response_also_waits_the_interval():

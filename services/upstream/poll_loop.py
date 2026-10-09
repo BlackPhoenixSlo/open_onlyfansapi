@@ -57,16 +57,17 @@ async def run(name: str, poller: PollerLike, on_expired: Callable[[], None],
                 return
             status = getattr(resp, "status_code", None)
             retry = _retry_after(resp) if status == 429 else None
+            no_response = not status  # curl_cffi reports transport errors as status 0
             if retry is None:
-                # A first failure with no response (curl_cffi reports transport errors as status 0) keeps the interval.
-                if status or failing:
+                # A first failure with no response keeps the interval.
+                if not no_response or failing:
                     backoff = min(backoff * 2, BACKOFF_MAX_S)
                 delay = backoff
             else:
                 delay = max(retry, interval)
             if not failing:
                 log.warning("%s poller failed account=%s status=%s: retrying in %.0fs",
-                            name, account_id, status, delay, exc_info=resp is None)
+                            name, account_id, status, delay, exc_info=no_response)
             failing = True
         else:
             if failing:

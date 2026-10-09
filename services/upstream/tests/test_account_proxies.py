@@ -328,7 +328,7 @@ def test_a_retry_that_recovers_shows_the_blip_without_counting_it_as_failed(monk
     assert sleeps == [0.4, 0.8, 1.6]
     s = proxy_stats.get("p")
     assert (s["ok"], s["failed"], s["last_error"]) == (1, 0, "proxy_error: blip")
-    assert s["failed"] == 0 and s["last_error_at"] <= s["last_ok_at"]  # the card does not paint it failing
+    assert s["last_error_at"] <= s["last_ok_at"]  # the card does not paint it failing
 
 
 def _cold_client(monkeypatch, *answers):
@@ -353,12 +353,25 @@ def test_list_users_does_not_nest_the_x_hash_retry(monkeypatch):
 
 
 def test_list_users_rescued_from_a_warmup_blip_counts_no_failure(monkeypatch):
-    ok = SimpleNamespace(status_code=200, ok=True, text="hash", raise_for_status=lambda: None,
+    ok = SimpleNamespace(status_code=200, ok=True, text="hash", headers={}, raise_for_status=lambda: None,
                          json=lambda: {"1": {"id": 1}})
     c = _cold_client(monkeypatch, curl_errors.ProxyError("blip"), ok, ok)
     assert c.list_users(["1"]) == {"1": {"id": 1}}
     s = proxy_stats.get("p")
-    assert (len(c.gets), c.sleeps, s["ok"], s["failed"]) == (3, [0.4], 2, 0)
+    assert (len(c.gets), c.sleeps, s["ok"], s["failed"]) == (3, [0.4], 2, 0)  # warm-up blip + ok, /users/list
+
+
+def test_each_post_attempt_carries_the_content_type(monkeypatch):
+    c = _cold_client(monkeypatch, SimpleNamespace(status_code=200, ok=True, text="hash", raise_for_status=lambda: None))
+    sent, answer = [], _flaky(curl_errors.ProxyError("blip"), SimpleNamespace(status_code=200, ok=True, headers={}))
+
+    def request(method, url, **kw):
+        sent.append(kw["headers"])
+        return answer()
+
+    c.http.request = request
+    assert c.request("POST", "/api2/v2/x", json_body={}).status_code == 200
+    assert [h.get("Content-Type") for h in sent] == ["application/json"] * 2
 
 
 def test_each_http_call_attempt_is_signed_afresh(monkeypatch):
