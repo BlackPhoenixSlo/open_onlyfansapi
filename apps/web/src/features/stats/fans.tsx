@@ -61,37 +61,36 @@ export function FansCard({ range }: { range?: StatsRange }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {fans.data.items.map((f) => (
-                  <TableRow key={`${f.accountId}:${f.chatId}`}>
-                    <TableCell className="font-medium">
-                      <FanLabel fan={f}>
-                        {fanRowState(f) === 'payer-only' ? (
-                          <span title="A payer of the range with no stored messages">{fanName(f)}</span>
-                        ) : (
-                          <ConversationLink fan={f} range={fans.data} />
+                {fans.data.items.map((f) => {
+                  const state = fanRowState(f);
+                  return (
+                    <TableRow key={`${f.accountId}:${f.chatId}`}>
+                      <TableCell className="font-medium">
+                        <FanLabel fan={f}>
+                          {state === 'payer-only' ? <span title="A payer of the range with no stored messages">{fanName(f)}</span> : <ConversationLink fan={f} range={fans.data} />}
+                        </FanLabel>
+                      </TableCell>
+                      <TableCell className="text-right">{f.gross ? formatMoney(f.gross) : '—'}</TableCell>
+                      <TableCell className="text-right">{f.fanMessages}</TableCell>
+                      <TableCell className="text-right">{f.dmMessages}</TableCell>
+                      <TableCell className="text-right">{f.ppvSent ? `${f.ppvOpened}/${f.ppvSent}` : '—'}</TableCell>
+                      <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
+                      <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
+                      <TableCell className="text-right">
+                        {(state === 'silent' || state === 'active') && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={csv.downloading}
+                            onClick={() => download('all', `messages-${fanFileName(f)}`, { accountId: f.accountId, chatId: f.chatId })}
+                          >
+                            CSV
+                          </Button>
                         )}
-                      </FanLabel>
-                    </TableCell>
-                    <TableCell className="text-right">{f.gross ? formatMoney(f.gross) : '—'}</TableCell>
-                    <TableCell className="text-right">{f.fanMessages}</TableCell>
-                    <TableCell className="text-right">{f.dmMessages}</TableCell>
-                    <TableCell className="text-right">{f.ppvSent ? `${f.ppvOpened}/${f.ppvSent}` : '—'}</TableCell>
-                    <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
-                    <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
-                    <TableCell className="text-right">
-                      {fanRowState(f) !== 'payer-only' && fanRowState(f) !== 'no-message-in-range' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={csv.downloading}
-                          onClick={() => download('all', `messages-${fanFileName(f)}`, { accountId: f.accountId, chatId: f.chatId })}
-                        >
-                          CSV
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             {fans.data.total > fans.data.items.length && (
