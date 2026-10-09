@@ -66,6 +66,7 @@ All notable changes to this project are documented here. The format is based on
 - Stats: `GET /v1/stats/fans` carries each fan's booked spend from the stored transactions, `gross` in the range and `grossAllTime`, in cents, with `isDeleted` (as in `GET /v1/stats/revenue`), and is sorted by `gross` in the range first (then the latest fan message, as before); it lists every payer of the range without a message in the range too (counts 0, `firstAt`/`lastAt` now nullable, `hasChat` false when the chat has no stored message at all), and adds `name` (the chat list's, else the transaction's); `isDeleted` and the payer's name come from the newest booked transaction in the range, one query shared with revenue's top payers, and takes `search` (username, name, custom name or chat id contains it, any case, trimmed, a leading `@` dropped). The Conversations fan list shows spend and "deleted account", shows a payer's name when there is no username, lists payers without a stored chat with no thread link, and its search box searches on the server; the Stats Fans card adds a Spend column ([docs/analytics.md](docs/analytics.md#stored-messages-and-export)). No migration.
 - `GET /v1/stats/revenue` `topPayers[]` names the fan as `GET /v1/stats/fans` does: `fanId` is now `chatId`.
 - `GET /v1/stats/backfill` no longer returns `to`; it always equalled `startedAt`.
+- `GET /v1/stats/metrics/:id/samples` carries `from` and `to`, like the other stats responses.
 
 ### Removed
 

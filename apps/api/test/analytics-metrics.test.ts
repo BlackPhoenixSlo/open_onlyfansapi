@@ -293,7 +293,7 @@ describe('stats metric samples', () => {
   it('returns the turns behind a number, with chat and message ids to open in OF', async () => {
     const res = await get(`/v1/stats/metrics/reply_time_mean/samples?${RANGE}&groupBy=account&group=${A1}`);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ metric: 'reply_time_mean', timezone: 'UTC', configVersion: 1, asOf: NOW.toISOString() });
+    expect(res.json()).toMatchObject({ metric: 'reply_time_mean', timezone: 'UTC', configVersion: 1, asOf: NOW.toISOString(), from: '2026-09-01', to: '2026-09-04' });
     expect(res.json().items[0]).toEqual({
       accountId: A1,
       chatId: 3001,

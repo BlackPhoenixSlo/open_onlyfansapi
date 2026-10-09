@@ -67,7 +67,6 @@ const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.en
 type Span = { fromDay: string; toDay: string };
 /** The fields of a stats response over `span` (`statsWindow`). */
 const windowMeta = (cfg: StatsConfig, span: Span, asOf: Date) => ({ timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay });
-/** A metric's; the samples schema drops `from` and `to`. */
 const meta = (metric: string, cfg: StatsConfig, span: Span, asOf: Date) => ({ metric, ...windowMeta(cfg, span, asOf) });
 
 /**

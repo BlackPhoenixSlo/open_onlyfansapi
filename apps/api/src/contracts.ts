@@ -503,18 +503,13 @@ export const statsMetricRow = z.object({
 });
 export type StatsMetricRow = z.infer<typeof statsMetricRow>;
 
-const statsResultMeta = {
-  metric: z.string(),
-  timezone: z.string(),
-  configVersion: z.number().int(),
-  asOf: z.string(),
-};
+/** A stats response over a range of days: the config timezone and version it used, when, and its `from`/`to` days. */
+const statsWindow = { timezone: z.string(), configVersion: z.number().int(), asOf: z.string(), from: z.string(), to: z.string() };
 
 export const statsMetricSeries = z.object({
-  ...statsResultMeta,
+  metric: z.string(),
+  ...statsWindow,
   groupBy: statsGroupBy,
-  from: z.string(),
-  to: z.string(),
   /** Sparse: groups with at least one turn. */
   rows: z.array(statsMetricRow),
 });
@@ -567,7 +562,7 @@ export const statsOpenerSample = z.object({
   status: z.enum(['replied', 'no_reply', 'pending']),
 });
 export type StatsOpenerSample = z.infer<typeof statsOpenerSample>;
-export const statsSamples = z.object({ ...statsResultMeta, items: z.array(z.union([statsSample, statsOpenerSample])) });
+export const statsSamples = z.object({ metric: z.string(), ...statsWindow, items: z.array(z.union([statsSample, statsOpenerSample])) });
 export type StatsSamples = z.infer<typeof statsSamples>;
 
 /** `GET /v1/stats/scripts`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
@@ -617,19 +612,12 @@ export const statsScript = z.object({
 export type StatsScript = z.infer<typeof statsScript>;
 
 export const statsScripts = z.object({
-  timezone: z.string(),
-  configVersion: z.number().int(),
+  ...statsWindow,
   normaliserVersion: z.number().int(),
-  asOf: z.string(),
-  from: z.string(),
-  to: z.string(),
   /** Most sent first; scripts with no send in the range are left out. */
   items: z.array(statsScript),
 });
 export type StatsScripts = z.infer<typeof statsScripts>;
-
-/** A stats response over a range of days: the config timezone and version it used, when, and its `from`/`to` days. */
-const statsWindow = { timezone: z.string(), configVersion: z.number().int(), asOf: z.string(), from: z.string(), to: z.string() };
 
 /** `GET /v1/stats/fans`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
 export const statsFansQuery = z.object({
