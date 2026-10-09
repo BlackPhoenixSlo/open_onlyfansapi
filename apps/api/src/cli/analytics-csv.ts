@@ -1,5 +1,5 @@
 // Writes the four CSVs of the analytics step 0 export (docs/analytics-backfill.md); parseCsv and readCsv read them
-// back, including copies saved from Excel with a BOM or semicolons. RFC 4180 quoting, no dependency, no database access.
+// back in tests. RFC 4180 quoting, no dependency, no database access.
 import type { chatCoverage, messageFact, purchaseFact } from '../db/schema.js';
 import type { FanTurn } from '../modules/analytics/turns.js';
 
