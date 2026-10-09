@@ -194,7 +194,7 @@ export type DerivedMessage = {
  * Derived columns of one OF message in chat `chatId`; null when it has no numeric `id`. Outbound = `fromUser.id` is
  * the account. Mass = its `queueId` is a broadcast with `sentCount > 1`. Every OF message carries a numeric `queueId`;
  * `isFromQueue` is true on every broadcast (6,512 of 6,512 mass rows, 2026-10-09) and on 733 stored non-mass outbound
- * rows: 683 share a queue id across 2-321 chats (broadcasts the mass history missed) and 50 are single-chat queued
+ * rows: 683 share a queue id across 2-321 chats (broadcasts outside the mass history a run read) and 50 are single-chat queued
  * sends (0.19% of 26,133 DMs). The backfill uses the mass history; live rows (live.ts) use `isFromQueue`. Automated =
  * it matches the welcome message (text or media) or an automation text. `names` are the fan's names from the chat
  * list; any on the message's fan user object are added.

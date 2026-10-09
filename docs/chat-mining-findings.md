@@ -30,7 +30,7 @@ Ordered by cost, after the owner's answer that all data is stored first and stat
    rows carry no top-level `type`; the kind sits at `raw->'descriptionDetails'->>'type'`. All 173 rows now have a
    kind, and all 173 equal that field (SQL). Handoff §3 step 2 covers the re-read that refilled rows that the pre-fix
    runs had nulled.
-2. **HYPOTHESIS, unverified: `live.ts` stores every live DM as mass.** `liveRow` in
+2. **Resolved, see below: `live.ts` stored every live DM as mass.** `liveRow` in
    `apps/api/src/modules/analytics/live.ts` sets `isMass` to "outbound and `queueId` not null". Every stored message
    carries a queue id (17,669 of 17,669 DMs and 9,203 of 9,203 fan messages in the window), and all 59 stored
    `messages.received` payloads carry a numeric `queueId` with `isFromQueue` false. No `messages.sent` payload is
@@ -40,7 +40,7 @@ Ordered by cost, after the owner's answer that all data is stored first and stat
    outbound rows, 321 of them the 10-09 bulk send (this doc §3, caveat 2).
    **Resolved after 0e9ae31 (review-loop round 2): live rows use `isFromQueue`.** On both live accounts (2026-10-09)
    it is true on 6,512 of 6,512 mass rows and on 733 non-mass outbound rows: 683 share a queue id across 2 to 321
-   chats (broadcasts the mass history missed), 50 are single-chat queued sends. Residual: those ~0.2% of DMs (50 of
+   chats (broadcasts outside the mass history a run read), 50 are single-chat queued sends. Residual: those ~0.2% of DMs (50 of
    26,133) count as mass until the next backfill over their range.
 
 ## 3. Data in hand
@@ -69,7 +69,7 @@ Handoff §4 (2026-10-08 22:41 UTC) counted 111 settled and 19 `loading` message 
 **Quality caveats.**
 
 1. **Unmatched queue ids are ordinary DMs.** Every message has a queue id, fan messages too; 17,118 of 17,123 DM ids
-   sit in one chat. Mass history lists broadcasts only, so the log's counter counts DMs.
+   sit in one chat. Mass history lists broadcasts only, so the log's counter counted DMs (the counter was removed in review-loop round 2).
 2. **Bulk sends are stored as DMs.** 15 exact texts each reached 20+ chats and 5 queue ids are shared by 8 to 321
    chats: 1,872 rows, 10.6% of DMs. The largest are two texts to 497 and 498 chats (09-14..09-21) and the 10-09 02:39
    UTC send (hypothesis: a mass message; one queue id, 321 chats in 27 s, `isFromQueue` true), which mass history,

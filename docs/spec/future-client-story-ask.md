@@ -122,7 +122,7 @@ How "verifiably better" works:
   formula version and normaliser version.
 - **Reproducible.** Every result carries `as_of`, the config snapshot version, coverage (chats walked, oldest message
   reached, share of chats walked to their start, backfill depth for money) and exclusions with counts (automated,
-  mass, too short, unmatched queue ids). Same data and versions give the same number.
+  mass, too short). Same data and versions give the same number.
 - **Every number drills down.** `.../samples` returns the rows behind it: chat id, message ids, timestamps and the
   value computed for each. The client opens that chat in OF and checks.
 - **Checked before we claim anything** (section 6, step 0). A difference from Infloww we can't explain is listed as
