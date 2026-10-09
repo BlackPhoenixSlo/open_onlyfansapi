@@ -16,10 +16,10 @@ usage, a playground and an API reference without building them.
 > **Not affiliated.** This project is unofficial and is not affiliated with, endorsed by or connected to any
 > content platform or its operators. You are responsible for complying with the terms of the platforms you use.
 
-![Dashboard home](docs/media/home.png)
+![Request logs](docs/media/logs.png)
 
 [Accounts](docs/media/accounts.png) · [API keys](docs/media/keys.png) · [Playground](docs/media/playground.png) ·
-[Logs](docs/media/logs.png) · [Usage](docs/media/usage.png) · [API reference](docs/media/api-reference.png) ·
+[Home](docs/media/home.png) · [Usage](docs/media/usage.png) · [API reference](docs/media/api-reference.png) ·
 [Video overview](docs/media/overview.webm)
 
 ## What you get
