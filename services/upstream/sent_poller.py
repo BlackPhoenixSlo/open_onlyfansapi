@@ -24,7 +24,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import events
-import poll_loop
 
 log = logging.getLogger("upstream.sent_poller")
 
@@ -41,16 +40,13 @@ Changed = dict[int, tuple[int, Any]]   # chat id -> (lastMessage.id, withUser)
 
 def _page(resp: Any) -> tuple[list[dict], bool]:
     """A list page of OF's (`{list, hasMore}`): its dict items and whether more follow. Anything else (for example a JSON
-    `null` body, which arrives as None) raises, so `run()` backs off and nothing is recorded as read."""
+    `null` body, which arrives as None) raises, so the poll loop backs off and nothing is recorded as read."""
     if not isinstance(resp, dict) or not isinstance(resp.get("list"), list):
         raise TypeError("unexpected OF page shape")
     return [i for i in resp["list"] if isinstance(i, dict)], bool(resp.get("hasMore"))
 
 
 class SentPoller:
-    name = "sent"
-    log = log
-
     def __init__(self, account_id: int, client: Any, publish: Publish, *, interval: float,
                  now: Callable[[], datetime] | None = None) -> None:
         self.account_id = account_id
@@ -155,9 +151,3 @@ class SentPoller:
         if key not in self._warned:
             self._warned.add(key)
             log.warning(msg, *args)
-
-
-async def run(account_id: int, client: Any, publish: Publish, on_expired: Callable[[], None], *,
-              interval: float) -> None:
-    """The Supervisor's poller (app.py binds `interval`): one `SentPoller` per pump start."""
-    await poll_loop.run(SentPoller(account_id, client, publish, interval=interval), on_expired)

@@ -13,15 +13,15 @@ from typing import Any, Protocol
 
 from of_client import session_refused
 
+log = logging.getLogger("upstream.poll_loop")
+
 BACKOFF_MAX_S = 30 * 60
 
 
 class PollerLike(Protocol):
     """What `run()` reads from a poller."""
-    name: str
     account_id: int
     interval: float
-    log: logging.Logger
 
     async def poll(self) -> None: ...
 
@@ -36,10 +36,10 @@ def _retry_after(resp: Any) -> float | None:
     return min(max(seconds, 0.0), BACKOFF_MAX_S)
 
 
-async def run(poller: PollerLike, on_expired: Callable[[], None],
+async def run(name: str, poller: PollerLike, on_expired: Callable[[], None],
               sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep) -> None:
-    """Poll until cancelled; a dead session calls `on_expired` and ends the task."""
-    name, account_id, interval, log = poller.name, poller.account_id, poller.interval, poller.log
+    """Poll until cancelled; a dead session calls `on_expired` and ends the task. `name` labels the log lines."""
+    account_id, interval = poller.account_id, poller.interval
     backoff = interval
     failing = False
     while True:

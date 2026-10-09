@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from types import SimpleNamespace
 
 import pytest
 from conftest import frame, key_paths, make_account, new_session, payload_fixture
@@ -7,6 +8,7 @@ from conftest import frame, key_paths, make_account, new_session, payload_fixtur
 import client_pool
 import proxies
 import pump
+from of_client import OFAPIError
 from of_ws import SessionExpired
 from pump import Supervisor
 
@@ -258,44 +260,59 @@ def test_an_expiry_is_announced_once_per_session(evicted):
     asyncio.run(main())
 
 
+class StubPoller:
+    """Waits forever, or with `refused` answers its first poll with OF's 401."""
+    interval = 60
+
+    def __init__(self, account_id, name, *, refused, cancelled):
+        self.account_id, self.name, self.refused, self.cancelled = account_id, name, refused, cancelled
+
+    async def poll(self):
+        if self.refused:
+            raise OFAPIError("401", response=SimpleNamespace(status_code=401))
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.append(self.name)
+            raise
+
+
 @pytest.mark.parametrize("refused_by", ["sent", "mass"])
 def test_the_pollers_run_with_the_pump_and_either_one_expires_the_session(evicted, refused_by):
     async def main():
         hub = FakeHub()
         started, cancelled = {}, []
 
-        def poller(name):
-            async def run(account_id, client, publish, on_expired):
-                started[name] = (account_id, client.aid, on_expired)
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    cancelled.append(name)
-                    raise
-            return run
+        def factory(name):
+            def build(account_id, client, publish):
+                started[name] = (account_id, client.aid)
+                return StubPoller(account_id, name, refused=name == refused_by, cancelled=cancelled)
+            return build
 
-        sup, src = supervisor(hub, pollers={"sent": poller("sent"), "mass": poller("mass")})
+        sup, src = supervisor(hub, pollers={"sent": factory("sent"), "mass": factory("mass")})
         make_account("100001")
         await sup.reconcile()
         await settle()
-        assert {n: s[:2] for n, s in started.items()} == {
-            "sent": (100001, "100001"), "mass": (100001, "100001")}
+        assert started == {"sent": (100001, "100001"), "mass": (100001, "100001")}
         assert src.starts == ["100001"]
-        started[refused_by][2]()  # the poller saw a refused session
-        assert sup.status("100001") == "session_expired"
+        assert sup.status("100001") == "session_expired"  # the refused poller's loop called on_expired
         assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
         await sup.stop()
-        assert sorted(cancelled) == ["mass", "sent"] and src.closed == 1
+        assert cancelled == [{"sent": "mass", "mass": "sent"}[refused_by]] and src.closed == 1
 
     asyncio.run(main())
 
 
 def test_a_poller_that_dies_is_logged(evicted, caplog):
     async def main():
-        async def poller(*args):
-            raise OverflowError("boom")
+        class Broken:
+            account_id = 100001
 
-        sup, src = supervisor(pollers={"sent": poller})
+            @property
+            def interval(self):  # read by the loop outside its retry
+                raise OverflowError("boom")
+
+        sup, src = supervisor(pollers={"sent": lambda *args: Broken()})
         make_account("100001")
         with caplog.at_level(logging.ERROR, logger="upstream.pump"):
             await sup.reconcile()

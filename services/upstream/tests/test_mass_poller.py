@@ -160,8 +160,8 @@ def test_a_failure_is_logged_with_the_backoff(poller, of, caplog):
     of.fail(RuntimeError("boom"))
     of.respond(history())
     sleeps = []
-    with caplog.at_level(logging.WARNING, logger="upstream.mass_poller"), pytest.raises(Done):
-        run_loop(poller, sleeps, 2)
+    with caplog.at_level(logging.WARNING, logger="upstream.poll_loop"), pytest.raises(Done):
+        run_loop("mass", poller, sleeps, 2)
     assert sleeps == [2 * INTERVAL, INTERVAL]
     assert [r.getMessage() for r in caplog.records if "failed" in r.getMessage()] == [
         f"mass poller failed account={ACCT} status=None: retrying in {2 * INTERVAL}s"]

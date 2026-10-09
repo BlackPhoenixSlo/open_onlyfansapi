@@ -21,7 +21,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import events
-import poll_loop
 
 log = logging.getLogger("upstream.mass_poller")
 
@@ -38,16 +37,13 @@ def _of_date(dt: datetime) -> str:
 
 def _items(resp: Any) -> list[dict]:
     """The dict entries of OF's mass history (`{hasMore, items}`). Anything else (for example a JSON `null` body,
-    which arrives as None) raises, so `run()` backs off and nothing is recorded as published."""
+    which arrives as None) raises, so the poll loop backs off and nothing is recorded as published."""
     if not isinstance(resp, dict) or not isinstance(resp.get("items"), list):
         raise TypeError("unexpected OF mass history shape")
     return [i for i in resp["items"] if isinstance(i, dict)]
 
 
 class MassPoller:
-    name = "mass"
-    log = log
-
     def __init__(self, account_id: int, client: Any, publish: Publish, *, interval: float,
                  now: Callable[[], datetime] | None = None) -> None:
         self.account_id = account_id
@@ -83,9 +79,3 @@ class MassPoller:
             log.info("mass poller: chat_queue.finished account=%s queue=%s sentCount=%s",
                      self.account_id, queue_id, sent)
             self.publish(events.chat_queue_finished(self.account_id, entry, now))
-
-
-async def run(account_id: int, client: Any, publish: Publish, on_expired: Callable[[], None], *,
-              interval: float) -> None:
-    """The Supervisor's poller (app.py binds `interval`): one `MassPoller` per pump start."""
-    await poll_loop.run(MassPoller(account_id, client, publish, interval=interval), on_expired)

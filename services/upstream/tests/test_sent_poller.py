@@ -374,7 +374,7 @@ def test_429_sleeps_retry_after_or_doubles_and_resets_after_a_clean_poll(poller,
     of.respond({"error": {"code": 0}}, status=429)
     sleeps = []
     with pytest.raises(Done):
-        run_loop(poller, sleeps, 5)
+        run_loop("sent", poller, sleeps, 5)
     assert sleeps == [INTERVAL, 300, 2 * INTERVAL, INTERVAL, 2 * INTERVAL]
 
 
@@ -383,8 +383,8 @@ def test_any_other_failure_is_logged_once_and_backed_off(poller, of, caplog):
     of.respond({"error": {"code": 0}}, status=500)
     of.respond(chats())
     sleeps = []
-    with caplog.at_level(logging.WARNING, logger="upstream.sent_poller"), pytest.raises(Done):
-        run_loop(poller, sleeps, 3)
+    with caplog.at_level(logging.WARNING, logger="upstream.poll_loop"), pytest.raises(Done):
+        run_loop("sent", poller, sleeps, 3)
     assert sleeps == [2 * INTERVAL, 4 * INTERVAL, INTERVAL]
     assert [r.getMessage() for r in caplog.records if "failed" in r.getMessage()] == [
         f"sent poller failed account={ACCT} status=None: retrying in {2 * INTERVAL}s"]
@@ -398,7 +398,7 @@ def test_a_null_message_page_backs_off_and_the_chat_is_read_on_the_next_poll(pol
     of.respond(messages(message(11, -60, ACCT)))
     sleeps = []
     with pytest.raises(Done):
-        run_loop(poller, sleeps, 2)
+        run_loop("sent", poller, sleeps, 2)
     assert sleeps == [2 * INTERVAL, INTERVAL]
     assert paths(of) == ["/chats", "/chats/2001/messages"] * 2
     assert ids(frames) == [f"message.sent:{ACCT}:11"]
@@ -408,5 +408,5 @@ def test_a_null_message_page_backs_off_and_the_chat_is_read_on_the_next_poll(pol
 def test_a_refused_session_calls_on_expired_and_ends(poller, of, status, body):
     of.respond(body, status=status)
     expired, sleeps = [], []
-    run_loop(poller, sleeps, 99, on_expired=lambda: expired.append(1))
+    run_loop("sent", poller, sleeps, 99, on_expired=lambda: expired.append(1))
     assert expired == [1] and sleeps == []

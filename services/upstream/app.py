@@ -73,9 +73,9 @@ hub = Hub()
 # `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
 supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "false").strip().lower()
                         not in {"0", "false", "no", "off"},
-                        pollers={name: functools.partial(run, interval=seconds) for name, run, seconds in (
-                            ("sent", sent_poller.run, SENT_POLL_INTERVAL_S),
-                            ("mass", mass_poller.run, MASS_POLL_INTERVAL_S)) if seconds})
+                        pollers={name: functools.partial(poller, interval=seconds) for name, poller, seconds in (
+                            ("sent", sent_poller.SentPoller, SENT_POLL_INTERVAL_S),
+                            ("mass", mass_poller.MassPoller, MASS_POLL_INTERVAL_S)) if seconds})
 
 
 @asynccontextmanager

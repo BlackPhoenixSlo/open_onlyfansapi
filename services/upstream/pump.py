@@ -13,7 +13,7 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +21,7 @@ from typing import Any
 import accounts
 import client_pool
 import events
+import poll_loop
 import proxies
 from of_ws import OFWebSocket, SessionExpired
 
@@ -35,9 +36,9 @@ CLOSE_TRY_AGAIN_LATER = 1013
 
 FrameSource = Callable[[Any], AsyncIterator[dict]]
 ClientFactory = Callable[[str], Any]
-# A poller started and cancelled with each pump (its interval bound): called with the account id, client, publish
-# and on_expired, it runs until cancelled.
-Poller = Callable[[int, Any, Callable[[dict], None], Callable[[], None]], Awaitable[None]]
+# Builds a poller for each pump start (its interval bound) from the account id, client and publish; the pump runs
+# it in `poll_loop` until the pump stops.
+PollerFactory = Callable[[int, Any, Callable[[dict], None]], poll_loop.PollerLike]
 
 
 async def of_frames(client: Any) -> AsyncIterator[dict]:
@@ -152,11 +153,11 @@ class Supervisor:
     def __init__(self, hub: Hub, *, require_proxy: bool = True,
                  source: FrameSource = of_frames,
                  client_factory: ClientFactory | None = None,
-                 pollers: Mapping[str, Poller] | None = None) -> None:
+                 pollers: Mapping[str, PollerFactory] | None = None) -> None:
         self.hub = hub
         self.require_proxy = require_proxy
         self.source = source
-        self.pollers = dict(pollers or {})  # name -> poller; none: no polled events
+        self.pollers = dict(pollers or {})  # name -> poller factory; none: no polled events
         # Looked up per call, so the pool stays the one place clients are built.
         self.client_factory = client_factory or (lambda aid: client_pool.get(aid))
         self._pumps: dict[str, _Pump] = {}
@@ -249,9 +250,9 @@ class Supervisor:
                 # Fail closed; the next reconcile retries.
                 log.warning("client for account=%s has no proxy: not connecting", aid)
                 return
-            for name, poller in self.pollers.items():
-                poll = asyncio.create_task(poller(
-                    account_id, client, self.hub.publish, lambda: self.mark_expired(aid, key)))
+            for name, factory in self.pollers.items():
+                poll = asyncio.create_task(poll_loop.run(
+                    name, factory(account_id, client, self.hub.publish), lambda: self.mark_expired(aid, key)))
                 poll.add_done_callback(lambda t, name=name: _poller_ended(name, aid, t))
                 polls.append(poll)
             async for frame in self.source(client):

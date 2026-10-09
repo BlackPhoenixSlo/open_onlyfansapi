@@ -110,15 +110,15 @@ class Done(Exception):
     pass
 
 
-def run_loop(poller, sleeps, n, on_expired=lambda: None):
-    """Run the poll loop until its `n`th sleep; the slept seconds land in `sleeps`."""
+def run_loop(name, poller, sleeps, n, on_expired=lambda: None):
+    """Run the poll loop as `name` until its `n`th sleep; the slept seconds land in `sleeps`."""
     async def sleep(seconds):
         sleeps.append(seconds)
         if len(sleeps) == n:
             raise Done
 
     async def main():
-        await poll_loop.run(poller, on_expired, sleep=sleep)
+        await poll_loop.run(name, poller, on_expired, sleep=sleep)
 
     asyncio.run(main())
 
