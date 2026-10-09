@@ -218,7 +218,8 @@ def _bind_own_proxy(uid: str, entry: dict) -> None:
     label = f"acct-{uid}"
     old = proxies.get_by_label(label)
     if old is not None and any(str(old.get(k) or "") != str(entry.get(k) or "") for k in _ENDPOINT_KEYS):
-        entry = {**entry, "verified_ip": None, "verified_at": None, "verified_geo": None}
+        entry = {**entry, "verified_ip": None, "verified_at": None, "verified_geo": None,
+                 "verified_of_reachable": None, "verified_of_error": None}
         proxy_stats.clear(label)
     proxies.upsert({"label": label, **entry})
     proxies.assign_account(label, uid)
@@ -395,6 +396,8 @@ def _proxy_view(p: dict) -> dict:
         "verified_ip": p.get("verified_ip"),
         "verified_at": p.get("verified_at"),
         "verified_geo": p.get("verified_geo"),
+        "verified_of_reachable": p.get("verified_of_reachable"),
+        "verified_of_error": p.get("verified_of_error"),
         "stats": proxy_stats.get(p["label"]),
         "since": proxy_stats.SINCE,
     }
@@ -434,19 +437,17 @@ def _probe(label: str) -> dict:
     if p is None:
         raise ApiError(404, "proxy_not_found")
     result = proxies.probe(p)
-    proxies.record_verification(label, ip=result["ip"], geo=result["geo"], ok=result["ok"])
+    proxies.record_verification(label, ip=result["ip"], geo=result["geo"], ok=result["ok"],
+                                of_reachable=result["of_reachable"], of_error=result["of_error"])
     if not result["ok"]:
-        message = str(result.get("error") or "probe failed")
-        if p.get("password"):
-            message = message.replace(p["password"], "***")
-        raise ApiError(502, "proxy_error", message[:300])
+        raise ApiError(502, "proxy_error", proxies._redact(str(result.get("error") or "probe failed"), p)[:300])
     return _proxy_view(proxies.get_by_label(label) or p)
 
 
 @app.post("/proxies/{label}/probe", tags=["operator"], operation_id="proxies.probe")
 async def proxies_probe(label: str) -> dict:
-    """Fetch the proxy's egress IP (through it, as OF traffic goes) and geo, store the result, and return the
-    entry; 502 when the proxy fails."""
+    """Fetch the proxy's egress IP (through it, as OF traffic goes) and geo, and check that it tunnels to
+    onlyfans.com (`verified_of_reachable`); store the result and return the entry. 502 when no IP comes back."""
     return await asyncio.to_thread(_probe, label)
 
 

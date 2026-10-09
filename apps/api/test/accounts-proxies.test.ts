@@ -91,6 +91,8 @@ describe('GET /api/proxies', () => {
       verifiedIp: null,
       verifiedAt: null,
       verifiedGeo: null,
+      ofReachable: null,
+      ofError: null,
       stats: {
         ok: 3,
         failed: 1,
@@ -149,15 +151,25 @@ describe('POST /api/proxies/:label/probe', () => {
   it('answers the probed proxy with its egress', async () => {
     const res = await probe('acct-1001');
     expect(res.statusCode).toBe(200);
-    expect(res.json().proxy).toMatchObject({ label: 'acct-1001', verifiedIp: '198.51.100.7', verifiedGeo: 'Ljubljana, SI' });
+    expect(res.json().proxy).toMatchObject({
+      label: 'acct-1001',
+      verifiedIp: '198.51.100.7',
+      verifiedGeo: 'Ljubljana, SI',
+      ofReachable: true,
+      ofError: null,
+    });
     expect(res.body).not.toContain('proxy-secret');
     expect(calls('/proxies/acct-1001/probe').at(-1)!.method).toBe('POST');
   });
 
-  it('encodes a label with a space for the upstream path', async () => {
+  it('encodes a label with a space for the upstream path, and passes an OF-blocked result through', async () => {
     const res = await probe('proxy%20two');
     expect(res.statusCode).toBe(200);
-    expect(res.json().proxy.label).toBe('proxy two');
+    expect(res.json().proxy).toMatchObject({
+      label: 'proxy two',
+      ofReachable: false,
+      ofError: 'curl: (56) CONNECT tunnel failed, response 403',
+    });
     expect(calls('/proxies/proxy%20two/probe')).toHaveLength(1);
   });
 

@@ -16,6 +16,8 @@ import { api, proxiesQuery } from '@/lib/api';
 /** The last transport error is newer than the last response through the proxy (or it never answered). */
 const failing = (p: ProxyInfo) =>
   p.stats.lastErrorAt !== null && (p.stats.lastOkAt === null || Date.parse(p.stats.lastErrorAt) > Date.parse(p.stats.lastOkAt));
+/** Rows that need attention: failing traffic, or the last Test could not reach onlyfans.com. */
+const attention = (p: ProxyInfo) => failing(p) || p.ofReachable === false;
 
 const ago = (iso: string | null) => (iso ? <span title={new Date(iso).toLocaleString()}>{formatAgo(iso)}</span> : '—');
 
@@ -26,8 +28,11 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
   const [adding, setAdding] = useState(false);
   const probe = useMutation({
     mutationFn: (label: string) => api<{ proxy: ProxyInfo }>(`/api/proxies/${encodeURIComponent(label)}/probe`, { method: 'POST' }),
-    onSuccess: ({ proxy }) =>
-      toast.success(`${proxy.label}: egress ${proxy.verifiedIp ?? 'unknown'}${proxy.verifiedGeo ? ` (${proxy.verifiedGeo})` : ''}`),
+    onSuccess: ({ proxy }) => {
+      const egress = `${proxy.label}: Egress ${proxy.verifiedIp ?? 'unknown'}${proxy.verifiedGeo ? ` (${proxy.verifiedGeo})` : ''}`;
+      if (proxy.ofReachable === false) toast.error(`${egress}. OF blocked: ${proxy.ofError ?? 'unknown error'}`);
+      else toast.success(proxy.ofReachable ? `${egress}, OF reachable` : egress);
+    },
     onError: (e, label) => toast.error(`${label}: ${e.message}`),
     onSettled: () => queryClient.invalidateQueries({ queryKey: proxiesQuery.queryKey }),
   });
@@ -36,8 +41,8 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
     return a?.username ? `@${a.username}` : (a?.label ?? String(id));
   };
   const since = proxies.data?.items[0]?.since;
-  // Failing proxies first; otherwise the upstream's order (the sort is stable).
-  const rows = [...(proxies.data?.items ?? [])].sort((a, b) => Number(failing(b)) - Number(failing(a)));
+  // Failing or OF-blocked proxies first; otherwise the upstream's order (the sort is stable).
+  const rows = [...(proxies.data?.items ?? [])].sort((a, b) => Number(attention(b)) - Number(attention(a)));
 
   return (
     <Card>
@@ -104,6 +109,14 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
                       </>
                     ) : (
                       '—'
+                    )}
+                    {p.ofReachable === false && (
+                      <Badge variant="destructive" className="mt-1 flex w-fit" title={p.ofError ?? undefined}>
+                        OF blocked
+                      </Badge>
+                    )}
+                    {p.ofReachable === true && (
+                      <Badge className="mt-1 flex w-fit bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">OF ok</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{p.stats.ok}</TableCell>

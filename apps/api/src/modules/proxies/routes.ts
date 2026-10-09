@@ -15,6 +15,8 @@ type UpstreamProxy = {
   verified_ip?: string | null;
   verified_at?: string | null;
   verified_geo?: string | null;
+  verified_of_reachable?: boolean | null;
+  verified_of_error?: string | null;
   stats?: {
     ok?: number;
     failed?: number;
@@ -39,6 +41,8 @@ function toProxy(p: UpstreamProxy): ProxyInfo {
     verifiedIp: p.verified_ip ?? null,
     verifiedAt: p.verified_at ?? null,
     verifiedGeo: p.verified_geo ?? null,
+    ofReachable: p.verified_of_reachable ?? null,
+    ofError: p.verified_of_error ?? null,
     stats: {
       ok: s.ok ?? 0,
       failed: s.failed ?? 0,

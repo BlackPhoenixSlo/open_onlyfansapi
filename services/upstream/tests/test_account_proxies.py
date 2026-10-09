@@ -100,6 +100,7 @@ def test_patch_url_with_a_new_endpoint_drops_the_last_probe_and_stats(client):
     patch(client, "100001", {"proxy": {"url": "http://u:p@203.0.113.10:8080"}})  # credentials changed
     p = proxies.get_by_label("acct-100001")
     assert (p["verified_ip"], p["verified_at"], p["verified_geo"]) == (None, None, None)
+    assert (p["verified_of_reachable"], p["verified_of_error"]) == (None, None)
     assert proxy_stats.get("acct-100001")["ok"] == 0
 
 
@@ -147,7 +148,8 @@ def test_proxies_list_masks_the_password_and_carries_stats(client):
     stats = p.pop("stats")
     assert p == {"label": "acct-100001", "scheme": "http", "host": "203.0.113.10", "port": 8080,
                  "assigned_account_ids": ["100001", "100002"],
-                 "verified_ip": None, "verified_at": None, "verified_geo": None, "since": proxy_stats.SINCE}
+                 "verified_ip": None, "verified_at": None, "verified_geo": None,
+                 "verified_of_reachable": None, "verified_of_error": None, "since": proxy_stats.SINCE}
     assert (stats["ok"], stats["failed"], stats["blocked"], stats["last_error"]) == (1, 1, 0, "timeout: slow")
     assert stats["last_error_at"] and stats["last_used_at"] and stats["last_ok_at"]
 
@@ -188,35 +190,74 @@ def test_create_proxy_label_is_one_path_segment(client, label):
 def test_probe_records_the_egress(client, monkeypatch):
     make_account("100001")
     monkeypatch.setattr(proxies, "probe", lambda p: {"ok": True, "ip": "198.51.100.7", "geo": "Ljubljana, SI",
-                                                      "error": None})
+                                                      "error": None, "of_reachable": False,
+                                                      "of_error": "CONNECT tunnel failed, response 403"})
     r = client.post("/proxies/acct-100001/probe", headers=AUTH)
     assert r.status_code == 200
-    assert (r.json()["verified_ip"], r.json()["verified_geo"]) == ("198.51.100.7", "Ljubljana, SI")
-    assert proxies.get_by_label("acct-100001")["verified_at"]
+    body = r.json()
+    assert (body["verified_ip"], body["verified_geo"]) == ("198.51.100.7", "Ljubljana, SI")
+    assert (body["verified_of_reachable"], body["verified_of_error"]) == (False, "CONNECT tunnel failed, response 403")
+    stored = proxies.get_by_label("acct-100001")
+    assert stored["verified_at"] and stored["verified_of_reachable"] is False
 
 
-def test_probe_goes_through_curl_cffi_with_the_proxy(monkeypatch):
+def _fake_cffi(monkeypatch, of_error=None):
+    """curl_cffi.requests.get answering ipify and ipinfo; onlyfans.com answers, or raises `of_error`."""
     from curl_cffi import requests as cffi
 
     calls = []
 
     def get(url, **kw):
-        calls.append((url, kw.get("proxies")))
-        return SimpleNamespace(text="198.51.100.7\n", raise_for_status=lambda: None,
+        calls.append((url, kw.get("proxies"), kw.get("allow_redirects", True)))
+        if url == proxies.OF_PROBE_URL and of_error is not None:
+            raise of_error
+        return SimpleNamespace(status_code=302, text="198.51.100.7\n", raise_for_status=lambda: None,
                                json=lambda: {"city": "Ljubljana", "country": "SI"})
 
     monkeypatch.setattr(cffi, "get", get)
-    p = {"label": "s", "scheme": "socks5h", "host": "203.0.113.10", "port": 1080, "username": "u", "password": "pw"}
-    assert proxies.probe(p) == {"ok": True, "ip": "198.51.100.7", "geo": "Ljubljana, SI", "error": None}
-    url = "socks5h://u:pw@203.0.113.10:1080"
-    assert calls == [("https://api.ipify.org", {"http": url, "https": url}),
-                     ("https://ipinfo.io/198.51.100.7/json", None)]
+    return calls
+
+
+SOCKS = {"label": "s", "scheme": "socks5h", "host": "203.0.113.10", "port": 1080, "username": "u", "password": "pw-secret"}
+
+
+def test_probe_goes_through_curl_cffi_with_the_proxy(monkeypatch):
+    calls = _fake_cffi(monkeypatch)
+    assert proxies.probe(SOCKS) == {"ok": True, "ip": "198.51.100.7", "geo": "Ljubljana, SI", "error": None,
+                                    "of_reachable": True, "of_error": None}
+    url = "socks5h://u:pw-secret@203.0.113.10:1080"
+    assert calls == [("https://api.ipify.org", {"http": url, "https": url}, True),
+                     ("https://ipinfo.io/198.51.100.7/json", None, True),
+                     ("https://onlyfans.com/", {"http": url, "https": url}, False)]
+
+
+def test_probe_reports_a_proxy_that_refuses_onlyfans(monkeypatch):
+    error = curl_errors.ProxyError(
+        "Failed to perform, curl: (56) CONNECT tunnel failed, response 403 via socks5h://u:pw-secret@203.0.113.10")
+    _fake_cffi(monkeypatch, of_error=error)
+    result = proxies.probe(SOCKS)
+    assert (result["ok"], result["ip"], result["of_reachable"]) == (True, "198.51.100.7", False)
+    assert "CONNECT tunnel failed, response 403" in result["of_error"]
+    assert "pw-secret" not in result["of_error"] and "***" in result["of_error"]
+
+
+def test_probe_skips_onlyfans_when_no_ip_came_back(monkeypatch):
+    from curl_cffi import requests as cffi
+
+    def get(url, **kw):
+        raise curl_errors.ProxyError("refused pw-secret")
+
+    monkeypatch.setattr(cffi, "get", get)
+    result = proxies.probe(SOCKS)
+    assert (result["ok"], result["of_reachable"], result["of_error"]) == (False, None, None)
+    assert result["error"] == "proxy_probe_failed: refused ***"
 
 
 def test_probe_failure_is_502_without_the_password(client, monkeypatch):
     proxies.upsert({"label": "p", "host": "203.0.113.10", "port": 8080, "username": "u", "password": "secret-pw"})
     monkeypatch.setattr(proxies, "probe", lambda p: {"ok": False, "ip": None, "geo": None,
-                                                      "error": "proxy_probe_failed: refused secret-pw"})
+                                                      "error": "proxy_probe_failed: refused secret-pw",
+                                                      "of_reachable": None, "of_error": None})
     r = client.post("/proxies/p/probe", headers=AUTH)
     assert r.status_code == 502
     assert r.json() == {"error": {"code": "proxy_error", "message": "proxy_probe_failed: refused ***"}}

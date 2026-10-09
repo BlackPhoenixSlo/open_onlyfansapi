@@ -326,43 +326,61 @@ def migrate_legacy_assignments(filename_to_account: dict[str, str]) -> int:
 
 
 def record_verification(label: str, *, ip: str | None, geo: str | None,
-                        ok: bool) -> None:
-    """Persist the last egress-IP probe result for a proxy."""
+                        ok: bool, of_reachable: bool | None = None,
+                        of_error: str | None = None) -> None:
+    """Persist the last probe result for a proxy: its egress IP and geo, and
+    whether it tunnels to onlyfans.com (`verified_of_reachable`, None = not checked)."""
     with _lock:
         data = load()
         for p in data["proxies"]:
             if p.get("label") == label:
+                p["verified_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                p["verified_ip"] = ip if ok else None
                 if ok:
-                    p["verified_ip"] = ip
                     p["verified_geo"] = geo
-                    p["verified_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                else:
-                    p["verified_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    p["verified_ip"] = None
+                p["verified_of_reachable"] = of_reachable
+                p["verified_of_error"] = of_error
                 save(data)
                 return
 
 
-def probe(p: dict[str, Any], timeout_s: int = 15) -> dict[str, Any]:
-    """Fetch the egress IP through the proxy + a coarse geo lookup (direct).
-    Returns {ok, ip, geo, error?}. Blocking (network): call it off the event loop.
+OF_PROBE_URL = "https://onlyfans.com/"
 
-    Goes through curl_cffi with `proxies_dict_for_requests`, the transport OF
-    traffic uses, so socks5/socks5h proxies probe like http ones."""
+
+def _redact(message: str, p: dict[str, Any]) -> str:
+    return message.replace(p["password"], "***") if p.get("password") else message
+
+
+def probe(p: dict[str, Any], timeout_s: int = 15, of_timeout_s: int = 10) -> dict[str, Any]:
+    """Fetch the egress IP through the proxy, a coarse geo lookup (direct), and
+    then onlyfans.com itself through the proxy: a proxy can tunnel to ipify
+    yet refuse the CONNECT to onlyfans.com (`curl: (56) CONNECT tunnel failed,
+    response 403`), which is what breaks OF traffic.
+    Returns {ok, ip, geo, error, of_reachable, of_error}: `ok` = an IP was
+    obtained; `of_reachable` = any HTTP answer from onlyfans.com (None when the
+    IP step failed, so it was not tried). Errors never carry the password.
+    Blocking (network): call it off the event loop.
+
+    Goes through curl_cffi with `proxies_dict_for_requests` and the Chrome
+    impersonation, the transport OF traffic uses, so socks5/socks5h proxies
+    probe like http ones."""
     from curl_cffi import requests as cffi
 
+    proxies = proxies_dict_for_requests(p)
     ip = None
     geo = None
     err = None
+    of_reachable = None
+    of_error = None
     try:
-        r = cffi.get("https://api.ipify.org", proxies=proxies_dict_for_requests(p),
+        r = cffi.get("https://api.ipify.org", proxies=proxies,
                      timeout=timeout_s, impersonate="chrome")
         r.raise_for_status()
         ip = r.text.strip() or None
         if ip is None:
             err = "proxy_probe_failed: empty answer from api.ipify.org"
     except Exception as e:
-        err = f"proxy_probe_failed: {e}"
+        err = _redact(f"proxy_probe_failed: {e}", p)
 
     if ip:
         try:
@@ -372,4 +390,14 @@ def probe(p: dict[str, Any], timeout_s: int = 15) -> dict[str, Any]:
         except Exception:
             geo = None
 
-    return {"ok": ip is not None, "ip": ip, "geo": geo, "error": err}
+        # Any HTTP status (200, a redirect, OF's own 403) means the tunnel opened.
+        try:
+            cffi.get(OF_PROBE_URL, proxies=proxies, timeout=of_timeout_s,
+                     impersonate="chrome", allow_redirects=False)
+            of_reachable = True
+        except cffi.exceptions.RequestException as e:
+            of_reachable = False
+            of_error = _redact(str(e), p)[:300]
+
+    return {"ok": ip is not None, "ip": ip, "geo": geo, "error": err,
+            "of_reachable": of_reachable, "of_error": of_error}

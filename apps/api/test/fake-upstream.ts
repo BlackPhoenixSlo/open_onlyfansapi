@@ -272,7 +272,15 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     const entry = proxies.find((p) => p.label === (request.params as { label: string }).label);
     if (!entry) return reply.status(404).send({ error: { code: 'proxy_not_found' } });
     if (entry.label === 'dead') return reply.status(502).send({ error: { code: 'proxy_error', message: 'proxy_probe_failed: refused' } });
-    Object.assign(entry, { verified_ip: '198.51.100.7', verified_geo: 'Ljubljana, SI', verified_at: '2026-10-09T12:00:00Z' });
+    // `proxy two` tunnels to ipify but not to onlyfans.com.
+    const ofBlocked = entry.label === 'proxy two';
+    Object.assign(entry, {
+      verified_ip: '198.51.100.7',
+      verified_geo: 'Ljubljana, SI',
+      verified_at: '2026-10-09T12:00:00Z',
+      verified_of_reachable: !ofBlocked,
+      verified_of_error: ofBlocked ? 'curl: (56) CONNECT tunnel failed, response 403' : null,
+    });
     return entry;
   });
   app.get('/ws', { websocket: true }, (socket) => {
