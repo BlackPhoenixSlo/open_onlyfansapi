@@ -117,7 +117,8 @@ a PPV bought or a tip sent outside the stored messages is not in them.
 ### Revenue
 
 `GET /v1/stats/revenue` (and the dashboard's Revenue page) sums the transactions the backfill stored in
-`purchase_fact` (OF's `/payouts/transactions`; live events add none, so a range never backfilled shows nothing) and
+`purchase_fact` (OF's `/payouts/transactions`; live events add none, so a range never backfilled shows nothing, and
+the [hourly transactions poll](#keeping-it-fresh) adds the last 48 hours when it is on) and
 counts PPV sends in `message_fact`. Gross is booked sales: OF's status `done` plus `loading`; `undo` (refunded) and
 `pending_return` (being reversed) are left out of every sum, payer and name. Money is in cents, integers, USD (every
 stored transaction is): `gross` is OF's `amount`, `net` its `net` (a missing one counts as 0). Rates are percent, null
@@ -164,6 +165,19 @@ welcome message or automation texts either, so no live message counts as automat
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
 the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under
 its header.
+
+## Keeping it fresh
+
+Off unless `STATS_REFRESH_HOUR_UTC` is set (an hour, 0 to 23, UTC; unset or empty = off, and there is no default,
+since these jobs call OF on their own). They are in-process jobs, so they also need `RUN_JOBS=true` (the default).
+
+- **Hourly transactions poll.** Every hour (and once at API start), for each claimed account (`account_workspace`
+  row), the transactions of the last 48 hours, read with the backfill's own reader and mapper and upserted into
+  `purchase_fact` on `(account_id, tx_id)`, so a sale shows up on Revenue within about an hour of OF listing it
+  (OF's ledger lags real time by hours, which the 48 hours cover). One request per account per hour (more only when
+  those 48 hours hold over 100 transactions), with no pacing, retry or lock beyond that; an account that fails (a
+  dead session, the upstream down) is logged (`transactions poll failed`) and tried again next hour. The socket's
+  frames carry no transaction id or net, so this poll, not the live events, is the source of sales.
 
 ## Terms
 

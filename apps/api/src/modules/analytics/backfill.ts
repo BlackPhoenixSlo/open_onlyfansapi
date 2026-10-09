@@ -531,7 +531,8 @@ export function progressLine(r: Readonly<BackfillResult>, chatsStartedAt: number
   return `progress: ${r.phase}, ${r.requests} requests, chats ${done}/${r.chatsTotal || '?'}, ${eta}`;
 }
 
-type Get = (path: string) => Promise<unknown>;
+/** One upstream GET of the account: the parsed JSON body, or a throw. */
+export type Get = (path: string) => Promise<unknown>;
 
 /**
  * The broadcasts sent in `[start, end)`. The endpoint ignores `offset` and always reports `hasMore`, so a window is
@@ -674,9 +675,10 @@ async function walkChat(
 
 /**
  * The range's transactions (newest first from OF) into `store`, stopping at the first page reaching before `from`.
- * `onStored` gets each page's rows once they are stored, so a run stopped mid-way counts what it stored.
+ * `onStored` gets each page's rows once they are stored, so a run stopped mid-way counts what it stored. One request
+ * when the first page (100) reaches before `from`. Also the hourly transactions poll's (jobs/analytics-refresh.ts).
  */
-async function readTransactions(get: Get, store: BackfillStore, from: number, to: number, onStored: (rows: DerivedPurchase[]) => void): Promise<void> {
+export async function readTransactions(get: Get, store: BackfillStore, from: number, to: number, onStored: (rows: DerivedPurchase[]) => void): Promise<void> {
   const seen = new Set<string>();
   for (let offset = 0; ; offset += PAGE) {
     const page = await get(`/payouts/transactions?limit=${PAGE}&offset=${offset}&startDate=${encodeURIComponent(ofDate(from))}`);

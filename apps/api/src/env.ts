@@ -73,6 +73,15 @@ export const envSchema = z.object({
   ANALYTICS_PAGE_DELAY_MS: z.coerce.number().int().nonnegative().default(300),
   /** Analytics backfill: the longest wait after a 429 (Retry-After or exponential backoff). */
   ANALYTICS_BACKOFF_MAX_MS: z.coerce.number().int().positive().default(300_000),
+  /**
+   * Analytics refresh: the hour (UTC, 0 to 23) of the daily backfill refresh; set, it also turns on the hourly
+   * transactions poll. Unset or empty = both off (no default: they call OF on their own).
+   */
+  STATS_REFRESH_HOUR_UTC: z
+    .literal('')
+    .or(z.coerce.number().int().min(0).max(23))
+    .optional()
+    .transform((v) => (v === '' ? undefined : v)),
   /** Outgoing mail (sign-up verification links). Unset or empty = no mail is sent; the link is logged instead. */
   SMTP_HOST: optionalString,
   /** 465 = implicit TLS; anything else (587) must upgrade with STARTTLS. */
