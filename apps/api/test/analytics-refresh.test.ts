@@ -66,9 +66,11 @@ afterAll(async () => {
 
 describe('STATS_REFRESH_HOUR_UTC', () => {
   const parse = (v: string | undefined) => envSchema.safeParse({ ...process.env, STATS_REFRESH_HOUR_UTC: v });
-  it('is off when unset or empty, an hour 0 to 23 when set, and refuses anything else', () => {
+  it('is off when unset, empty or blank, an hour 0 to 23 when set, and refuses anything else', () => {
     expect(parse(undefined).data?.STATS_REFRESH_HOUR_UTC).toBeUndefined();
     expect(parse('').data?.STATS_REFRESH_HOUR_UTC).toBeUndefined();
+    expect(parse('  ').data?.STATS_REFRESH_HOUR_UTC).toBeUndefined(); // not hour 0
+    expect(parse(' 3 ').data?.STATS_REFRESH_HOUR_UTC).toBe(3);
     expect(parse('0').data?.STATS_REFRESH_HOUR_UTC).toBe(0);
     expect(parse('23').data?.STATS_REFRESH_HOUR_UTC).toBe(23);
     for (const bad of ['24', '-1', '3.5', 'three']) expect(parse(bad).success).toBe(false);
@@ -155,24 +157,28 @@ describe('daily refresh', () => {
     expect(run(1001)).toEqual(before);
   });
 
-  it('tries a dead-session account once, then skips it until the next day', async () => {
-    const { t, h } = at(new Date());
-    for (const id of ACCOUNTS) await setRefreshed(id, id === 1001 ? null : t);
+  it('tries an account once a day: a failed run (here a dead session) is tried again the next day', async () => {
+    // A clock of its own, days ahead (the runs' startedAt included): earlier tests already ran these accounts today.
+    const day1 = new Date(refreshBoundary(new Date(), 5, 2).getTime() + 30 * 60_000);
+    const day2 = new Date(day1.getTime() + DAY);
+    vi.setSystemTime(day1);
+    for (const id of ACCOUNTS) await setRefreshed(id, id === 1001 ? null : day1);
     fake.state.of!.unauthorized = true;
     try {
-      expect(await refreshDue(upstream, log(), h, t)).toBe(1);
+      expect(await refreshDue(upstream, log(), 5, day1)).toBe(1);
       await settle();
-      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired' });
+      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired', startedAt: day1.toISOString() });
       const requests = fake.requests.length;
-      expect(await refreshDue(upstream, log(), h, new Date())).toBe(0);
-      expect(await refreshDue(upstream, log(), h, new Date(refreshBoundary(t, h).getTime() + DAY - 1000))).toBe(0); // later today
+      expect(await refreshDue(upstream, log(), 5, new Date(day2.getTime() - 31 * 60_000))).toBe(0); // later that day
       expect(fake.requests.length).toBe(requests);
-      // Tomorrow's refresh time: tried again (1002 and 1003, refreshed today, are due again too).
-      expect(await refreshDue(upstream, log(), h, new Date(refreshBoundary(t, h).getTime() + DAY))).toBe(3);
+      // The next day's refresh time: tried again (1002 and 1003, refreshed the day before, are due again too).
+      vi.setSystemTime(day2);
+      expect(await refreshDue(upstream, log(), 5, day2)).toBe(3);
       await settle();
-      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired' });
+      expect(run(1001)).toMatchObject({ status: 'error', errorCode: 'session_expired', startedAt: day2.toISOString() });
     } finally {
       fake.state.of!.unauthorized = false;
+      vi.useRealTimers();
     }
   });
 });

@@ -47,9 +47,9 @@ export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogge
  * The daily refresh (docs/analytics.md, Keeping it fresh), ticked hourly: once `now` is past today's `hour`:00 UTC,
  * each claimed account whose `refreshed_at` is null or before it gets one backfill from max(now - 7 days,
  * refreshed_at - 1 hour) to now, started like the dashboard's (`startBackfillRun`: queued behind the one-at-a-time
- * limiter, its status on the Accounts page) and never awaited here. Skipped: an account whose run is queued or running,
- * and one whose last run (since the API started: the state is in memory) ended `session_expired` after today's
- * refresh time, until tomorrow's. Returns the runs started.
+ * limiter, its status on the Accounts page) and never awaited here. One attempt per account a day: skipped, an account
+ * whose run is queued or running, or whose last run (since the API started: the state is in memory) started after
+ * today's refresh time, so a failed run is tried again tomorrow. Returns the runs started.
  */
 export async function refreshDue(upstream: Upstream, log: FastifyBaseLogger, hour: number, now = new Date()): Promise<number> {
   const boundary = refreshBoundary(now, hour).getTime();
@@ -59,8 +59,8 @@ export async function refreshDue(upstream: Upstream, log: FastifyBaseLogger, hou
     if (refreshedAt && refreshedAt.getTime() >= boundary) continue;
     const last = backfillRun(teamId, accountId);
     if (last.status === 'queued' || last.status === 'running') continue;
-    if (last.status === 'error' && last.errorCode === 'session_expired' && Date.parse(last.finishedAt ?? '') >= boundary) continue;
-    const from = Math.max(now.getTime() - REFRESH_MAX_MS, (refreshedAt?.getTime() ?? -Infinity) - HOUR_MS);
+    if (last.status !== 'idle' && Date.parse(last.startedAt) >= boundary) continue;
+    const from = refreshedAt ? Math.max(now.getTime() - REFRESH_MAX_MS, refreshedAt.getTime() - HOUR_MS) : now.getTime() - REFRESH_MAX_MS;
     try {
       startBackfillRun({ upstream, teamId, accountId, from: new Date(from), to: now });
       started++;

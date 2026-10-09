@@ -174,7 +174,7 @@ within the hour after that time; "not refreshed yet" before any backfill has end
 
 ## Keeping it fresh
 
-Off unless `STATS_REFRESH_HOUR_UTC` is set (an hour, 0 to 23, UTC; unset or empty = off, and there is no default,
+Off unless `STATS_REFRESH_HOUR_UTC` is set (an hour, 0 to 23, UTC; unset, empty or blank = off, and there is no default,
 since these jobs call OF on their own). They are in-process jobs, so they also need `RUN_JOBS=true` (the default).
 
 - **Hourly transactions poll.** Every hour (and once at API start), for each claimed account (`account_workspace`
@@ -191,11 +191,12 @@ since these jobs call OF on their own). They are in-process jobs, so they also n
   one-account-at-a-time limiter, its status on the Accounts page, `GET /v1/stats/backfill`) and the job does not wait
   for it. The run walks the window's payers even when the chat list names them as not active in the window, so a PPV
   bought in the window is read again with its `isOpened` when it is on the payer's pages down to the window start (a
-  PPV older than those pages is not). A run that ends moves `refreshed_at` forward, so the account is not due again
-  until tomorrow's refresh time; one that fails is tried again on the next tick, except a dead session
-  (`session_expired`): it is skipped until tomorrow's refresh time. That skip, like all run state, is in memory, so
-  an API restart forgets it (one more attempt) and ends a run in flight (the next tick starts it again: rows upsert).
-  An account the CLI is backfilling fails its refresh with `backfill_running` and is tried again next hour. A quiet
+  PPV older than those pages is not). One attempt per account a day: a run that ends moves `refreshed_at` forward,
+  so the account is not due again until tomorrow's refresh time, and an account whose last run started after today's
+  refresh time is skipped until then too, so a run that fails (a dead session, the upstream down, `backfill_running`
+  while the CLI backfills it) is tried again the next day, from `refreshed_at` - 1 hour (at most 7 days back). That
+  skip, like all run state, is in memory, so an API restart forgets it (one more attempt) and ends a run in flight
+  (the next tick starts it again: rows upsert). A quiet
   week costs about 0.6 to 1 hour of requests per account at the default cap, a busy one 2.5 to 4.5 hours.
 
 `account_workspace.refreshed_at` is the time up to which the stored data is complete: the start of the latest
