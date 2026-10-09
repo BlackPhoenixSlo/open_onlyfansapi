@@ -273,8 +273,9 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * range in the chat list's order, then the range's payers and the chats with stored messages that the list left out,
  * each chat's messages newest first down to the range start, all into `store` (`dbStore` upserts, so a re-run never
  * double counts). A chat whose first messages page OF answers 404 is skipped, as is one the upstream answers another
- * 4xx (not 401 or 429). Paced and capped per account within the run, backs off on 429, retries transient failures
- * (502, 503, 504, network errors) up to `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
+ * 4xx (not 401 or 429). Paced per account within the run (the hourly cap spread evenly: a request starts every hour
+ * / cap), backs off on 429, retries transient failures (502, 503, 504, network errors) up to
+ * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
  * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or DEAD_SESSION_CHATS chats in a
  * row fail with a 4xx (a walked chat resets the count).
  */
@@ -304,24 +305,25 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     failedChats: [],
     droppedChats: 0,
   };
-  /** This run's request start times in the last hour: the hourly cap is per run, not shared across runs. */
-  const times: number[] = [];
+  /**
+   * The hourly cap as an even spacing between request starts (6 s at 600), not a burst then a wait for the hour to
+   * roll over; per run, not shared across runs.
+   */
+  const spacingMs = Math.ceil(HOUR_MS / cfg.requestsPerHourPerAccount);
+  /** When the previous request started: the spacing runs from there. */
+  let lastStart: number | null = null;
   /** When the previous response ended: the page delay runs from there. */
   let lastDone: number | null = null;
 
-  /** Waits for the page delay and the hourly cap. */
+  /** Waits for the page delay and the hourly cap's spacing. */
   async function pace() {
     for (;;) {
       const now = Date.now();
-      while (times.length && times[0]! <= now - HOUR_MS) times.shift();
-      const wait = Math.max(
-        lastDone === null ? 0 : lastDone + cfg.pageDelayMs - now,
-        times.length >= cfg.requestsPerHourPerAccount ? times[0]! + HOUR_MS - now : 0,
-      );
+      const wait = Math.max(lastDone === null ? 0 : lastDone + cfg.pageDelayMs - now, lastStart === null || !spacingMs ? 0 : lastStart + spacingMs - now);
       if (wait <= 0) break;
       await sleep(wait, undefined, { signal });
     }
-    times.push(Date.now());
+    lastStart = Date.now();
   }
 
   async function get(path: string): Promise<unknown> {

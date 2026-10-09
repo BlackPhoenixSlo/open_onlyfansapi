@@ -8,7 +8,7 @@ export const REPLY_CAP_MS = 12 * HOUR_MS;
 
 /** Backfill controls (spec §6.1). */
 export type BackfillConfig = {
-  /** Upstream requests per account in any rolling hour, counted within one run (one process): not across runs. */
+  /** Upstream requests per account per hour, spread evenly (a request starts every hour / this), within one run (one process): not across runs. */
   requestsPerHourPerAccount: number;
   /** Minimum gap from the end of one upstream response to the next request. */
   pageDelayMs: number;

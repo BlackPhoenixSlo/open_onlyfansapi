@@ -145,24 +145,24 @@ chat, and the pages of each chat the list left out. The limits:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ANALYTICS_REQUESTS_PER_HOUR` | `600` | Upstream requests per account in any rolling hour. A guess: OF documents no limit |
+| `ANALYTICS_REQUESTS_PER_HOUR` | `600` | Upstream requests per account per hour, spread evenly: a request starts every 3,600,000 / N ms (6 s at 600), never a burst of N and then an idle wait for the hour to pass. A guess: OF documents no limit |
 | `ANALYTICS_PAGE_DELAY_MS` | `300` | Gap from the end of one response to the next request (the reference fetcher's delay) |
 | `ANALYTICS_BACKOFF_MAX_MS` | `300000` | Longest wait after a 429, `Retry-After` included |
 
 A 429 waits for `Retry-After`, or 1 s doubling per retry, never longer than the cap. After 8 retries of one request
 the next 429 (the 9th in a row) fails the run; what was stored stays. A 502, 503, 504 or network error (a
 transient proxy failure) is retried up to 8 times after 1 s, 3 s, 9 s, 30 s, 1 min, 2 min, 5 min and 10 min (about
-19 min in all, so a restart of the upstream container does not end a long run), each attempt counting against the hourly
-cap; the 9th failure in a row fails the run, other 4xx fail it at once, and the dashboard shows the run's retries
+19 min in all, so a restart of the upstream container does not end a long run), each attempt spaced like any
+request; the 9th failure in a row fails the run, other 4xx fail it at once, and the dashboard shows the run's retries
 ("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF session expired
 for account <id>: re-connect it in Accounts" (`errorCode: session_expired`), and the account shows "Session expired ·
-re-connect". One account is read at a time. The hourly cap counts one run's
-requests only (each run, in its own process, starts from zero), so two runs back to back can reach twice the cap
-within an hour: leave an hour between them, or lower the cap.
+re-connect". One account is read at a time. The spacing paces one run's
+requests only (each run, in its own process, paces itself), so two runs at once (a CLI run and a dashboard run) make
+twice the requests: run one at a time, or lower the cap.
 
 ## Stopping
 
-Press Ctrl-C. The run stops at once: a request in flight finishes, but a page delay, hourly-cap or 429 wait is cut
+Press Ctrl-C. The run stops at once: a request in flight finishes, but a page delay, spacing or 429 wait is cut
 short and no new request is made. It still writes the CSVs from what was stored (`stopped: yes`). A chat whose walk
 was cut short gets no new coverage in `chats.csv`. Transactions are read first, so a stopped run has them unless it
 stopped within its first few requests. Ctrl-C a second time quits at once without writing.

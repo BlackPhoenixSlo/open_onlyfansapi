@@ -127,13 +127,15 @@ function ofData(): FakeOf {
 
 let teamA: string;
 let teamB: string;
+/** No page delay and no hourly cap: the tests' clock is frozen at NOW unless a test moves it. */
+const FAST = { pageDelayMs: 0, requestsPerHourPerAccount: Infinity };
 const opts = (over: Partial<BackfillOptions> = {}): BackfillOptions => ({
   upstream,
   store: dbStore(teamA, ACCOUNT),
   accountId: ACCOUNT,
   from: FROM,
   to: TO,
-  config: { pageDelayMs: 0 },
+  config: FAST,
   ...over,
 });
 /** `upstream`, recording when each request starts (`Date.now()`) and counting the answers; hooks run before and after. */
@@ -418,7 +420,7 @@ describe('analytics backfill', () => {
     of.chatErrors = { 2002: { status: 401 } };
     await expect(backfill(opts())).rejects.toBeInstanceOf(SessionExpiredError);
     of.chatErrors = { 2002: { status: 429 } };
-    await expect(backfill(opts({ config: { pageDelayMs: 0, maxRetries: 0 } }))).rejects.toThrow(/answered 429 to GET \/chats\/2002\/messages/);
+    await expect(backfill(opts({ config: { ...FAST, maxRetries: 0 } }))).rejects.toThrow(/answered 429 to GET \/chats\/2002\/messages/);
     of.chatErrors = { 2002: { status: 500 } };
     await expect(backfill(opts())).rejects.toThrow(/answered 500 to GET \/chats\/2002\/messages/);
   });
@@ -539,17 +541,19 @@ describe('analytics backfill', () => {
     expect((await counts()).messages).toBe(12);
   });
 
-  it('caps requests per hour: the third of a cap of 2 waits until the first is an hour old', async () => {
+  it('spreads the hourly cap evenly: at a cap of 600 a request starts every 6 s, not 600 at once', async () => {
     fakeClock();
     const stop = new AbortController();
     const p = probe();
-    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 0, requestsPerHourPerAccount: 2 } }));
-    await until(() => p.answered() === 2);
-    await vi.advanceTimersByTimeAsync(HOUR - 1);
-    expect(p.started).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(1);
-    await until(() => p.started.length === 3);
-    expect(p.started[2]! - p.started[0]!).toBe(HOUR);
+    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 0, requestsPerHourPerAccount: 600 } }));
+    await until(() => p.answered() === 1);
+    for (let n = 2; n <= 3; n++) {
+      await vi.advanceTimersByTimeAsync(5999);
+      expect(p.started).toHaveLength(n - 1);
+      await vi.advanceTimersByTimeAsync(1);
+      await until(() => p.answered() === n);
+    }
+    expect(p.started.slice(1).map((t, i) => t - p.started[i]!)).toEqual([6000, 6000]);
     stop.abort();
     expect(await run).toMatchObject({ stopped: true });
   });
@@ -559,7 +563,7 @@ describe('analytics backfill', () => {
     const stop = new AbortController();
     // Each response takes a second of the fake clock.
     const p = probe({ after: () => vi.setSystemTime(Date.now() + 1000) });
-    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 5000 } }));
+    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 5000, requestsPerHourPerAccount: Infinity } }));
     await until(() => p.answered() === 1);
     await vi.advanceTimersByTimeAsync(4999);
     expect(p.started).toHaveLength(1);
@@ -592,7 +596,7 @@ describe('analytics backfill', () => {
     fakeClock();
     Object.assign(fake.state.of!, { badGateway: 4 });
     const p = probe();
-    const run = backfill(opts({ upstream: p.upstream, config: { transientDelaysMs: [1000, 3000, 9000] } }));
+    const run = backfill(opts({ upstream: p.upstream, config: { ...FAST, transientDelaysMs: [1000, 3000, 9000] } }));
     const failed = expect(run).rejects.toThrow(/answered 502 to GET \/payouts\/transactions/);
     for (const [i, wait] of [1000, 3000, 9000].entries()) {
       await until(() => p.answered() === i + 1);
@@ -607,7 +611,7 @@ describe('analytics backfill', () => {
 
   it('retries a network error, and does not retry a 4xx', async () => {
     const down: Upstream = { ...upstream, forward: async () => Promise.reject(new AppError(502, 'upstream_unavailable', 'The upstream is unreachable')) };
-    await expect(backfill(opts({ upstream: down, config: { pageDelayMs: 0, transientDelaysMs: [0, 0] } }))).rejects.toMatchObject({ code: 'upstream_unavailable' });
+    await expect(backfill(opts({ upstream: down, config: { ...FAST, transientDelaysMs: [0, 0] } }))).rejects.toMatchObject({ code: 'upstream_unavailable' });
     let calls = 0;
     const gone: Upstream = {
       ...upstream,
@@ -637,7 +641,7 @@ describe('analytics backfill', () => {
 
   it('fails the run after maxRetries 429s in a row', async () => {
     Object.assign(fake.state.of!, { rateLimit: 3, retryAfter: '0' });
-    await expect(backfill(opts({ config: { pageDelayMs: 0, maxRetries: 2 } }))).rejects.toThrow(/answered 429/);
+    await expect(backfill(opts({ config: { ...FAST, maxRetries: 2 } }))).rejects.toThrow(/answered 429/);
   });
 });
 

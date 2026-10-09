@@ -19,6 +19,8 @@ export default defineConfig({
       UPSTREAM_TOKEN: 'test-only-upstream-token',
       UPSTREAM_TIMEOUT_MS: '2000',
       RUN_JOBS: 'false',
+      // A request every millisecond: the default 600 an hour spaces backfill requests 6 s apart.
+      ANALYTICS_REQUESTS_PER_HOUR: '3600000',
     },
   },
 });
