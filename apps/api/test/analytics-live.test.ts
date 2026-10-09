@@ -5,7 +5,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { accountWorkspace, messageFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
-import { dbStore } from '../src/modules/analytics/backfill.js';
+import { dbStore } from '../src/modules/analytics/backfill-store.js';
 import { ingestFrame, type EventFrame } from '../src/modules/events/ingest.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';

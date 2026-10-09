@@ -1,7 +1,8 @@
 import type { StatsBackfillRun } from '../../contracts.js';
 import { newId } from '../../lib/ids.js';
 import type { Upstream } from '../../lib/upstream.js';
-import { backfill, BackfillRunningError, dbStore, SessionExpiredError, type BackfillResult } from './backfill.js';
+import { dbStore } from './backfill-store.js';
+import { backfill, BackfillRunningError, SessionExpiredError, type BackfillResult } from './backfill.js';
 
 /**
  * Dashboard backfill runs (`POST /v1/stats/backfill`), the last one per account. In memory only: an API restart

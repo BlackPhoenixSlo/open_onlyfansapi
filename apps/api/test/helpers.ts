@@ -3,7 +3,8 @@ import { eq } from 'drizzle-orm';
 import { db, pool } from '../src/db/index.js';
 import { organization, teamBackend } from '../src/db/schema.js';
 import { setMailTransport, type Mail } from '../src/lib/mailer.js';
-import { backfill, dbStore, type BackfillOptions } from '../src/modules/analytics/backfill.js';
+import { dbStore } from '../src/modules/analytics/backfill-store.js';
+import { backfill, type BackfillOptions } from '../src/modules/analytics/backfill.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 
 export const ORIGIN = 'http://localhost:5173';

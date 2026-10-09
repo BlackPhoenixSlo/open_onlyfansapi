@@ -11,16 +11,8 @@ import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS,
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
-import {
-  backfill,
-  dbStore,
-  memoryStore,
-  progressLine,
-  SessionExpiredError,
-  type BackfillOptions,
-  type BackfillResult,
-  type BackfillRows,
-} from '../src/modules/analytics/backfill.js';
+import { dbStore, memoryStore } from '../src/modules/analytics/backfill-store.js';
+import { backfill, progressLine, SessionExpiredError, type BackfillOptions, type BackfillResult, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';

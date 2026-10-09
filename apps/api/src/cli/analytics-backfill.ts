@@ -11,15 +11,8 @@ import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
 import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
-import {
-  backfill,
-  dbStore,
-  memoryStore,
-  progressLine,
-  type BackfillResult,
-  type BackfillRows,
-  type BackfillStore,
-} from '../modules/analytics/backfill.js';
+import { dbStore, memoryStore } from '../modules/analytics/backfill-store.js';
+import { backfill, progressLine, type BackfillResult, type BackfillRows, type BackfillStore } from '../modules/analytics/backfill.js';
 import { claimAccount } from '../modules/analytics/workspace.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 

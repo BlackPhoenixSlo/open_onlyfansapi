@@ -193,7 +193,7 @@ export type DerivedMessage = {
 /**
  * Derived columns of one OF message in chat `chatId`; null when it has no numeric `id`. Outbound = `fromUser.id` is
  * the account. Mass = its `queueId` is a broadcast with `sentCount > 1` in the mass history; the backfill's store also
- * marks bulk sends mass (a queue id in 8+ chats, backfill.ts `BULK_CHATS`). Every OF message carries a numeric
+ * marks bulk sends mass (a queue id in 8+ chats, backfill-store.ts `BULK_CHATS`). Every OF message carries a numeric
  * `queueId`; `isFromQueue` is true on every broadcast (6,512 of 6,512 mass rows, 2026-10-09) and on some sends the mass
  * history a run read does not list: bulk sends and single-chat queued sends (about 0.2% of DMs). On 2026-10-09 (account
  * 337749380, before the bulk mark), 671 non-mass outbound rows shared one of 6 queue ids, each in 8 to 321 chats (one

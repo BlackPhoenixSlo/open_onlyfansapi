@@ -4,7 +4,8 @@ import { accountWorkspace } from '../db/schema.js';
 import { newId } from '../lib/ids.js';
 import type { Upstream } from '../lib/upstream.js';
 import { backfillRun, startBackfillRun } from '../modules/analytics/backfill-runs.js';
-import { dbStore, readTransactions, type Get } from '../modules/analytics/backfill.js';
+import { dbStore } from '../modules/analytics/backfill-store.js';
+import { readTransactions, type Get } from '../modules/analytics/backfill.js';
 import { refreshBoundary } from '../modules/analytics/refresh.js';
 import { DAY_MS } from '../modules/stats/scope.js';
 
