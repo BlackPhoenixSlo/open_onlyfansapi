@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { ApiError, accountsQuery, api } from '@/lib/api';
 import { FASTT_STORE_URL, useFasttExtension } from './fastt';
 
+const PROXY_REFERRAL_URL = 'https://iproyal.com/?r=jakabasej';
+
 function FasttBlock() {
   const ext = useFasttExtension();
   return (
@@ -158,7 +160,12 @@ export function ConnectDialog({ onClose }: { onClose: () => void }) {
             />
             <p className="text-xs text-muted-foreground">
               Optional. Leave empty to connect from the server's own IP (or to keep the proxy an already connected
-              account has). Give each account its own proxy if you want its traffic to come from a different IP.
+              account has). Give each account its own proxy if you want its traffic to come from a different IP. Need
+              one?{' '}
+              <a href={PROXY_REFERRAL_URL} target="_blank" rel="noopener noreferrer" className="underline">
+                Get a proxy from IPRoyal
+              </a>
+              .
             </p>
           </div>
           {connect.error && (
