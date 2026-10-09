@@ -20,7 +20,18 @@ let keyA: string;
 let limitedKeyA: string;
 let keyB: string;
 
-const purchase = (teamId: string, accountId: number, txId: string, fanId: number | null, kind: string | null, gross: number, net: number, at: string, user?: Record<string, unknown>) => ({
+const purchase = (
+  teamId: string,
+  accountId: number,
+  txId: string,
+  fanId: number | null,
+  kind: string | null,
+  gross: number,
+  net: number,
+  at: string,
+  user?: Record<string, unknown>,
+  status?: string,
+) => ({
   teamId,
   accountId,
   txId,
@@ -31,7 +42,7 @@ const purchase = (teamId: string, accountId: number, txId: string, fanId: number
   netCents: net,
   currency: 'USD',
   createdAt: new Date(`2026-${at}:00.000Z`),
-  raw: user ? { id: txId, user } : { id: txId },
+  raw: { id: txId, ...(user && { user }), ...(status && { status }) },
 });
 
 const message = (accountId: number, messageId: number, chatId: number, at: string, over: Partial<typeof messageFact.$inferInsert> = {}) => ({
@@ -74,9 +85,12 @@ beforeAll(async () => {
 
   await pool.query('TRUNCATE message_fact, purchase_fact, stats_config');
   await db.insert(purchaseFact).values([
-    purchase(teamA, A1, 't1', 3001, 'message', 1000, 800, '09-01T10:00', { id: 3001, name: 'Ann', username: 'ann' }),
-    purchase(teamA, A1, 't2', 3001, 'tips', 500, 400, '09-03T12:00', { id: 3001, username: 'ann2' }),
-    purchase(teamA, A1, 't3', 3002, 'subscription', 2000, 1600, '09-01T11:00', { id: 3002 }),
+    purchase(teamA, A1, 't1', 3001, 'message', 1000, 800, '09-01T10:00', { id: 3001, name: 'Ann', username: 'ann' }, 'done'),
+    purchase(teamA, A1, 't2', 3001, 'tips', 500, 400, '09-03T12:00', { id: 3001, username: 'ann2' }, 'loading'),
+    purchase(teamA, A1, 't3', 3002, 'subscription', 2000, 1600, '09-01T11:00', { id: 3002 }, 'done'),
+    // Refunded or reversed: not booked, so in no sum, payer count or name.
+    purchase(teamA, A1, 't9', 3001, 'message', 5000, 4000, '09-02T10:00', { id: 3001, name: 'Refunded' }, 'undo'),
+    purchase(teamA, A1, 't10', 3009, 'tips', 2000, 1600, '09-02T11:00', { id: 3009, name: 'Reversed' }, 'pending_return'),
     purchase(teamA, A1, 't4', null, null, 300, 240, '09-03T13:00'),
     purchase(teamA, A1, 't5', 3008, 'post', 100, 80, '09-03T14:00', { id: 3008, name: 'Hal' }),
     purchase(teamA, A1, 't6', 3001, 'message', 999, 799, '09-05T10:00', { id: 3001, name: 'Ann' }),
@@ -104,11 +118,12 @@ afterAll(async () => {
 });
 
 describe('stats revenue', () => {
-  it('sums the range by kind and by day (every day, zeros included) and counts payers over fans messaged', async () => {
+  it('sums the booked range by kind and by day (every day, zeros included) and counts payers over fans messaged', async () => {
     const body = await get(RANGE);
     expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-03' });
     // Payers (A1 3001, 3002, 3008; A2 4001) over fans messaged in the range (A1 3001, 3003, 3004; A2 4001, 4002).
-    expect(body.totals).toEqual({ gross: 4600, net: 3680, transactions: 6, payers: 4, fansMessaged: 5, goldenRatio: 80 });
+    // Settled: t1 and t3 (`done`); pending: t2 (`loading`); t4, t5 and t7 have no status, so gross only.
+    expect(body.totals).toEqual({ gross: 4600, settledGross: 3000, pendingGross: 500, net: 3680, transactions: 6, payers: 4, fansMessaged: 5, goldenRatio: 80 });
     expect(body.byKind).toEqual([
       { kind: 'subscription', gross: 2000, net: 1600, transactions: 1 },
       { kind: 'message', gross: 1700, net: 1360, transactions: 2 },
@@ -141,12 +156,12 @@ describe('stats revenue', () => {
 
   it('has no golden ratio and no PPV rate when nothing was sent', async () => {
     const body = await get('from=2026-09-05&to=2026-09-05');
-    expect(body.totals).toEqual({ gross: 999, net: 799, transactions: 1, payers: 1, fansMessaged: 0, goldenRatio: null });
+    expect(body.totals).toEqual({ gross: 999, settledGross: 0, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, goldenRatio: null });
     expect(body.ppv.map((p: { rate: number | null }) => p.rate)).toEqual([null, null]);
   });
 
   it("scopes to the key's accounts, `accountId` and the workspace's own rows", async () => {
-    const a2 = { gross: 700, net: 560, transactions: 1, payers: 1, fansMessaged: 2, goldenRatio: 50 };
+    const a2 = { gross: 700, settledGross: 0, pendingGross: 0, net: 560, transactions: 1, payers: 1, fansMessaged: 2, goldenRatio: 50 };
     expect((await get(RANGE, bearer(limitedKeyA))).totals).toEqual(a2);
     expect((await get(`${RANGE}&accountId=${A2}`)).totals).toEqual(a2);
     const denied = await app.inject({ method: 'GET', url: `/v1/stats/revenue?${RANGE}&accountId=${A1}`, headers: bearer(limitedKeyA) });
@@ -156,7 +171,7 @@ describe('stats revenue', () => {
     expect(other.totals).toMatchObject({ gross: 4000, payers: 1, fansMessaged: 0 });
     expect(other.topPayers.map((p: { fanId: number }) => p.fanId)).toEqual([5001]);
     const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
-    expect(none.totals).toEqual({ gross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, goldenRatio: null });
+    expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, goldenRatio: null });
     expect(none.topPayers).toEqual([]);
   });
 

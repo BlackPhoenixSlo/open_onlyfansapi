@@ -118,10 +118,13 @@ a PPV bought or a tip sent outside the stored messages is not in them.
 
 `GET /v1/stats/revenue` (and the dashboard's Revenue page) sums the transactions the backfill stored in
 `purchase_fact` (OF's `/payouts/transactions`; live events add none, so a range never backfilled shows nothing) and
-counts PPV sends in `message_fact`. Money is in cents, integers, USD (every stored transaction is): `gross` is OF's
-`amount`, `net` its `net` (a missing one counts as 0). Rates are percent, null when the denominator is 0.
+counts PPV sends in `message_fact`. Only booked transactions count: OF's status `undo` (refunded) and `pending_return`
+(being reversed) are left out of every sum, payer and name; a transaction without a status counts. Money is in cents,
+integers, USD (every stored transaction is): `gross` is OF's `amount`, `net` its `net` (a missing one counts as 0).
+Rates are percent, null when the denominator is 0.
 
-- `totals`: `gross`, `net`, `transactions`; `payers`, the fans with a transaction in the range whose fan is known;
+- `totals`: `gross`, `net`, `transactions`; `settledGross`, the gross of status `done`, and `pendingGross`, of status
+  `loading` (OF still holds it; the dashboard shows both under Gross); `payers`, the fans with a transaction in the range whose fan is known;
   `fansMessaged`, the fans (chats) with a message in the range that is not unsent, from either side; `goldenRatio`,
   `payers / fansMessaged` (a payer need not have been messaged, so it can pass 100). Payers and fans count per account:
   a fan on two accounts counts twice.

@@ -45,8 +45,14 @@ function Revenue() {
       {config.isError && <ErrorCard message={config.error.message} />}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Kpi title="Gross" {...kpiState} empty={noSales} value={formatMoney(totals?.gross ?? 0)}>
-          What fans paid, before OF's fee.
+        <Kpi
+          title="Gross"
+          {...kpiState}
+          empty={noSales}
+          value={formatMoney(totals?.gross ?? 0)}
+          sub={`settled ${formatMoney(totals?.settledGross ?? 0)} · pending ${formatMoney(totals?.pendingGross ?? 0)}`}
+        >
+          What fans paid, before OF's fee; refunds and reversals left out.
         </Kpi>
         <Kpi title="Net" {...kpiState} empty={noSales} value={formatMoney(totals?.net ?? 0)}>
           What the creator earns after OF's fee.

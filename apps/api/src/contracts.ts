@@ -755,7 +755,10 @@ export type StatsRevenueQuery = z.input<typeof statsRevenueQuery>;
 /** Money sums in cents: OF's `amount` (gross) and `net` per transaction, a missing one counted as 0. */
 const revenueSums = { gross: z.number().int(), net: z.number().int(), transactions: z.number().int() };
 
-/** Revenue from the stored transactions (`purchase_fact`, all USD) and PPV sends (`message_fact`). Rates are percent; null when nothing to divide by. */
+/**
+ * Revenue from the stored booked transactions (`purchase_fact`, all USD; OF's status `undo` and `pending_return`, a
+ * refund or reversal, are left out) and PPV sends (`message_fact`). Rates are percent; null when nothing to divide by.
+ */
 export const statsRevenue = z.object({
   timezone: z.string(),
   configVersion: z.number().int(),
@@ -764,6 +767,10 @@ export const statsRevenue = z.object({
   to: z.string(),
   totals: z.object({
     ...revenueSums,
+    /** The part of `gross` OF has settled (status `done`). */
+    settledGross: z.number().int(),
+    /** The part of `gross` OF still holds (status `loading`). */
+    pendingGross: z.number().int(),
     /** Fans with a transaction in the range whose fan is known; per account (a fan paying on two accounts counts twice). */
     payers: z.number().int(),
     /** Fans (chats) with a message in the range that is not unsent, either direction; per account. */

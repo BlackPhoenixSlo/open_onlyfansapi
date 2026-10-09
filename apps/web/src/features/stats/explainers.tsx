@@ -228,7 +228,7 @@ function VerifyFlow() {
 const REVENUE_TERMS: [string, string][] = [
   [
     'Gross and net',
-    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed, in USD. Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
+    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed, in USD. Refunded or reversed transactions (OF's status undo or pending_return) are left out. Settled is the gross OF has cleared (status done), pending what it still holds (loading). Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
   ],
   [
     'Kind',

@@ -4,12 +4,16 @@ import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
 import { inScope, ppvDm, type Scope } from './messages.js';
 
-// Revenue (`GET /v1/stats/revenue`): the workspace's stored transactions (`purchase_fact`) and PPV sends
+// Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.
 
 type Sums = { gross: number; net: number; transactions: number };
 
 const TOP_PAYERS = 50;
+
+const txStatus = sql`${purchaseFact.raw}->>'status'`;
+/** A booked transaction: not refunded or reversed (OF's status `undo` or `pending_return`); a missing status counts. */
+const booked = sql`coalesce(${txStatus}, '') not in ('undo', 'pending_return')`;
 
 const zero = (): Sums => ({ gross: 0, net: 0, transactions: 0 });
 
@@ -39,10 +43,12 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
         gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
         net: sql<number>`coalesce(sum(${purchaseFact.netCents}), 0)::int`,
         transactions: sql<number>`count(*)::int`,
+        settled: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${txStatus} = 'done'), 0)::int`,
+        pending: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${txStatus} = 'loading'), 0)::int`,
         lastAt: max(purchaseFact.createdAt),
       })
       .from(purchaseFact)
-      .where(inScope(purchaseFact, scope))
+      .where(and(inScope(purchaseFact, scope), booked))
       .groupBy(purchaseFact.accountId, purchaseFact.fanId, purchaseFact.kind, sql`"day"`),
     db
       .select({
@@ -57,11 +63,15 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   ]);
 
   const totals = zero();
+  let settledGross = 0;
+  let pendingGross = 0;
   const kinds = new Map<string, Sums>();
   const byDay = new Map(days.map((d) => [d, zero()]));
   const payers = new Map<string, Sums & { accountId: number; fanId: number; lastAt: Date }>();
   for (const g of groups) {
     add(totals, g);
+    settledGross += g.settled;
+    pendingGross += g.pending;
     const kind = g.kind ?? 'unknown';
     if (!kinds.has(kind)) kinds.set(kind, zero());
     add(kinds.get(kind)!, g);
@@ -91,6 +101,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
         .where(
           and(
             inScope(purchaseFact, scope),
+            booked,
             sql`(${purchaseFact.accountId}, ${purchaseFact.fanId}) in (${sql.join(
               top.map((p) => sql`(${p.accountId}, ${p.fanId})`),
               sql`, `,
@@ -104,7 +115,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   // An aggregate without GROUP BY always returns one row.
   const { fansMessaged, dmSent, dmOpened, massSent, massOpened } = messages!;
   return {
-    totals: { ...totals, payers: payers.size, fansMessaged, goldenRatio: percent(payers.size, fansMessaged) },
+    totals: { ...totals, settledGross, pendingGross, payers: payers.size, fansMessaged, goldenRatio: percent(payers.size, fansMessaged) },
     byKind: [...kinds].map(([kind, s]) => ({ kind, ...s })).sort((a, b) => b.gross - a.gross || a.kind.localeCompare(b.kind)),
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: [
