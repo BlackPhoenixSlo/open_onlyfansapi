@@ -70,8 +70,10 @@ try {
     `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
   );
   console.log(`incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`);
+  const failed = result.failedChats;
+  const failedIds = failed.length ? `: ${failed.slice(0, 20).join(', ')}${failed.length > 20 ? ', ...' : ''}` : '';
   console.log(
-    `chats the list left out ${result.seededChats} (the range's payers and chats with stored messages, walked; ${result.missingChats} not found upstream, skipped); list entries dropped ${result.droppedChats} (no readable fan id or last-message time)`,
+    `chats the list left out ${result.seededChats} (the range's payers and chats with stored messages, walked; ${result.missingChats} not found upstream, skipped); list entries dropped ${result.droppedChats} (no readable fan id); chats failed ${failed.length} (a 4xx, skipped)${failedIds}`,
   );
   const written = await sink.write();
   console.log(

@@ -60,6 +60,8 @@ const msg = (id: number, at: string, from: number, over: Record<string, unknown>
   ...over,
 });
 const chat = (id: number, last: { id: number; createdAt: string }, username?: string) => ({ withUser: { id, username }, lastMessage: last });
+/** A $3 PPV bought in the range by fan `fan`. */
+const paid = (id: string, fan: number | string) => ({ id, descriptionDetails: { type: 'message' }, amount: 3, net: 2.4, currency: 'USD', createdAt: '2026-09-02T12:00:00Z', user: { id: fan } });
 
 /** Three chats in the range and one before it; OF pages hold at most 3 messages; chat 2002 ignores its cursor. */
 function ofData(): FakeOf {
@@ -213,6 +215,7 @@ describe('analytics backfill', () => {
       incompleteChats: 1, // 2002: OF ignored the cursor before the walk reached the range start
       seededChats: 0,
       missingChats: 0,
+      failedChats: [],
       droppedChats: 0,
     });
     expect(ofCalls(start)).toEqual([
@@ -361,17 +364,30 @@ describe('analytics backfill', () => {
     expect(coverage.map((c) => [c.chatId, c.fanUsername])).toEqual([...Array.from({ length: 10 }, (_, i) => 3000 + i), 3025, 3050].map((id) => [id, `fan_${id}`]));
   });
 
+  it('ends the chat list after 3 pages in a row with no new chat; one such page does not', async () => {
+    const of = fake.state.of!;
+    const at = (id: number) => chat(id, { id, createdAt: '2026-09-02T10:00:00.000Z' }, `fan_${id}`);
+    const ten = (first: number) => Array.from({ length: 10 }, (_, i) => at(first + i));
+    // OF pages of 10: new, repeats, new, then three pages of repeats; the chat after them is not read.
+    of.chats = [...ten(3000), ...ten(3000), ...ten(3010), ...ten(3000), ...ten(3010), ...ten(3000), at(3050)];
+    of.transactions = []; // no payer to walk besides the list
+    const start = fake.requests.length;
+    expect(await backfill(opts())).toMatchObject({ chats: 20, seededChats: 0 });
+    expect(ofCalls(start).filter((u) => u.startsWith('/of/chats?'))).toEqual(
+      [0, 10, 20, 30, 40, 50].map((o) => `/of/chats?limit=50&offset=${o}&order=recent&skip_users=none`),
+    );
+  });
+
   it("walks the chats the list leaves out (the range's payers, then chats with stored messages), skips a 404, counts unreadable entries", async () => {
     const of = fake.state.of!;
-    const paid = (id: string, fan: number) => ({ id, descriptionDetails: { type: 'message' }, amount: 3, net: 2.4, currency: 'USD', createdAt: '2026-09-02T12:00:00Z', user: { id: fan } });
-    of.transactions.unshift(paid('tx6', 2008), paid('tx5', 2007)); // 2008's 404 comes first; 2007 is still walked
+    of.transactions.unshift(paid('tx6', 2008), paid('tx5', 2007), paid('tx7', 2010)); // 2008's 404 comes first; 2007 is still walked
     of.messages[2007] = [msg(701, '09-02T11:00', ACCOUNT, { price: 3 }), msg(700, '09-02T10:00', ACCOUNT)]; // a payer's chat OF does not list
-    of.missingChats = [2008]; // a deleted fan's: 404
+    of.chatErrors = { 2008: { status: 404 } }; // a deleted fan's
     of.chats.push(
-      { withUser: {}, lastMessage: { id: 1, createdAt: '2026-09-02T10:00:00.000Z' } } as FakeOf['chats'][number],
-      chat(2010, { id: 1, createdAt: 'not a date' }),
+      { withUser: {}, lastMessage: { id: 1, createdAt: '2026-09-02T10:00:00.000Z' } } as FakeOf['chats'][number], // dropped
+      chat(2010, { id: 1, createdAt: 'not a date' }), // listed, so not seeded though it paid; not active, so not walked
     );
-    expect(await backfill(opts())).toMatchObject({ chats: 4, transactions: 5, seededChats: 2, missingChats: 1, droppedChats: 2 });
+    expect(await backfill(opts())).toMatchObject({ chats: 4, transactions: 6, seededChats: 2, missingChats: 1, failedChats: [], droppedChats: 1 });
     const walked = async () => (await db.select().from(chatCoverage).orderBy(chatCoverage.chatId)).map((c) => [c.chatId, c.reachedStart]);
     expect(await walked()).toEqual([[2001, false], [2002, false], [2003, true], [2007, true]]);
 
@@ -380,6 +396,31 @@ describe('analytics backfill', () => {
     of.messages[2002]!.unshift(msg(205, '09-03T10:00', 2002));
     expect(await backfill(opts())).toMatchObject({ seededChats: 3, missingChats: 1 }); // 2002, 2007, 2008
     expect(await db.$count(messageFact, eq(messageFact.messageId, 205))).toBe(1);
+  });
+
+  it('seeds only fan ids that are safe positive integers and not the account', async () => {
+    fake.state.of!.transactions.unshift(paid('tx5', 2007), paid('tx6', ACCOUNT), paid('tx7', -5), paid('tx8', '9007199254740993'));
+    expect(await backfill(opts())).toMatchObject({ transactions: 7, seededChats: 1 }); // 2007
+  });
+
+  it("skips a chat whose first page OF answers 404 as missing; a later page's 404 or the upstream's own fails that chat only", async () => {
+    const of = fake.state.of!;
+    of.transactions.unshift(paid('tx5', 2008));
+    of.chatErrors = { 2008: { status: 404 }, 2001: { status: 404, afterFirst: true }, 2003: { status: 404, notOf: true } };
+    expect(await backfill(opts())).toMatchObject({ chats: 1, missingChats: 1, failedChats: [2003, 2001] }); // 2002 walked
+    expect((await db.select().from(chatCoverage)).map((c) => c.chatId)).toEqual([2002]);
+  });
+
+  it('skips a chat the upstream answers another 4xx; a 401, a 429 past the retries and a 5xx still end the run', async () => {
+    const of = fake.state.of!;
+    of.chatErrors = { 2002: { status: 403 } };
+    expect(await backfill(opts())).toMatchObject({ chats: 2, failedChats: [2002] });
+    of.chatErrors = { 2002: { status: 401 } };
+    await expect(backfill(opts())).rejects.toBeInstanceOf(SessionExpiredError);
+    of.chatErrors = { 2002: { status: 429 } };
+    await expect(backfill(opts({ config: { pageDelayMs: 0, maxRetries: 0 } }))).rejects.toThrow(/answered 429 to GET \/chats\/2002\/messages/);
+    of.chatErrors = { 2002: { status: 500 } };
+    await expect(backfill(opts())).rejects.toThrow(/answered 500 to GET \/chats\/2002\/messages/);
   });
 
   it('splits a full mass window in halves, and fails on a full hour', async () => {

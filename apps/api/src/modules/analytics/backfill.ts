@@ -14,6 +14,8 @@ import { syncScripts } from './scripts.js';
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers 10 to 20 a page whatever the limit
+/** Chat-list pages in a row adding no new chat that end the list: OF repeating itself, not the list moving. */
+const STALE_CHAT_PAGES = 3;
 const PAGE = 100; // the upstream's cap on messages, mass history and transactions
 
 export type BackfillOptions = {
@@ -83,17 +85,34 @@ export type BackfillResult = {
   incompleteChats: number;
   /** Chats the chat list did not name, walked as well: the fans of the range's transactions and of stored messages. */
   seededChats: number;
-  /** Chats the upstream answered 404 for (a deleted fan's): skipped. */
+  /** Chats whose first messages page OF answered 404 (a deleted fan's): skipped. */
   missingChats: number;
-  /** Chat-list entries without a readable fan id or last-message time: not walked unless seeded. */
+  /** Chats whose walk the upstream answered another 4xx (not 401 or 429): skipped, their ids here. */
+  failedChats: number[];
+  /** Chat-list entries without a readable fan id. */
   droppedChats: number;
 };
 
 /** Statuses retried with `transientDelaysMs`: a proxy or gateway error at the upstream, or the upstream unreachable. */
 const TRANSIENT = new Set([502, 503, 504]);
 
-/** The upstream answered 404: for a chat's messages, a fan OF no longer has. */
-class NotFoundError extends Error {}
+/** The upstream answered `status`, not retried; `ofError` when the body is OF's error passed through (`code: of_error`). */
+class StatusError extends Error {
+  constructor(
+    readonly status: number,
+    readonly ofError: boolean,
+    path: string,
+  ) {
+    super(`backfill: the upstream answered ${status} to GET ${path}`);
+  }
+}
+const isOfError = (body: Buffer): boolean => {
+  try {
+    return (JSON.parse(body.toString('utf8')) as { error?: { code?: unknown } } | null)?.error?.code === 'of_error';
+  } catch {
+    return false;
+  }
+};
 
 /** OF answered 401: the session behind the account is dead, so it must be re-connected in Accounts before a run can work. */
 export class SessionExpiredError extends Error {
@@ -244,10 +263,10 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * on both sides of the range) and the welcome template (both feed the derived columns), then the chats active in the
  * range in the chat list's order, then the range's payers and the chats with stored messages that the list left out,
  * each chat's messages newest first down to the range start, all into `store` (`dbStore` upserts, so a re-run never
- * double counts). A chat the upstream answers 404 for is skipped. Paced and capped per account within the run, backs
- * off on 429, retries transient failures (502, 503, 504, network errors) up to `transientDelaysMs.length` times, and
- * stops when `signal` aborts. Ends with `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF
- * answers 401.
+ * double counts). A chat whose first messages page OF answers 404 is skipped, as is one the upstream answers another
+ * 4xx (not 401 or 429). Paced and capped per account within the run, backs off on 429, retries transient failures
+ * (502, 503, 504, network errors) up to `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
+ * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(() => run(opts));
@@ -272,6 +291,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     incompleteChats: 0,
     seededChats: 0,
     missingChats: 0,
+    failedChats: [],
     droppedChats: 0,
   };
   /** This run's request start times in the last hour: the hourly cap is per run, not shared across runs. */
@@ -326,8 +346,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
         continue;
       }
       if (out.status === 401) throw new SessionExpiredError(accountId);
-      if (out.status === 404) throw new NotFoundError(`backfill: the upstream answered 404 to GET ${path}`);
-      if (!out.ok) throw new Error(`backfill: the upstream answered ${out.status} to GET ${path}`);
+      if (!out.ok) throw new StatusError(out.status, isOfError(out.body), path);
       return JSON.parse(out.body.toString('utf8')) as unknown;
     }
   }
@@ -357,15 +376,19 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     result.droppedChats = list.dropped;
     // OF's chat list leaves some chats out (a deleted or deactivated fan's; its offset still counts them), so the
     // range's payers and the chats with stored messages are walked too when the list did not name them.
-    const seeded = [...new Set([...payers, ...(await store.chatIds())])].filter((id) => !list.listed.has(id));
+    const seeded = [...new Set([...payers, ...(await store.chatIds())])].filter(
+      (id) => Number.isSafeInteger(id) && id > 0 && id !== accountId && !list.listed.has(id),
+    );
     result.seededChats = seeded.length;
     for (const chat of [...list.active, ...seeded.map((id) => ({ id, username: null, name: null, customName: null }))]) {
+      // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the run.
       const walk = await walkChat(get, store, ctx, chat, from, massFrom).catch((err: unknown) => {
-        if (err instanceof NotFoundError) return null;
+        if (err instanceof StatusError && err.status >= 400 && err.status < 500 && err.status !== 429) return 'failed' as const;
         throw err;
       });
-      if (!walk) {
-        result.missingChats++;
+      if (walk === 'missing') result.missingChats++;
+      if (walk === 'failed') result.failedChats.push(chat.id);
+      if (typeof walk === 'string') {
         opts.onProgress?.(result);
         continue;
       }
@@ -411,34 +434,40 @@ type Chat = { id: number; username: string | null; name: string | null; customNa
 
 /**
  * The whole chat list (`skip_users=none` so OF sends the full `withUser`): `active`, the chats active since `from`;
- * `listed`, every fan id it named; `dropped`, the entries without a readable fan id or last-message time. Pages by
- * the page's `nextOffset` (else by the chats it returned) until a page is empty or says `hasMore` false. No page ends
- * it early: OF's order is not by the last message (unread chats first, a mass message does not move a chat, and a
- * tail ordered by fan id), and its offset counts chats it does not return (pages of 20 places held 13 to 19). A
- * chat with `lastMessage: null` (its latest message deleted) counts as active.
+ * `listed`, every fan id it named; `dropped`, the entries without a readable fan id. Pages by the page's `nextOffset`
+ * (else by the chats it returned) until a page is empty, says `hasMore` false, or STALE_CHAT_PAGES pages in a row add
+ * no new chat (the bound when OF repeats itself; one page of repeats is the list moving while it is read). No quiet
+ * page ends it: OF's order is not by the last message (unread chats first, a mass message does not move a chat, and a
+ * tail ordered by fan id), and its offset counts chats it does not return (pages of 20 places held 13 to 19). A chat
+ * with `lastMessage: null` (its latest message deleted) counts as active; one without a readable last-message time
+ * does not.
  */
 async function listChats(get: Get, from: number): Promise<{ active: Chat[]; listed: Set<number>; dropped: number }> {
   const active: Chat[] = [];
   const listed = new Set<number>();
   let dropped = 0;
+  let stale = 0;
   for (let offset = 0; ; ) {
     const page = await get(`/chats?limit=${CHAT_PAGE}&offset=${offset}&order=recent&skip_users=none`);
     const list = items(page);
+    let added = 0;
     for (const chat of list) {
       const id = Number((chat.withUser as Raw | undefined)?.id);
-      // `lastMessage: null`: OF's answer when the chat's latest message was deleted. Walked and counted active, so
-      // its other messages are read.
-      const lastAt = chat.lastMessage === null ? from : time((chat.lastMessage as Raw | undefined)?.createdAt);
-      if (!Number.isInteger(id) || id <= 0 || Number.isNaN(lastAt)) {
+      if (!Number.isSafeInteger(id) || id <= 0) {
         dropped++;
         continue;
       }
       if (listed.has(id)) continue; // a repeat: the list moved while it was read
       listed.add(id);
-      if (lastAt < from) continue; // quiet since before the range
+      added++;
+      // `lastMessage: null`: OF's answer when the chat's latest message was deleted. Walked and counted active, so
+      // its other messages are read.
+      const lastAt = chat.lastMessage === null ? from : time((chat.lastMessage as Raw | undefined)?.createdAt);
+      if (!(lastAt >= from)) continue; // quiet since before the range, or no readable last message
       active.push({ id, username: username(chat.withUser), name: field(chat.withUser, 'name'), customName: field(chat.withUser, 'displayName') });
     }
-    if (list.length === 0 || !hasMore(page)) return { active, listed, dropped };
+    stale = added ? 0 : stale + 1;
+    if (list.length === 0 || !hasMore(page) || stale >= STALE_CHAT_PAGES) return { active, listed, dropped };
     const next = Number((page as Raw).nextOffset);
     offset = Number.isInteger(next) && next > offset ? next : offset + list.length;
   }
@@ -450,7 +479,7 @@ async function listChats(get: Get, from: number): Promise<{ active: Chat[]; list
  * the empty page after it false), a page with no new id, or the first page reaching before `from` (the boundary
  * page). Each page goes to `store`, split at `massFrom` (the boundary page's tail before it was derived without its
  * mass history), then the walk's coverage. Returns the messages read and whether the store's coverage still falls
- * short of `from`.
+ * short of `from`, or `missing` when OF answers 404 to the first page (a fan it no longer has; nothing is stored).
  */
 async function walkChat(
   get: Get,
@@ -459,7 +488,7 @@ async function walkChat(
   chat: Chat,
   from: number,
   massFrom: number,
-): Promise<{ messages: number; incomplete: boolean }> {
+): Promise<{ messages: number; incomplete: boolean } | 'missing'> {
   const chatId = chat.id;
   const seen = new Set<string | number>();
   let fanUsername = chat.username;
@@ -467,7 +496,13 @@ async function walkChat(
   let reachedStart = false;
   for (;;) {
     const cursor = oldest ? `&first_id=${oldest.id}` : '';
-    const page = await get(`/chats/${chatId}/messages?limit=${PAGE}&order=desc${cursor}`);
+    let page: unknown;
+    try {
+      page = await get(`/chats/${chatId}/messages?limit=${PAGE}&order=desc${cursor}`);
+    } catch (err) {
+      if (!oldest && err instanceof StatusError && err.status === 404 && err.ofError) return 'missing';
+      throw err;
+    }
     const fetchedAt = new Date();
     const list = items(page);
     const derived = list.flatMap((raw) => {

@@ -89,18 +89,24 @@ covers them re-derives those flags. Mass history answers one page of 100 per win
 that window is split in halves until a page is not full, and a full page for an hour or less fails the run.
 
 OF answers 10 to 20 chats a page whatever the `limit`, so the list is paged by each page's `nextOffset` (by the
-number of chats returned when it is missing) until a page is empty or `hasMore` is false. The list is read to its end
-(about 80 to 160 pages for 1,600 chats): it is not newest first (unread chats come first, a mass message does not
-move a chat, and the last part is ordered by fan id), so a page with no chat active since `--from` does not end it.
-OF lists a chat whose latest message was deleted with `lastMessage: null`; such a chat counts as active and is
-walked, so its other messages are read.
+number of chats returned when it is missing) until a page is empty, `hasMore` is false, or three pages in a row add no
+new chat (one such page is the list moving while it is read). The list is read to its end (about 80 to 160 pages for
+1,600 chats): it is not newest first (unread chats come first, a mass message does not move a chat, and the last part
+is ordered by fan id), so a page with no chat active since `--from` does not end it. OF lists a chat whose latest
+message was deleted with `lastMessage: null`; such a chat counts as active and is walked, so its other messages are
+read. A chat listed without a readable last-message time is not walked.
 
 OF's offset also counts chats the list does not return: a page of 20 places held 13 to 19 chats on 2026-10-09, and
 a chat with messages in the range (a fan with `isActive: false`) was never listed. So after the listed chats the run
 walks the range's payers (the fans of its transactions) and the chats with stored messages (from earlier runs and
-live events) that the list did not name; a dry run seeds from the transactions only. A chat the upstream answers 404
-for (a deleted fan's) is skipped and counted. A chat the list leaves out that neither paid in the range nor has a
-stored message is still missed.
+live events) that the list did not name (fan ids that are positive safe integers, not the account's own); a dry run
+seeds from the transactions only. A chat whose first messages page OF answers 404 (a deleted fan's) is skipped and
+counted as not found. A chat the list leaves out that neither paid in the range nor has a stored message is still
+missed.
+
+One chat's 4xx does not end the run: a chat the upstream answers any other 4xx (a 404 after its first page, or one
+that is not OF's) is skipped, and its id is printed. A 401 still ends the run (the session expired), a 429 ends it
+past its retries, and a 5xx ends it (a 502, 503 or 504 past its retries).
 
 It prints the request count and whether it was stopped, then:
 
@@ -108,8 +114,9 @@ It prints the request count and whether it was stopped, then:
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
   messages before that time are missing. A walk that ends on OF's empty last page (`hasMore` false) reached the chat's
   start and is not counted.
-- **chats the list left out**: walked from the payers and stored messages, with how many the upstream answered 404 for
-  (skipped), and the list entries dropped for no readable fan id or last-message time (walked only if seeded).
+- **chats the list left out**: walked from the payers and stored messages, with how many OF answered 404 for (skipped);
+  the list entries dropped for no readable fan id; and the chats failed on another 4xx (skipped), with the first 20
+  ids.
 
 Then the row count of each file. Last, stopped or not, it records the account's script candidates
 ([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
