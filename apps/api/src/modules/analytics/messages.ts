@@ -53,8 +53,7 @@ export type FanSpend = {
   /** Booked net and transactions in the range. */
   net: number;
   transactions: number;
-  /** A booked sale in the range, and the newest one's time (null with none). */
-  paidInRange: boolean;
+  /** The newest booked sale in the range's time; null with none. */
   lastAt: Date | null;
   /** OF's `user` name, username and `isDeleted` on the newest booked transaction in the range with a name (else the newest in the range); null / false with none. */
   name: string | null;
@@ -82,7 +81,6 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
       grossAllTime: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
       net: sql<number>`coalesce(sum(${purchaseFact.netCents}) filter (where ${inRange}), 0)::int`,
       transactions: sql<number>`(count(*) filter (where ${inRange}))::int`,
-      paidInRange: sql<boolean>`coalesce(bool_or(${inRange}), false)`,
       lastAt: sql<Date | null>`max(${purchaseFact.createdAt}) filter (where ${inRange})`.mapWith(purchaseFact.createdAt),
       name: sql<string | null>`${newest(sql`nullif(${user}->>'name', '')`)}`,
       username: sql<string | null>`${newest(sql`nullif(${user}->>'username', '')`)}`,
@@ -155,7 +153,7 @@ export async function scopedFans(scope: Scope, limit: number, search = ''): Prom
   });
   const listed = new Set(items.map((f) => `${f.accountId}:${f.chatId}`));
   for (const p of spends) {
-    if (!p.paidInRange || listed.has(`${p.accountId}:${p.chatId}`)) continue;
+    if (!p.lastAt || listed.has(`${p.accountId}:${p.chatId}`)) continue;
     const { accountId, chatId, username, name, gross, grossAllTime, isDeleted, hasChat } = p;
     const times = { firstAt: null, lastAt: null, lastFanAt: null };
     items.push({ accountId, chatId, fanUsername: username, name, ...NO_MESSAGES, ...times, gross, grossAllTime, isDeleted, hasChat, names: [username, name] });
