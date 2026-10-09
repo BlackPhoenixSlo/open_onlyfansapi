@@ -93,7 +93,10 @@ reaches `--from` or to the chat's start (OF's last page of a chat's messages sti
 after it says false, and the walk records `reached_start`). Messages on that boundary page older than the mass window
 (before the day before `--from`) were derived without their mass history, so a later run that reads them again updates
 every column but `is_mass`, `is_automated` and `automated_reason`, and clears `deleted_at`; only a run whose `--from`
-covers them re-derives those flags. Mass history answers one page of 100 per window; a full page may have been cut, so
+covers them re-derives those flags. After each page it stores, the run marks mass every stored outbound message of
+the account whose queue id (one of the page's) is on outbound messages in 8 or more chats: a bulk send, which the mass
+history may not list ([Terms](analytics.md#terms)); rows stored before are marked by the next run over their range, and
+no run clears the mark. A dry run marks its own rows the same way. Mass history answers one page of 100 per window; a full page may have been cut, so
 that window is split in halves until a page is not full, and a full page for an hour or less fails the run.
 
 OF answers 10 to 20 chats a page whatever the `limit`, so the list is paged by each page's `nextOffset` (by the

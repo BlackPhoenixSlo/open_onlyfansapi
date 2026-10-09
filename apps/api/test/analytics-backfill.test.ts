@@ -357,6 +357,32 @@ describe('analytics backfill', () => {
     expect(await stored()).toMatchObject({ isMass: true, raw: expect.objectContaining({ text: '<p>edited</p>' }) });
   });
 
+  it('marks a queue id outside the mass history mass when it reaches 8 chats, on every copy; one in 7 chats stays a DM', async () => {
+    const of = fake.state.of!;
+    const send = (fan: number, queueId: number) => {
+      const sent = msg(fan * 10, '09-02T11:00', ACCOUNT, { queueId });
+      of.messages[fan] = [sent];
+      of.chats.push(chat(fan, sent));
+    };
+    for (let i = 0; i < 8; i++) send(3001 + i, 950); // in no mass history
+    for (let i = 0; i < 7; i++) send(3101 + i, 951);
+    const massOf = (rows: { messageId: number; isMass: boolean }[]) =>
+      Object.fromEntries(rows.filter((r) => r.messageId >= 30010 || r.messageId === 108).map((r) => [r.messageId, r.isMass]));
+    const bulk = { 108: true, ...Object.fromEntries([...Array(8).keys()].map((i) => [(3001 + i) * 10, true])) };
+    const expected = { ...bulk, ...Object.fromEntries([...Array(7).keys()].map((i) => [(3101 + i) * 10, false])) };
+
+    await backfill(opts());
+    expect(massOf(await db.select().from(messageFact))).toEqual(expected); // 108: the mass history's 900, still mass
+    const rows: BackfillRows = { messages: [], chats: [], transactions: [] };
+    await backfill(opts({ store: memoryStore(rows) }));
+    expect(massOf(rows.messages)).toEqual(expected); // a dry run marks the same
+
+    // A later run that reads one copy only re-derives it from the mass history; the stored copies still make it bulk.
+    of.chatErrors = Object.fromEntries([...Array(7).keys()].map((i) => [3002 + i, { status: 404 }]));
+    await backfill(opts());
+    expect(massOf(await db.select().from(messageFact))).toEqual(expected);
+  });
+
   it('lists chats past an older pinned chat', async () => {
     const of = fake.state.of!;
     of.chats.unshift(of.chats.splice(3, 1)[0]!); // 2004, quiet since before the range, listed first

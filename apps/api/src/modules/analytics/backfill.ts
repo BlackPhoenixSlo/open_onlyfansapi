@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { and, eq, getTableColumns, gte, isNotNull, lt, sql, type SQL } from 'drizzle-orm';
+import { and, eq, getTableColumns, gte, inArray, isNotNull, lt, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db, pool } from '../../db/index.js';
 import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
@@ -8,7 +8,18 @@ import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream } from '../../lib/upstream.js';
 import { backfillConfig, type BackfillConfig } from './config.js';
-import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type DerivedMessage, type DerivedPurchase, type Raw } from './derive.js';
+import {
+  BULK_CHATS,
+  bulkQueueIds,
+  deriveContext,
+  deriveMessage,
+  derivePurchase,
+  fanNames,
+  type DeriveContext,
+  type DerivedMessage,
+  type DerivedPurchase,
+  type Raw,
+} from './derive.js';
 import { syncScripts } from './scripts.js';
 
 const HOUR_MS = 3_600_000;
@@ -54,7 +65,11 @@ export type ChatWalk = {
 
 /** Where a backfill puts what it reads. */
 export interface BackfillStore {
-  /** One page of a chat: `covered` (from a day before the range on, derived with mass history) and `tail` (older). */
+  /**
+   * One page of a chat: `covered` (from a day before the range on, derived with mass history) and `tail` (older).
+   * Then every stored outbound message of the account sharing a queue id of the page's that reaches BULK_CHATS
+   * chats among them is marked mass (a bulk send); the mark is never undone here.
+   */
   messages(covered: WalkedMessage[], tail: WalkedMessage[]): Promise<void>;
   /** A chat's walk; returns the chat's coverage after it (a store may merge it with earlier walks). */
   coverage(walk: ChatWalk): Promise<{ oldestAt: Date | null; reachedStart: boolean }>;
@@ -261,6 +276,7 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
  * `deleted_at` too: the derived rows have none). Older ones were derived without their mass history, so on conflict
  * they update every column but `is_mass`, `is_automated` and `automated_reason`: the flags a run that read the mass
  * history derived are not undone. A message read again exists upstream, so either way its `deleted_at` is cleared.
+ * After each page, the stored outbound messages of a bulk send (a queue id of the page's in BULK_CHATS+ chats) are mass.
  * Coverage merges: it never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's
  * script candidates and, for a run that ran to its end, moves `account_workspace.refreshed_at` forward (never back).
  */
@@ -283,6 +299,21 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
             set: updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']),
           });
       }
+      // Bulk sends, counted over the stored rows (not this run's only), so a narrower run that re-derives a row from the
+      // mass history marks it again; the page's queue ids bound the count.
+      const queueIds = [...new Set([...covered, ...tail].flatMap((r) => (r.direction === 'outbound' && r.queueId !== null ? [r.queueId] : [])))];
+      if (!queueIds.length) return;
+      const outbound = and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.direction, 'outbound'));
+      const bulk = db
+        .select({ queueId: messageFact.queueId })
+        .from(messageFact)
+        .where(and(outbound, inArray(messageFact.queueId, queueIds)))
+        .groupBy(messageFact.queueId)
+        .having(sql`count(distinct ${messageFact.chatId}) >= ${BULK_CHATS}`);
+      await db
+        .update(messageFact)
+        .set({ isMass: true })
+        .where(and(outbound, eq(messageFact.isMass, false), inArray(messageFact.queueId, bulk)));
     },
     async coverage(walk) {
       // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.
@@ -348,13 +379,15 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
 }
 
 /**
- * A dry run's store: adds what is read to `rows` (without OF's objects) and stores nothing. Coverage is the walk's
- * own; the stored chats are those of `rows`.
+ * A dry run's store: adds what is read to `rows` (without OF's objects) and stores nothing, marking bulk sends mass
+ * as `dbStore` does. Coverage is the walk's own; the stored chats are those of `rows`.
  */
 export function memoryStore(rows: BackfillRows): BackfillStore {
   return {
     async messages(covered, tail) {
       rows.messages.push(...[...covered, ...tail].map(({ raw: _r, fetchedAt: _f, ...d }) => d));
+      const bulk = bulkQueueIds(rows.messages);
+      for (const m of rows.messages) if (m.direction === 'outbound' && m.queueId !== null && bulk.has(m.queueId)) m.isMass = true;
     },
     async coverage(walk) {
       rows.chats.push(walk);

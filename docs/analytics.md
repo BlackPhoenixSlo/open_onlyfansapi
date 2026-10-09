@@ -211,7 +211,12 @@ of an older range does not move it, and it never moves back. To see it:
 As in [section 2 of the spec](spec/future-client-story-ask.md#2-what-we-can-measure). Messages in a chat are ordered
 by `(createdAt, id)`.
 
-- **Mass**: an outbound message whose queue id is a broadcast sent to more than one fan.
+- **Mass**: an outbound message whose queue id is a broadcast sent to more than one fan (in the mass history the
+  backfill read), or a bulk send: its queue id is on outbound messages in 8 or more of the account's chats among the
+  stored messages (OF lists some bulk sends in no mass history; a DM goes to one chat). The backfill marks a bulk send
+  after each page it stores, on every stored copy, and never clears the mark; rows stored before this rule are marked
+  by the next backfill over their range (one that reads a copy). Live rows use OF's `isFromQueue` ([live
+  updates](#live-updates)).
 - **Automated**: an outbound message that matches the OF welcome message or a text from the client's automation
   list (`--automation` on the backfill).
 - **DM**: an outbound message that is neither mass nor automated.
