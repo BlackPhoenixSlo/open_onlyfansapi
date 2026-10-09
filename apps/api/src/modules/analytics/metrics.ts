@@ -1,7 +1,7 @@
-import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { accountWorkspace, messageFact } from '../../db/schema.js';
 import type { StatsConfig, StatsGroupBy, StatsMetric, StatsMetricRow, StatsOpenerSample, StatsSample } from '../../contracts.js';
+import { owned } from './facts.js';
 import { chatOpeners, reachedStartChats, type Opener } from './openers.js';
 import { fanTurns, turnMessages, type FanTurn } from './turns.js';
 
@@ -242,7 +242,7 @@ export async function statusAsOf(teamId: string, accountIds: number[] | null, no
   const rows = await db
     .select({ accountId: accountWorkspace.accountId, refreshedAt: accountWorkspace.refreshedAt })
     .from(accountWorkspace)
-    .where(and(eq(accountWorkspace.teamId, teamId), accountIds ? inArray(accountWorkspace.accountId, accountIds) : undefined));
+    .where(owned(accountWorkspace, teamId, accountIds));
   const at = new Map(rows.flatMap((r) => (r.refreshedAt ? [[r.accountId, r.refreshedAt] as const] : [])));
   return (accountId) => at.get(accountId) ?? now;
 }
@@ -281,7 +281,7 @@ export async function workspaceAccounts(teamId: string, accountIds: number[] | n
   const rows = await db
     .selectDistinct({ accountId: messageFact.accountId })
     .from(messageFact)
-    .where(and(eq(messageFact.teamId, teamId), accountIds ? inArray(messageFact.accountId, accountIds) : undefined));
+    .where(owned(messageFact, teamId, accountIds));
   return rows.map((r) => r.accountId);
 }
 

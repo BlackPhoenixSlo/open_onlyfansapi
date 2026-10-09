@@ -2,7 +2,8 @@ import { and, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
-import { booked, dm, fanSpends, inScope, ppvDm, txStatus, type Scope } from './messages.js';
+import { booked, dm, inScope, ppvDm, txStatus, type Scope } from './facts.js';
+import { fanSpends } from './messages.js';
 
 // Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.

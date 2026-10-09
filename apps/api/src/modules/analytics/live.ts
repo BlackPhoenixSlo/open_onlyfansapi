@@ -6,6 +6,7 @@ import { env } from '../../env.js';
 import { accountWorkspace, chatCoverage, event, messageFact } from '../../db/schema.js';
 import { cause } from '../../lib/errors.js';
 import { deriveContext, deriveMessage, fanNames, int, type Raw } from './derive.js';
+import { owned } from './facts.js';
 import { nextRefresh } from './refresh.js';
 
 // Live updates (docs/analytics.md): upstream message events write `message_fact` between backfills. Scripts and
@@ -91,7 +92,7 @@ export async function applyLiveEvent(eventId: string, type: string, accountId: n
  * workspace's claimed accounts (narrowed to `accounts` when given); and the next daily refresh time, if it is on.
  */
 export async function freshness(teamId: string, accounts: number[] | null): Promise<StatsFreshness> {
-  const scoped = and(eq(accountWorkspace.teamId, teamId), accounts ? inArray(accountWorkspace.accountId, accounts) : undefined);
+  const scoped = owned(accountWorkspace, teamId, accounts);
   const [row] = await db
     .select({
       lastLiveAt: max(event.createdAt),

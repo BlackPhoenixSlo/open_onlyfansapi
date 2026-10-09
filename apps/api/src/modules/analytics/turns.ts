@@ -3,7 +3,7 @@ import { db } from '../../db/index.js';
 import { messageFact } from '../../db/schema.js';
 import { REPLY_CAP_MS } from './config.js';
 import { normaliseText } from './derive.js';
-import { dm } from './messages.js';
+import { dm } from './facts.js';
 
 export type TurnMessage = {
   chatId: number;

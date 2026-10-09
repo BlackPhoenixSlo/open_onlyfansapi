@@ -1,10 +1,11 @@
-import { and, asc, eq, gte, inArray, isNotNull, lt, max, min, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, max, min, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsFan, StatsMessage } from '../../contracts.js';
 import { cursorTime, keysetCursor } from '../../lib/cursor.js';
 import { messageDetail, plainText } from './derive.js';
+import { booked, dm, inScope, owned, ppvDm, type Scope } from './facts.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`, `GET /v1/stats/messages`): read from `message_fact` of the
 // workspace's own rows, with the fan's username from `chat_coverage`.
@@ -35,28 +36,6 @@ export const MESSAGE_EXPORT_COLUMNS = [
   'is_liked',
   'deleted_at',
 ] as const;
-
-/** A stats request's workspace, accounts (null = all of the workspace's) and instants `[from, to)`. */
-export type Scope = { teamId: string; accountIds: number[] | null; from: Date; to: Date };
-
-/** The rows of `table` (`message_fact` or `purchase_fact`) in `s`. */
-export const inScope = (table: typeof messageFact | typeof purchaseFact, s: Scope) =>
-  and(
-    eq(table.teamId, s.teamId),
-    s.accountIds ? inArray(table.accountId, s.accountIds) : undefined,
-    gte(table.createdAt, s.from),
-    lt(table.createdAt, s.to),
-  );
-
-export const txStatus = sql`${purchaseFact.raw}->>'status'`;
-/** A booked sale: OF's status `done` (settled) or `loading` (pending); `undo` (refunded) and `pending_return` (being reversed) are not. */
-export const booked = sql`${txStatus} in ('done', 'loading')`;
-
-/** A DM: outbound, not mass, not automated (welcome message or automation). Unsent ones count. */
-export const dm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated}`;
-
-/** A PPV DM: outbound, not mass, priced. Unsent ones count. */
-export const ppvDm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
 
 const coverage = and(
   eq(chatCoverage.teamId, messageFact.teamId),
@@ -111,7 +90,7 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
       hasChat: sql<boolean>`exists (select 1 from ${messageFact} where ${messageFact.teamId} = ${purchaseFact.teamId} and ${messageFact.accountId} = ${purchaseFact.accountId} and ${messageFact.chatId} = ${purchaseFact.fanId})`,
     })
     .from(purchaseFact)
-    .where(and(eq(purchaseFact.teamId, scope.teamId), scope.accountIds ? inArray(purchaseFact.accountId, scope.accountIds) : undefined, booked, isNotNull(purchaseFact.fanId)))
+    .where(and(owned(purchaseFact, scope.teamId, scope.accountIds), booked, isNotNull(purchaseFact.fanId)))
     .groupBy(purchaseFact.teamId, purchaseFact.accountId, purchaseFact.fanId);
   return rows.flatMap(({ fanId, ...r }) => (fanId !== null ? [{ ...r, fanId }] : []));
 }

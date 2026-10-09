@@ -3,6 +3,7 @@ import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
 import { fanNames, messageFanNames, NORMALISER_VERSION, normaliseText, scriptHash } from './derive.js';
+import { dm } from './facts.js';
 import { statusAsOf, workspaceAccounts } from './metrics.js';
 
 // Script candidates (spec §2 "Script", "Script sends", "Script reply rate"; §6 step 3): auto-detected DM text
@@ -38,13 +39,7 @@ export function isScript(sends: Send[]): boolean {
 
 const scoped = (teamId: string, accountId: number) => and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId));
 /** The sends `isScript` decides on: DMs (outbound, not mass, not automated) hashed by the current normaliser version. */
-const scriptSends = and(
-  eq(messageFact.direction, 'outbound'),
-  eq(messageFact.isMass, false),
-  eq(messageFact.isAutomated, false),
-  isNotNull(messageFact.textHash),
-  eq(messageFact.normaliserVersion, NORMALISER_VERSION),
-);
+const scriptSends = and(dm, isNotNull(messageFact.textHash), eq(messageFact.normaliserVersion, NORMALISER_VERSION));
 const rawText = sql<string | null>`${messageFact.raw}->>'text'`;
 
 // Only `message_fact` rows hashed by the current `NORMALISER_VERSION` count: hashes of other versions are not
