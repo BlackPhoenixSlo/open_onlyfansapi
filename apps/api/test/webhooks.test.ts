@@ -175,6 +175,7 @@ describe('webhooks API', () => {
       'messages.received',
       'messages.sent',
       'messages.deleted',
+      'chat_queue.finished',
       'posts.expired',
       'accounts.connected',
       'accounts.reconnected',

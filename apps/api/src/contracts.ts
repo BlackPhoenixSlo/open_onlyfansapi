@@ -204,7 +204,7 @@ export const WEBHOOK_EVENTS: Record<WebhookEventType, { description: string; sta
   'messages.liked': { description: 'A fan liked a message', status: 'tbc' },
   'messages.unliked': { description: 'A fan unliked a message', status: 'tbc' },
   'chat_queue.updated': { description: 'A mass-message queue made progress', status: 'tbc' },
-  'chat_queue.finished': { description: 'A mass-message queue finished', status: 'tbc' },
+  'chat_queue.finished': { description: 'A mass-message queue finished', status: 'emitted' },
   'subscriptions.new': { description: 'A fan subscribed to a connected account', status: 'tbc' },
   'subscriptions.renewed': { description: 'A fan renewed a subscription', status: 'tbc' },
   'subscriptions.expired': { description: 'A fan subscription expired', status: 'tbc' },
