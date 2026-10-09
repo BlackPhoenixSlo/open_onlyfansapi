@@ -37,7 +37,7 @@ export function searchRange(search: RangeSearch, tz: string | null | undefined):
   return { preset, range: { from: addDays(end, -(PRESET_DAYS[preset] - 1)), to: end, accountId } };
 }
 
-/** A stats page's config query, timezone, preset and API range for its search params (see `searchRange`). */
+/** A stats page's config query, timezone, account filter, preset and API range for its search params (see `searchRange`). */
 export function useStatsRange(search: RangeSearch) {
   const config = useQuery(statsConfigQuery);
   const tz = config.data?.config.timezone;
@@ -45,7 +45,7 @@ export function useStatsRange(search: RangeSearch) {
   const zone = tz ?? (config.isError ? null : undefined);
   const { range, from, to, accountId } = search;
   const resolved = useMemo(() => searchRange({ range, from, to, accountId }, zone), [range, from, to, accountId, zone]);
-  return { config, tz, ...resolved };
+  return { config, tz, accountId, ...resolved };
 }
 
 /** What `useStatsRange` returns. */
@@ -90,14 +90,12 @@ export function CustomRange({ from, to, onApply }: { from?: string; to?: string;
  */
 export function RangeControls({
   title,
-  search,
-  stats: { config, preset, range },
+  stats: { config, accountId, preset, range },
   served,
   children,
 }: {
   title: string;
-  search: RangeSearch;
-  stats: Pick<StatsRangeState, 'config' | 'preset' | 'range'>;
+  stats: Pick<StatsRangeState, 'config' | 'accountId' | 'preset' | 'range'>;
   served: { from: string; to: string; asOf: string } | undefined;
   children?: ReactNode;
 }) {
@@ -113,7 +111,7 @@ export function RangeControls({
           <FilterSelect
             all="All accounts"
             className="w-48"
-            value={search.accountId === undefined ? undefined : String(search.accountId)}
+            value={accountId === undefined ? undefined : String(accountId)}
             options={(accounts.data?.items ?? []).map((a) => ({
               value: String(a.id),
               label: a.username ? `@${a.username}` : (a.label ?? String(a.id)),

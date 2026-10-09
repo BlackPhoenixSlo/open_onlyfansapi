@@ -26,12 +26,7 @@ function Revenue() {
 
   return (
     <div className="space-y-6">
-      <RangeControls
-        title="Revenue"
-        search={search}
-        stats={stats}
-        served={revenue.data}
-      />
+      <RangeControls title="Revenue" stats={stats} served={revenue.data} />
 
       {config.isError && <ErrorCard message={config.error.message} />}
 

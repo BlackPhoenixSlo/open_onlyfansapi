@@ -85,12 +85,7 @@ function Stats() {
 
   return (
     <div className="space-y-6">
-      <RangeControls
-        title="Stats"
-        search={search}
-        stats={stats}
-        served={replyDay.data}
-      >
+      <RangeControls title="Stats" stats={stats} served={replyDay.data}>
         {search.accountId !== undefined && <BackfillNotice accountId={search.accountId} />}
       </RangeControls>
 

@@ -37,17 +37,10 @@ function Conversations() {
   if (isTeamNotLinked([config, fans])) return <WorkspaceNotLinked title="Conversations" subject="each fan's messages" />;
 
   const { chatId, chatAccountId } = search;
-  // The thread ends with the list's range as the API resolved it.
-  const threadTo = fans.data?.to;
 
   return (
     <div className="space-y-4">
-      <RangeControls
-        title="Conversations"
-        search={search}
-        stats={stats}
-        served={fans.data}
-      />
+      <RangeControls title="Conversations" stats={stats} served={fans.data} />
 
       {config.isError && <ErrorCard message={config.error.message} />}
 
@@ -57,22 +50,18 @@ function Conversations() {
         </div>
 
         <div className="flex h-[36rem] min-h-0 flex-col rounded-xl border bg-card lg:h-auto">
-          {chatId === undefined || chatAccountId === undefined ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">Pick a fan to read the conversation.</div>
-          ) : threadTo === undefined ? (
-            fans.isError ? (
-              <p className="p-4 text-sm text-destructive">The thread needs the fan list's range: {fans.error.message}</p>
-            ) : (
-              <Skeleton className="m-4 h-40" />
-            )
-          ) : (
-            <Thread
-              key={`${chatAccountId}:${chatId}:${threadTo}`}
-              params={{ from: addDays(threadTo, -(THREAD_DAYS - 1)), to: threadTo, accountId: chatAccountId, chatId }}
-            />
-          )}
+          <ThreadPane chatAccountId={chatAccountId} chatId={chatId} to={fans.data?.to} error={fans.error} />
         </div>
       </div>
     </div>
   );
+}
+
+/** The open thread, ending with the fan list's range `to` as the API resolved it; else why there is none yet. */
+function ThreadPane({ chatAccountId, chatId, to, error }: { chatAccountId?: number; chatId?: number; to?: string; error: Error | null }) {
+  if (chatId === undefined || chatAccountId === undefined)
+    return <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">Pick a fan to read the conversation.</div>;
+  if (to === undefined && error) return <p className="p-4 text-sm text-destructive">The thread needs the fan list's range: {error.message}</p>;
+  if (to === undefined) return <Skeleton className="m-4 h-40" />;
+  return <Thread key={`${chatAccountId}:${chatId}:${to}`} params={{ from: addDays(to, -(THREAD_DAYS - 1)), to, accountId: chatAccountId, chatId }} />;
 }

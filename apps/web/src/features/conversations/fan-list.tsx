@@ -44,7 +44,7 @@ export function FanList({
         <Input type="search" placeholder="Search username, name or chat id" aria-label="Search fans" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {fans.data && (
           <p className="text-xs text-muted-foreground">
-            {fans.isPlaceholderData ? 'searching… ' : searched ? `matching “${searched}”: ` : ''}
+            {filter !== search ? 'searching… ' : fans.isPlaceholderData ? 'updating… ' : searched ? `matching “${searched}”: ` : ''}
             {listed}, most spend in the range first
           </p>
         )}
