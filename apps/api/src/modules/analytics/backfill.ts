@@ -104,14 +104,18 @@ export type BackfillResult = {
 /** Statuses retried with `transientDelaysMs`: a proxy or gateway error at the upstream, or the upstream unreachable. */
 const TRANSIENT = new Set([502, 503, 504]);
 
-/** The upstream answered `status`, not retried; `ofError` when the body is OF's error passed through (`code: of_error`). */
+/**
+ * The upstream answered `status`, not retried (or past its retries); `ofError` when the body is OF's error passed
+ * through (`code: of_error`); `nextStep` ends the message with what to do.
+ */
 class StatusError extends Error {
   constructor(
     readonly status: number,
     readonly ofError: boolean,
     path: string,
+    nextStep?: string,
   ) {
-    super(`backfill: the upstream answered ${status} to GET ${path}`);
+    super(`backfill: the upstream answered ${status} to GET ${path}${nextStep ? `: ${nextStep}` : ''}`);
   }
 }
 const isOfError = (body: Buffer): boolean => {
@@ -366,7 +370,13 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
         continue;
       }
       if (out.status === 401) throw new SessionExpiredError(accountId);
-      if (!out.ok) throw new StatusError(out.status, isOfError(out.body), path);
+      const nextStep =
+        out.status === 429
+          ? `still rate limited after ${cfg.maxRetries} waits (Retry-After, else 1 s doubling, at most ${cfg.backoffMaxMs / 1000} s each) at a cap of ${cfg.requestsPerHourPerAccount} requests an hour (ANALYTICS_REQUESTS_PER_HOUR); wait, then run again with a lower cap (rows upsert)`
+          : TRANSIENT.has(out.status)
+            ? `still failing after ${cfg.transientDelaysMs.length} retries; check that the upstream at UPSTREAM_URL is running and read its logs, then run again (rows upsert)`
+            : undefined;
+      if (!out.ok) throw new StatusError(out.status, isOfError(out.body), path, nextStep);
       return JSON.parse(out.body.toString('utf8')) as unknown;
     }
   }

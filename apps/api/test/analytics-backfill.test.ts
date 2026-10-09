@@ -608,7 +608,9 @@ describe('analytics backfill', () => {
     Object.assign(fake.state.of!, { badGateway: 4 });
     const p = probe();
     const run = backfill(opts({ upstream: p.upstream, config: { ...FAST, transientDelaysMs: [1000, 3000, 9000] } }));
-    const failed = expect(run).rejects.toThrow(/answered 502 to GET \/payouts\/transactions/);
+    const failed = expect(run).rejects.toThrow(
+      /answered 502 to GET \/payouts\/transactions.*: still failing after 3 retries; check that the upstream at UPSTREAM_URL is running and read its logs, then run again \(rows upsert\)$/,
+    );
     for (const [i, wait] of [1000, 3000, 9000].entries()) {
       await until(() => p.answered() === i + 1);
       await vi.advanceTimersByTimeAsync(wait);
@@ -635,6 +637,14 @@ describe('analytics backfill', () => {
     expect(calls).toBe(1);
   });
 
+  it('names UPSTREAM_URL when the upstream is unreachable', async () => {
+    const unreachable = createUpstream({ url: 'http://127.0.0.1:9', token: TOKEN, timeoutMs: 2000 });
+    await expect(unreachable.forward({ accountId: ACCOUNT, path: '/me', method: 'GET', headers: {} })).rejects.toMatchObject({
+      code: 'upstream_unavailable',
+      message: 'The upstream is unreachable: check that it is running and that UPSTREAM_URL points to it',
+    });
+  });
+
   it('names an expired OF session when the upstream answers 401', async () => {
     let calls = 0;
     const expired: Upstream = {
@@ -652,7 +662,10 @@ describe('analytics backfill', () => {
 
   it('fails the run after maxRetries 429s in a row', async () => {
     Object.assign(fake.state.of!, { rateLimit: 3, retryAfter: '0' });
-    await expect(backfill(opts({ config: { ...FAST, maxRetries: 2 } }))).rejects.toThrow(/answered 429/);
+    vi.useRealTimers(); // the clock moves: the 1 ms spacing passes
+    await expect(backfill(opts({ config: { ...FAST, maxRetries: 2, requestsPerHourPerAccount: 3_600_000, backoffMaxMs: 300_000 } }))).rejects.toThrow(
+      'backfill: the upstream answered 429 to GET /payouts/transactions?limit=100&offset=0&startDate=2026-09-01%2000%3A00%3A00: still rate limited after 2 waits (Retry-After, else 1 s doubling, at most 300 s each) at a cap of 3600000 requests an hour (ANALYTICS_REQUESTS_PER_HOUR); wait, then run again with a lower cap (rows upsert)',
+    );
   });
 });
 

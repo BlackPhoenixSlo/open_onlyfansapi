@@ -50,9 +50,9 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
       return { status: res.status, ok: res.ok, headers: res.headers, body: Buffer.from(await res.arrayBuffer()) };
     } catch (err) {
       if (err instanceof Error && err.name === 'TimeoutError') {
-        throw new AppError(504, 'upstream_timeout', 'The upstream did not respond in time');
+        throw new AppError(504, 'upstream_timeout', 'The upstream did not respond in time (UPSTREAM_TIMEOUT_MS): check that it is running and not overloaded');
       }
-      throw new AppError(502, 'upstream_unavailable', 'The upstream is unreachable');
+      throw new AppError(502, 'upstream_unavailable', 'The upstream is unreachable: check that it is running and that UPSTREAM_URL points to it');
     }
   }
 
