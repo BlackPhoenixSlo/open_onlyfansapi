@@ -8,13 +8,15 @@ never sees another workspace's rows.
 
 ## From the dashboard
 
-The usual path. On **Accounts**, each `active` account has **Run analytics (30 days)**. It calls
-`POST /v1/stats/backfill` ([analytics.md](analytics.md#routes)), which:
+The usual path. On **Accounts**, each `active` account has a range (30, 90 or 180 days; default 30) and
+**Run analytics (N days)**. It calls `POST /v1/stats/backfill` with `days` ([analytics.md](analytics.md#routes);
+the API takes 1 to 366), which:
 
 1. checks the account is in the workspace's account list (`GET /v1/accounts`; for a key, within its allowlist), so no
    key naming the account is needed;
 2. claims the account for the workspace (once; `409 account_workspace_conflict` if another workspace owns it);
-3. starts the backfill of the last 30 days, now minus 30 days to now, inside the API process, and answers at once.
+3. starts the backfill of the last `days` days, now minus `days` days to now, inside the API process, and answers at
+   once. A long range takes hours at the per-hour request cap.
 
 The row then polls `GET /v1/stats/backfill` every 3 s and shows `Running… N chats, M messages`, then
 `Done · view Stats` (Stats for that account) or the error. The run is the CLI's backfill without CSVs, with the same
@@ -30,7 +32,7 @@ Limits:
 
 ## From the command line
 
-The CLI stays for `--dry-run`, `--automation <file>`, a range other than the last 30 days, and the CSVs (for the
+The CLI stays for `--dry-run`, `--automation <file>`, a range that does not end now, and the CSVs (for the
 Infloww diff). Three commands, all run from the repo root:
 
 | Command | What it does |

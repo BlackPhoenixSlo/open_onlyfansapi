@@ -102,7 +102,7 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
    `npx tsx --env-file-if-exists=../../.env` (check).
 8. **Smoke.** `curl -H "Authorization: Bearer $READ" localhost:4000/v1/whoami` should show the scope and allowlist.
    `curl -H "Authorization: Bearer $READ" localhost:4000/v1/accounts` should list `<id>`.
-9. **Claim for analytics.** Nothing to do here: **Run analytics (30 days)** in §6.1 claims the account for this workspace.
+9. **Claim for analytics.** Nothing to do here: **Run analytics** in §6.1 claims the account for this workspace.
    Another workspace that already owns it gets `account_workspace_conflict`.
 10. **Second workspace, for the isolation tests.** Register a second user, link its workspace and mint a `read` key with no
     allowlist. Store it as `ISO=gk_…` in the same `.keys` file.
@@ -141,7 +141,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 
 ## 6. Analytics acceptance against the real model
 
-1. **30-day backfill.** On **Accounts**, press **Run analytics (30 days)** on the account's row. It claims the account,
+1. **30-day backfill.** On **Accounts**, leave the range at 30 days and press **Run analytics (30 days)** on the account's row. It claims the account,
    then backfills the last 30 days in the API process. The row shows `Running… N chats, M messages` (polled every 3 s),
    then `Done · view Stats` (opens Stats for that account) or the error. Leave the pacing variables unset (600/h cap).
    The reference run (2026-09-06..10-06, CLI) took 259 requests in 12 min, with 87 chats, 9150 messages, 1286 turns and 7 incomplete chats.
