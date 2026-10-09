@@ -237,7 +237,7 @@ const REVENUE_TERMS: [string, string][] = [
   ['Payers', 'Fans with a transaction in the range, per account. A transaction whose fan is unknown counts in the sums only.'],
   [
     'Fan CVR',
-    'Payers ÷ fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%.',
+    'Payers ÷ fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%. Fan CVR, golden ratio and PPV unlock count only the accounts with a transaction in the range: an account whose sales were never backfilled would add fans and PPVs with no payers.',
   ],
   [
     'Golden ratio',

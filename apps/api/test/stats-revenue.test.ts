@@ -169,6 +169,15 @@ describe('stats revenue', () => {
     expect(body.withoutChat).toEqual({ payers: 1, gross: 100 });
   });
 
+  it('counts fans, DMs and PPVs only on accounts with a booked transaction in the range', async () => {
+    // 09-01..02: A1 has t1 and t3; A2 has none, so its fans 4001 and 4002 are left out.
+    expect((await get('from=2026-09-01&to=2026-09-02')).totals).toMatchObject({ payers: 2, fansMessaged: 3, dmMessages: 4, dmPpvs: 2 });
+    // 09-02 alone: A1's only transactions are refunded or reversed, so no account counts.
+    const body = await get('from=2026-09-02&to=2026-09-02');
+    expect(body.totals).toMatchObject({ transactions: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, goldenRatio: null });
+    expect(body.ppv).toEqual({ sent: 0, opened: 0, rate: null });
+  });
+
   it('has no fan CVR, golden ratio or PPV rate when nothing was sent', async () => {
     const body = await get('from=2026-09-05&to=2026-09-05');
     expect(body.totals).toEqual({ gross: 999, settledGross: 0, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });

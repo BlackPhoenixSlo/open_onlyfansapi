@@ -1,4 +1,4 @@
-import { and, desc, isNotNull, max, sql } from 'drizzle-orm';
+import { and, desc, inArray, isNotNull, max, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
@@ -60,7 +60,17 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
         ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
       })
       .from(messageFact)
-      .where(inScope(messageFact, scope)),
+      // Only accounts with a booked transaction in the range: messages of an account whose sales were never read
+      // would count fans and PPVs against no revenue.
+      .where(
+        and(
+          inScope(messageFact, scope),
+          inArray(
+            messageFact.accountId,
+            db.selectDistinct({ accountId: purchaseFact.accountId }).from(purchaseFact).where(and(inScope(purchaseFact, scope), booked)),
+          ),
+        ),
+      ),
   ]);
 
   const totals = zero();

@@ -121,7 +121,10 @@ a PPV bought or a tip sent outside the stored messages is not in them.
 counts PPV sends in `message_fact`. Only booked transactions count: OF's status `undo` (refunded) and `pending_return`
 (being reversed) are left out of every sum, payer and name; a transaction without a status counts. Money is in cents,
 integers, USD (every stored transaction is): `gross` is OF's `amount`, `net` its `net` (a missing one counts as 0).
-Rates are percent, null when the denominator is 0.
+Rates are percent, null when the denominator is 0. The message counts (`fansMessaged`, `dmMessages`, `dmPpvs`, `ppv`)
+read only the accounts in scope with a booked transaction in the range: an account whose transactions were never
+backfilled (or that sold nothing) would add fans and PPVs against no payers, so with all accounts selected it is left
+out of Fan CVR, the golden ratio and the PPV unlock rate.
 
 - `totals`: `gross`, `net`, `transactions`; `settledGross`, the gross of status `done`, and `pendingGross`, of status
   `loading` (OF still holds it; the dashboard shows both under Gross); `payers`, the fans with a transaction in the range whose fan is known;
