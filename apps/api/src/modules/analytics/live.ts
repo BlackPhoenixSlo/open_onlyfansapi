@@ -2,6 +2,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { and, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import type { StatsFreshness, WebhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
+import { env } from '../../env.js';
+import { nextRefresh } from '../../jobs/analytics-refresh.js';
 import { accountWorkspace, chatCoverage, event, messageFact } from '../../db/schema.js';
 import { cause } from '../../lib/errors.js';
 import { deriveContext, deriveMessage, fanNames, int, type Raw } from './derive.js';
@@ -85,10 +87,11 @@ export async function applyLiveEvent(eventId: string, type: string, accountId: n
 
 /**
  * How fresh the workspace's stats are: the newest live message event (the event ledger's time, which is the OF
- * message's) and how many arrived in the last 24 hours, over the workspace's claimed accounts (narrowed to
- * `accounts` when given).
+ * message's) and how many arrived in the last 24 hours, and the newest `refreshed_at` (the last backfill), over the
+ * workspace's claimed accounts (narrowed to `accounts` when given); and the next daily refresh time, if it is on.
  */
 export async function freshness(teamId: string, accounts: number[] | null): Promise<StatsFreshness> {
+  const scoped = and(eq(accountWorkspace.teamId, teamId), accounts ? inArray(accountWorkspace.accountId, accounts) : undefined);
   const [row] = await db
     .select({
       lastLiveAt: max(event.createdAt),
@@ -96,8 +99,14 @@ export async function freshness(teamId: string, accounts: number[] | null): Prom
     })
     .from(event)
     .innerJoin(accountWorkspace, eq(accountWorkspace.accountId, event.accountId))
-    .where(and(eq(accountWorkspace.teamId, teamId), inArray(event.type, LIVE_MESSAGE_TYPES), accounts ? inArray(accountWorkspace.accountId, accounts) : undefined));
+    .where(and(scoped, inArray(event.type, LIVE_MESSAGE_TYPES)));
+  const [refresh] = await db.select({ at: max(accountWorkspace.refreshedAt) }).from(accountWorkspace).where(scoped);
   // An aggregate without GROUP BY always yields exactly one row.
-  if (!row) throw new Error('freshness aggregate returned no row');
-  return { lastLiveAt: row.lastLiveAt?.toISOString() ?? null, liveEvents24h: row.liveEvents24h };
+  if (!row || !refresh) throw new Error('freshness aggregate returned no row');
+  return {
+    lastLiveAt: row.lastLiveAt?.toISOString() ?? null,
+    liveEvents24h: row.liveEvents24h,
+    lastRefreshAt: refresh.at?.toISOString() ?? null,
+    nextRefreshAt: nextRefresh(env.STATS_REFRESH_HOUR_UTC, new Date())?.toISOString() ?? null,
+  };
 }

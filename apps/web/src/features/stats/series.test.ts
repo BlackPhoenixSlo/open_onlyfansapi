@@ -9,6 +9,7 @@ import {
   formatWindow,
   hourSeries,
   liveLine,
+  refreshLine,
   openerSeries,
   percent,
   replySeries,
@@ -100,6 +101,7 @@ describe('chart series', () => {
 
 describe('live line', () => {
   const now = Date.parse('2026-10-08T12:00:00Z');
+  const noRefresh = { lastRefreshAt: null, nextRefreshAt: null };
   it('formats how long ago', () => {
     expect(formatAgo('2026-10-08T11:59:30Z', now)).toBe('just now');
     expect(formatAgo('2026-10-08T12:00:30Z', now)).toBe('just now'); // clock skew
@@ -108,9 +110,16 @@ describe('live line', () => {
     expect(formatAgo('2026-10-05T12:00:00Z', now)).toBe('3d ago');
   });
   it('says when there is no event yet', () => {
-    expect(liveLine({ lastLiveAt: null, liveEvents24h: 0 }, now)).toBe('Live: no events yet');
-    expect(liveLine({ lastLiveAt: '2026-10-08T11:55:00Z', liveEvents24h: 4 }, now)).toBe(
+    expect(liveLine({ ...noRefresh, lastLiveAt: null, liveEvents24h: 0 }, now)).toBe('Live: no events yet');
+    expect(liveLine({ ...noRefresh, lastLiveAt: '2026-10-08T11:55:00Z', liveEvents24h: 4 }, now)).toBe(
       'Live: last message event 5m ago · 4 events last 24h',
+    );
+  });
+  it('says when the last backfill ended and when the next refresh is, or that it is off', () => {
+    const live = { lastLiveAt: null, liveEvents24h: 0 };
+    expect(refreshLine({ ...live, ...noRefresh }, now)).toBe('Backfill: not refreshed yet · next: off');
+    expect(refreshLine({ ...live, lastRefreshAt: '2026-10-08T06:00:00.000Z', nextRefreshAt: '2026-10-09T03:00:00.000Z' }, now)).toBe(
+      'Backfill: refreshed 6h ago · next 03:00 UTC',
     );
   });
 });

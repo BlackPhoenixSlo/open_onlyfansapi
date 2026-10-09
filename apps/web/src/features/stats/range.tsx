@@ -3,7 +3,7 @@ import { type FormEvent, type ReactNode, useMemo } from 'react';
 import { FilterSelect } from '@/components/filter-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { addDays, liveLine, todayIn } from '@/features/stats/series';
+import { addDays, liveLine, refreshLine, todayIn } from '@/features/stats/series';
 import { type StatsRange, accountsQuery, statsConfigQuery } from '@/lib/api';
 import { day, positiveInt } from '@/lib/search';
 
@@ -143,6 +143,11 @@ export function RangeControls({
       {config.data && (
         <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
           {liveLine(config.data.freshness)}
+        </p>
+      )}
+      {config.data && (
+        <p className="text-xs text-muted-foreground" title={config.data.freshness.lastRefreshAt ?? undefined}>
+          {refreshLine(config.data.freshness)}
         </p>
       )}
       {children}

@@ -45,6 +45,13 @@ export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogge
 /** Today's refresh time: `hour`:00 UTC on `now`'s UTC day. */
 export const refreshBoundary = (now: Date, hour: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour));
 
+/** The first refresh time after `now`; null when the refresh is off (`hour` undefined). */
+export function nextRefresh(hour: number | undefined, now: Date): Date | null {
+  if (hour === undefined) return null;
+  const today = refreshBoundary(now, hour);
+  return today > now ? today : new Date(today.getTime() + DAY_MS);
+}
+
 /**
  * The daily refresh (docs/analytics.md, Keeping it fresh), ticked hourly: once `now` is past today's `hour`:00 UTC,
  * each claimed account whose `refreshed_at` is null or before it gets one backfill from max(now - 7 days,

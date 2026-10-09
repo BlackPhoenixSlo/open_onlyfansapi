@@ -6,7 +6,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { accountWorkspace, purchaseFact } from '../src/db/schema.js';
 import { envSchema } from '../src/env.js';
-import { pollTransactions, refreshBoundary, refreshDue } from '../src/jobs/analytics-refresh.js';
+import { nextRefresh, pollTransactions, refreshBoundary, refreshDue } from '../src/jobs/analytics-refresh.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
 import { backfillRun } from '../src/modules/analytics/backfill-runs.js';
 import { assignAccount } from '../src/modules/analytics/workspace.js';
@@ -71,6 +71,15 @@ describe('STATS_REFRESH_HOUR_UTC', () => {
     expect(parse('0').data?.STATS_REFRESH_HOUR_UTC).toBe(0);
     expect(parse('23').data?.STATS_REFRESH_HOUR_UTC).toBe(23);
     for (const bad of ['24', '-1', '3.5', 'three']) expect(parse(bad).success).toBe(false);
+  });
+});
+
+describe('next refresh time', () => {
+  it('is today\'s refresh hour UTC until it passes, then tomorrow\'s; null when the refresh is off', () => {
+    expect(nextRefresh(3, new Date('2026-10-08T02:59:59.000Z'))?.toISOString()).toBe('2026-10-08T03:00:00.000Z');
+    expect(nextRefresh(3, new Date('2026-10-08T03:00:00.000Z'))?.toISOString()).toBe('2026-10-09T03:00:00.000Z');
+    expect(nextRefresh(0, new Date('2026-12-31T23:00:00.000Z'))?.toISOString()).toBe('2027-01-01T00:00:00.000Z');
+    expect(nextRefresh(undefined, new Date())).toBeNull();
   });
 });
 

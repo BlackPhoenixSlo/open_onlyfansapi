@@ -1,9 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { asc, inArray } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { messageFact } from '../src/db/schema.js';
+import { accountWorkspace, messageFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { dbStore } from '../src/modules/analytics/backfill.js';
 import { ingestFrame, type EventFrame } from '../src/modules/events/ingest.js';
@@ -183,8 +183,13 @@ describe('analytics live updates', () => {
   });
 
   it('GET /v1/stats/config reports freshness for the claimed accounts', async () => {
+    const refreshed = new Date('2026-10-01T03:00:00.000Z');
+    await db.update(accountWorkspace).set({ refreshedAt: refreshed }).where(eq(accountWorkspace.accountId, ACCOUNT));
+    // A later refresh of an account outside the key's allowlist does not count; the refresh is off in tests (no next time).
+    await db.insert(accountWorkspace).values({ accountId: 1003, teamId, refreshedAt: new Date('2026-10-05T03:00:00.000Z') });
     const empty = (await app.inject({ method: 'GET', url: '/v1/stats/config', headers: bearer(readKey) })).json();
-    expect(empty.freshness).toEqual({ lastLiveAt: null, liveEvents24h: 0 });
+    await db.delete(accountWorkspace).where(eq(accountWorkspace.accountId, 1003));
+    expect(empty.freshness).toEqual({ lastLiveAt: null, liveEvents24h: 0, lastRefreshAt: refreshed.toISOString(), nextRefreshAt: null });
 
     await ingestFrame(messageFrame(inbound), log);
     await ingestFrame(messageFrame({ ...outbound, toUser: FAN }), log);

@@ -101,6 +101,12 @@ export function formatAgo(iso: string, now = Date.now()): string {
   return `${Math.floor(s / 86_400)}d ago`;
 }
 
+/** The stats pages' backfill line: when the last backfill ended (its data's end) and the next daily refresh time (UTC). */
+export const refreshLine = (f: StatsFreshness, now = Date.now()) =>
+  `Backfill: ${f.lastRefreshAt ? `refreshed ${formatAgo(f.lastRefreshAt, now)}` : 'not refreshed yet'} · ${
+    f.nextRefreshAt ? `next ${f.nextRefreshAt.slice(11, 16)} UTC` : 'next: off'
+  }`;
+
 /** The Stats page's live line: the newest message event and the count of the last 24 hours. */
 export const liveLine = (f: StatsFreshness, now = Date.now()) =>
   f.lastLiveAt ? `Live: last message event ${formatAgo(f.lastLiveAt, now)} · ${f.liveEvents24h} events last 24h` : 'Live: no events yet';

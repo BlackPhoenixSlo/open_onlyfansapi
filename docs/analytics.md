@@ -163,8 +163,12 @@ down is never applied, and `deleted_at` null means "no unsend event seen", not "
 and a row already stored is kept. Live outbound rows are DMs; mass messages and queued single DMs are stored only by a backfill. A live row's `isOpened` is OF's flag when the event arrived (false on a PPV just sent) and no purchase event updates it, so a PPV bought since reads not bought until a backfill reads the message again. The live mapper has no
 welcome message or automation texts either, so no live message counts as automated until then. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
-the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under
-its header.
+the event ledger), `liveEvents24h` and `lastRefreshAt` (the newest `account_workspace.refreshed_at`, the end of the
+last backfill's data: [Keeping it fresh](#keeping-it-fresh)), over the claimed accounts in the key's scope, and
+`nextRefreshAt`, the next daily refresh time (null when `STATS_REFRESH_HOUR_UTC` is unset). The Stats, Revenue and
+Conversations pages show them under their range: "Live: last message event 5m ago · 4 events last 24h", then
+"Backfill: refreshed 6h ago · next 03:00 UTC" ("not refreshed yet" before any backfill has ended since migration
+`0015`; "next: off" with the refresh off).
 
 ## Keeping it fresh
 
