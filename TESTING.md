@@ -131,7 +131,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 | Stats metrics | `GET /v1/stats/metrics`, then `/v1/stats/metrics/reply_time?from=…&to=…&groupBy=day\|hour\|account` and `/samples` | 200, `verified:false`, `asOf`, `configVersion` | Numbers consistent (turns = inCap + late + breached + pending) | All metrics unverified |
 | CSV export | `…/v1/stats/metrics/reply_time?format=csv&groupBy=hour` | `text/csv`, 24 data rows by hour | Header matches docs | none recorded |
 | Stats config | `GET /v1/stats/config`. `PUT` with `$WRITE` `{"slaSeconds":600}`. `PUT` with `$READ` | Defaults, then `version`+1, then `403 insufficient_scope` | All three seen. Put the value back afterwards | `convertSeconds` is stored only |
-| Stats scripts | `GET /v1/stats/scripts?from=…&to=…` | Items with `sends`, `sendsAll`, `chatsAll`, variants | Each script's variants are one copy | Variants keep raw `<p>` HTML. Every script is `origin: auto` |
+| Stats scripts | `GET /v1/stats/scripts?from=…&to=…` | Items with `sends`, `sendsAll`, `chatsAll`, variants | Each script's variants are one copy, differing only in the fan's name, case, spacing or HTML; no different price or media | Variants keep raw `<p>` HTML. Every script is `origin: auto` |
 | Stats errors and isolation | `from=2026-13-01`. Then every stats route with `$ISO`, including `accountId=<id>` | `400 validation_error`. Empty rows/items for `$ISO` | Zero matches for `<id>` in the `$ISO` output | none recorded |
 | Rehash | `pnpm --filter @gateway/api analytics:rehash --account <id>` | `normaliser v1: outbound N, updated M, scripts K`. A second run shows `updated 0` | Idempotent | Fan names are only used after a post-0010 re-walk |
 | Owner captures | `docs/spec/plan-v6-capture-kit.md`, into `~/of-captures/` | cURL per `?` row | 72 rows captured | Files hold live cookies. Not in this runbook's scope |
@@ -156,7 +156,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 5. **Second-workspace check.** Use `$ISO` on every stats route, as in §5. Acceptance: it sees none of `<id>`.
 6. **Flipping `verified`.** This is a developer task. Today one constant `verified: false` covers every metric in
    `apps/api/src/modules/analytics/metrics.ts`, so per-metric flags need a code change. Flip openers and scripts only after
-   step 2 is all OK, and `reply_time_mean` and `reply_time_mean_last` only after step 3 explains every difference.
+   a hand check in OF, and `reply_time_mean` and `reply_time_mean_last` only after an Infloww diff explains every difference.
 7. **Rate cap.** Keep `ANALYTICS_REQUESTS_PER_HOUR=600` (the default, which is a guess). Run one account at a time, with an hour between runs.
 
 ## 7. Teardown
@@ -183,7 +183,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 2. Proxy or no proxy for the real account? The default is no proxy, so it uses your IP.
 3. Which `[W]` writes may be run against the real account? None have ever been executed against OF.
 4. When will the Infloww Message Dashboard export (one week, UTC+0) and Sales Records arrive?
-5. Who does the morning check in OF, and by when?
+5. Who does the morning check in OF, and by when? Parked with its CLIs on branch `infloww-diff-parked`.
 6. Does the client have automation texts for `--automation <file>`?
 7. Keep or delete the pre-existing `live-check` write key?
 8. Should a live SMTP send be tested with a real inbox now?

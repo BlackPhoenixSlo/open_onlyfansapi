@@ -1,22 +1,22 @@
 # Client story: account and shift performance stats
 
 Status (2026-10-09): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
-built (`apps/api/src/modules/analytics`, the `analytics:claim`, `analytics:backfill` and `analytics:diff` CLIs,
-[docs/analytics-backfill.md](../analytics-backfill.md)); a live last-7-days run on one account after the chat-list
+built (`apps/api/src/modules/analytics`, the `analytics:claim` and `analytics:backfill` CLIs, and `analytics:diff`,
+now parked on branch `infloww-diff-parked`; [docs/analytics-backfill.md](../analytics-backfill.md)); a live last-7-days run on one account after the chat-list
 fixes took 92 requests (13 chat-list pages) in 268 s and listed 63 chats (all 62 known active plus one mass-only
 chat) with every fan username filled, 490 messages (463 inbound, 5 DM, 22 mass) and 0 transactions; the Infloww diff
 awaits the client's export. Steps 1–3 built 2026-10-06 (compute only; openers and scripts unverified;
 [docs/analytics.md](../analytics.md)); 30-day live run 2026-09-06..2026-10-06: 259 requests, 12 min, 87 chats, 9150
 messages, 1286 turns, 7 incomplete chats; median reply time 1889 s, SLA met 27.4%, 17 openers, 5 script candidates.
 Follow-up 2026-10-06: p90 reply time, substantive opener reply rate, `massOrAutomatedGap` counts and script all-time
-totals shipped; openers and scripts still unverified (morning check pending).
+totals shipped; openers and scripts still unverified (morning check parked).
 Completeness (6.1) checked 2026-10-06 with `--dry-run`, messages 2026-09-29..10-06 and transactions 2026-09-06..10-06:
 per-chat differences explained (late arrivals, fan deletions), the deleted-last-message chat gap fixed in code (not
 re-run live), one documented quiet-page miss, transactions vacuous (0 = 0).
 By 2026-10-09: live updates from `messages.received`, `messages.sent` and `messages.deleted`
 ([docs/analytics.md](../analytics.md#live-updates)), stored messages per fan with export, and the dashboard's
 Conversations and Revenue pages and Run analytics (30, 90 or 180 days). Openers and scripts are still unverified and
-the Infloww diff still awaits the client's export.
+the Infloww diff and morning-check CLIs are parked on branch `infloww-diff-parked` until the client's export exists.
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
@@ -36,8 +36,8 @@ Terms used below:
 
 - **Inbound / outbound.** `fromUser.id` is not / is the account itself (the split `services/upstream/events.py` uses).
 - **Mass** = outbound whose `queueId` matches a broadcast with `sentCount > 1` in `mass`. `isFromQueue` alone is not
-  enough: checked 2026-10-09, every stored broadcast copy has it (6,512 of 6,512), but so do 50 queued single DMs
-  (0.19% of 26,133 DMs). Live outbound rows before a backfill: [docs/analytics.md](../analytics.md#live-updates).
+  enough: checked 2026-10-09, every stored mass row (6,512 of 6,512) has it, as do 683 broadcast copies stored as DMs
+  outside the mass history a run read, and 50 queued single DMs (0.19% of 26,133 DMs). Live outbound rows before a backfill: [docs/analytics.md](../analytics.md#live-updates).
 - **Automated** = outbound that matches the OF welcome message (`tmpl`, text or media) or a text on the client's
   automation list (Infloww automations, bots). These arrive as ordinary DMs (`isFromQueue: false`), so without this
   rule they count as instant replies and openers.

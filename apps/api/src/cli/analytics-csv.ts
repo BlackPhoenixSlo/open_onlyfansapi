@@ -1,5 +1,5 @@
-// The four CSVs of the analytics step 0 export (docs/analytics-backfill.md), and a reader for them and for an Infloww
-// export. RFC 4180 quoting, no dependency. No database access, so the diff runs without one.
+// Writes the four CSVs of the analytics step 0 export (docs/analytics-backfill.md); parseCsv and readCsv read them
+// back, including copies saved from Excel with a BOM or semicolons. RFC 4180 quoting, no dependency, no database access.
 import type { chatCoverage, messageFact, purchaseFact } from '../db/schema.js';
 import type { FanTurn } from '../modules/analytics/turns.js';
 

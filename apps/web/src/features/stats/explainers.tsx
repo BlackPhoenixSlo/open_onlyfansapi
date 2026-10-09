@@ -50,7 +50,7 @@ export function HowToRead({ config }: { config?: Windows }) {
       </Item>
       <Item title='What "unverified" means' drawing={<VerifyFlow />}>
         Every number here is computed by our rules from the backfilled messages, and none has been checked by hand yet,
-        so they are marked unverified. The morning check verifies them: open the sample chats in OF and confirm each
+        so they are marked unverified. A hand check in OF verifies them: open the sample chats in OF and confirm each
         opener and script is what it claims, then send the notes to the developer. Only after that is a metric marked
         verified.
       </Item>
@@ -198,12 +198,12 @@ function Normaliser() {
 function VerifyFlow() {
   const boxes: [string, string, string][] = [
     ['Backfill computes', 'unverified', COLORS.wait],
-    ['Morning check in OF', 'owner ticks samples', COLORS.primary],
+    ['Hand check in OF', 'owner ticks samples', COLORS.primary],
     ['Notes reviewed', 'verified', COLORS.ok],
   ];
   return (
     <svg viewBox="0 0 380 80" className="h-auto w-full" role="img" aria-label="How a metric gets verified">
-      <title>Computed numbers stay unverified until the morning check is done and reviewed</title>
+      <title>Computed numbers stay unverified until a hand check in OF is done and reviewed</title>
       {boxes.map(([title, sub, color], i) => {
         const x = 4 + i * 128;
         return (
