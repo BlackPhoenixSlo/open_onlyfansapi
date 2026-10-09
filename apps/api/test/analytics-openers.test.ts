@@ -224,13 +224,25 @@ describe('opener metric series', () => {
   });
 
   it('keeps an opener pending until open_reply elapses at as_of, out of the reply-rate denominator', async () => {
+    // As of the account's last backfill (refreshed_at: the run's start, NOW), else now.
+    const refreshed = (at: Date | null) => pool.query('UPDATE account_workspace SET refreshed_at = $1 WHERE account_id = $2', [at, A1]);
     expect(tuples((await series('opener_reply_rate', 'day')).rows).at(-1)).toEqual(['2026-09-20', null, 0]);
-    vi.setSystemTime(new Date('2026-09-21T02:00:00.000Z')); // O4 is exactly 24 h old: still pending
+    vi.setSystemTime(new Date('2026-09-25T00:00:00.000Z')); // days later, no backfill since: still judged at NOW
     expect((await series('opener_reply_rate', 'account')).rows[0]).toMatchObject({ group: '1001', n: 3, pending: 1 });
-    vi.setSystemTime(new Date('2026-09-21T02:00:01.000Z')); // one second later it has no reply
-    const rows = (await series('opener_reply_rate', 'account')).rows;
-    expect(rows[0]).toMatchObject({ group: '1001', value: 25, n: 4, replied: 1, noReply: 3, pending: 0 });
-    expect(await sampleIds('opener_reply_rate')).toEqual([22, 5, 31, 63, 41]);
+    await refreshed(new Date('2026-09-21T02:00:01.000Z')); // a backfill whose data ends a second past O4's 24 h
+    expect((await series('opener_reply_rate', 'account')).rows[0]).toMatchObject({ group: '1001', value: 25, n: 4, noReply: 3, pending: 0 });
+
+    await refreshed(null); // no backfill has ended since migration 0015: judged as of now
+    try {
+      vi.setSystemTime(new Date('2026-09-21T02:00:00.000Z')); // O4 is exactly 24 h old: still pending
+      expect((await series('opener_reply_rate', 'account')).rows[0]).toMatchObject({ group: '1001', n: 3, pending: 1 });
+      vi.setSystemTime(new Date('2026-09-21T02:00:01.000Z')); // one second later it has no reply
+      const rows = (await series('opener_reply_rate', 'account')).rows;
+      expect(rows[0]).toMatchObject({ group: '1001', value: 25, n: 4, replied: 1, noReply: 3, pending: 0 });
+      expect(await sampleIds('opener_reply_rate')).toEqual([22, 5, 31, 63, 41]);
+    } finally {
+      await refreshed(NOW);
+    }
   });
 
   it('applies the config windows: open_gap and open_reply', async () => {

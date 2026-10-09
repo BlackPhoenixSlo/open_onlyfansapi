@@ -42,6 +42,7 @@ import {
   openerSamples,
   scopedOpeners,
   scopedTurns,
+  statusAsOf,
   type MetricId,
 } from '../analytics/metrics.js';
 import { connectedAccounts } from '../accounts/service.js';
@@ -94,9 +95,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const span = range(query, cfg.timezone);
       const accounts = scopedAccounts(actor, query.accountId);
       const asOf = new Date();
+      // Status as of each account's last backfill (its refreshed_at), not now: see statusAsOf.
+      const judged = { ...span, asOf: await statusAsOf(actor.teamId, accounts, asOf) };
       const rows = isOpenerMetric(id)
-        ? openerRows(id, await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg)
-        : metricRows(id, await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg);
+        ? openerRows(id, await scopedOpeners(actor.teamId, accounts, id, cfg, judged), query.groupBy, cfg)
+        : metricRows(id, await scopedTurns(actor.teamId, accounts, id, cfg, judged), query.groupBy, cfg);
       if (query.format === 'csv') {
         const csv = toCsv(isOpenerMetric(id) ? OPENER_CSV_COLUMNS : METRIC_CSV_COLUMNS, rows.map(snakeCase));
         return reply
@@ -119,9 +122,10 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const accounts = scopedAccounts(actor, query.accountId);
       const asOf = new Date();
       const inGroup = (x: Parameters<typeof groupKey>[0]) => query.group === undefined || groupKey(x, query.groupBy, cfg.timezone) === query.group;
+      const judged = { ...span, asOf: await statusAsOf(actor.teamId, accounts, asOf) };
       const items = isOpenerMetric(id)
-        ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), query.limit)
-        : metricSamples(id, (await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), cfg, query.limit);
+        ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, id, cfg, judged)).filter(inGroup), query.limit)
+        : metricSamples(id, (await scopedTurns(actor.teamId, accounts, id, cfg, judged)).filter(inGroup), cfg, query.limit);
       return { ...meta(id, cfg, asOf), items };
     },
   );

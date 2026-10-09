@@ -45,7 +45,8 @@ Query parameters:
 
 A turn is grouped by the time of its first fan message, an opener by its send time. Every response carries `asOf`,
 `timezone` and `configVersion`; scripts also carry `normaliserVersion`. The same stored data, `asOf` and versions
-give the same numbers.
+give the same numbers. Turn and opener statuses are judged as of each account's last backfill
+([status time](#reply-time-metrics)), not `asOf`.
 
 Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a day that does not exist;
 `400 invalid_range` when `from` is after `to`; `400 range_too_large` past 366 days.
@@ -215,7 +216,13 @@ by `(createdAt, id)`.
 
 ## Reply time metrics
 
-A turn has one of four statuses, set against `reply_cap` (default 12 h) and `asOf`:
+A turn has one of four statuses, set against `reply_cap` (default 12 h) and the **status time**: the account's
+`account_workspace.refreshed_at` (the end of its last backfill's data, [Keeping it fresh](#keeping-it-fresh)), or the
+request's `asOf` (now) when no backfill has ended since migration `0015`. Live events add fan messages after the last
+backfill but the account's own messages only as `messages.sent` delivers them, so judged as of now a fan message after
+the last run could read `breached` for good although it was answered; as of the status time it is `pending` until a
+backfill reads the chat again. Openers are judged as of the same time, so a fan reply stored after it counts at the
+next backfill (until then the opener is `pending` or, once `open_reply` has elapsed at the status time, `no_reply`).
 
 | Status | Meaning |
 |---|---|
@@ -265,7 +272,7 @@ Its **kind**:
 | `reactivation` | An earlier DM is stored, `open_gap` or more before it |
 | `unknown` | Nothing earlier is stored, and the walk did not reach the chat's start, so the gap runs off our coverage |
 
-Its **status**, against `open_reply` (default 24 h) and `asOf`:
+Its **status**, against `open_reply` (default 24 h) and the status time ([above](#reply-time-metrics)):
 
 | Status | Meaning |
 |---|---|

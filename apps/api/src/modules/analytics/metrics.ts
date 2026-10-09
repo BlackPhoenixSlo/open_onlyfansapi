@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { messageFact } from '../../db/schema.js';
+import { accountWorkspace, messageFact } from '../../db/schema.js';
 import type { StatsConfig, StatsGroupBy, StatsMetric, StatsMetricRow, StatsOpenerSample, StatsSample } from '../../contracts.js';
 import { chatOpeners, reachedStartChats, type Opener } from './openers.js';
 import { fanTurns, turnMessages, type FanTurn } from './turns.js';
@@ -232,9 +232,27 @@ export function groupKey(t: AccountTurn | AccountOpener, groupBy: StatsGroupBy, 
   return groupBy === 'day' ? z.day : z.hour;
 }
 
+/** When an account's turns and openers are judged (`range.asOf`): see `statusAsOf`. */
+export type AsOf = (accountId: number) => Date;
+
+/**
+ * Judges each account's turn and opener status as of its `account_workspace.refreshed_at` (the end of its last
+ * backfill's data), else `now`. Live events add the fans' messages after it, but the account's replies reach the store
+ * only through a backfill or `messages.sent`, so judged as of now, an answered fan message after the last run could
+ * read `breached` for good.
+ */
+export async function statusAsOf(teamId: string, accountIds: number[] | null, now: Date): Promise<AsOf> {
+  const rows = await db
+    .select({ accountId: accountWorkspace.accountId, refreshedAt: accountWorkspace.refreshedAt })
+    .from(accountWorkspace)
+    .where(and(eq(accountWorkspace.teamId, teamId), accountIds ? inArray(accountWorkspace.accountId, accountIds) : undefined));
+  const at = new Map(rows.flatMap((r) => (r.refreshedAt ? [[r.accountId, r.refreshedAt] as const] : [])));
+  return (accountId) => at.get(accountId) ?? now;
+}
+
 /**
  * The fan turns of workspace `teamId` that start in `[from, to)`, over `accountIds` (null = every account the
- * workspace has rows for), with the config's reply cap and, for a substantive metric, its `min_reply_chars`. Reads
+ * workspace has rows for), judged as of `asOf` of each account, with the config's reply cap and, for a substantive metric, its `min_reply_chars`. Reads
  * each chat from its anchor before `from` (`turnMessages`: exact, so a turn started before `from` is not split) with
  * no upper bound, since a late reply ends a turn however long after the cap it comes; text only for the substantive
  * variant.
@@ -244,15 +262,15 @@ export async function scopedTurns(
   accountIds: number[] | null,
   metric: TurnMetricId,
   cfg: StatsConfig,
-  range: { from: Date; to: Date; asOf: Date },
+  range: { from: Date; to: Date; asOf: AsOf },
 ): Promise<AccountTurn[]> {
-  const opts = {
-    asOf: range.asOf,
+  const cap = {
     replyCapMs: cfg.replyCapSeconds * 1000,
     minReplyChars: TURN_DEFINITIONS[metric].substantive ? cfg.minReplyChars : 0,
   };
   const turns: AccountTurn[] = [];
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
+    const opts = { ...cap, asOf: range.asOf(accountId) };
     for (const t of fanTurns(await turnMessages(teamId, accountId, { from: range.from, text: opts.minReplyChars > 0 }), opts)) {
       if (t.inboundAt >= range.from && t.inboundAt < range.to) turns.push({ ...t, accountId });
     }
@@ -281,16 +299,16 @@ export async function scopedOpeners(
   accountIds: number[] | null,
   metric: OpenerMetricId,
   cfg: StatsConfig,
-  range: { from: Date; to: Date; asOf: Date },
+  range: { from: Date; to: Date; asOf: AsOf },
 ): Promise<AccountOpener[]> {
-  const opts = {
-    asOf: range.asOf,
+  const windows = {
     openGapMs: cfg.openGapSeconds * 1000,
     openReplyMs: cfg.openReplySeconds * 1000,
     minReplyChars: OPENER_DEFINITIONS[metric].substantive ? cfg.minReplyChars : 0,
   };
   const openers: AccountOpener[] = [];
   for (const accountId of await workspaceAccounts(teamId, accountIds)) {
+    const opts = { ...windows, asOf: range.asOf(accountId) };
     const to = new Date(range.to.getTime() + opts.openReplyMs);
     const messages = await turnMessages(teamId, accountId, { from: range.from, to, text: opts.minReplyChars > 0 });
     const found = chatOpeners(messages, await reachedStartChats(teamId, accountId), opts);

@@ -204,6 +204,19 @@ describe('stats metric series', () => {
     ]);
   });
 
+  it("judges an open turn as of the account's last backfill (refreshed_at), else now", async () => {
+    const day4 = async () => (await series('reply_time', 'day')).rows.at(-1);
+    vi.setSystemTime(new Date('2026-09-10T00:00:00.000Z')); // days later, no backfill since: T5 is still pending
+    try {
+      expect(await day4()).toMatchObject({ group: '2026-09-04', breached: 0, pending: 1 });
+      await pool.query('UPDATE account_workspace SET refreshed_at = NULL WHERE account_id = $1', [A1]);
+      expect(await day4()).toMatchObject({ group: '2026-09-04', breached: 1, pending: 0 }); // judged as of now
+    } finally {
+      vi.setSystemTime(NOW);
+      await pool.query('UPDATE account_workspace SET refreshed_at = $1 WHERE account_id = $2', [NOW, A1]);
+    }
+  });
+
   it('does not split a turn that started before from, however long before', async () => {
     // T4 started 09-02 23:30, 31.5 h before fan message 12: a fixed reply_cap lookback would start a turn at 12.
     expect((await series('reply_time', 'day', keyA, 'from=2026-09-04&to=2026-09-04')).rows).toEqual([
