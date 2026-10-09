@@ -245,7 +245,7 @@ const REVENUE_TERMS: [string, string][] = [
   ],
   [
     'PPV unlock',
-    "Priced DMs (not mass) sent in the range. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
+    "Priced DMs (not mass) sent in the range. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag (bought) as of the last read. The rate is an upper bound: a PPV unsent before anyone bought it vanishes from OF's history, so a backfill never stores it and it is missing from sent, while a bought one stays.",
   ],
   [
     'Top payers',

@@ -81,8 +81,8 @@ function Revenue() {
         >
           PPV DMs divided by all DMs sent (Infloww's formula).
         </Kpi>
-        <Kpi title="PPV unlock (DM)" {...kpiState} empty={!dm?.sent} value={formatPercent(dm?.rate)} sub={`${dm?.opened ?? 0} opened / ${dm?.sent ?? 0} sent`}>
-          Priced DMs opened over those sent. Upper bound: opened counts as bought.
+        <Kpi title="PPV unlock (DM)" {...kpiState} empty={!dm?.sent} value={formatPercent(dm?.rate)} sub={`${dm?.opened ?? 0} bought / ${dm?.sent ?? 0} sent`}>
+          Priced DMs bought over those sent. Upper bound: an unsent PPV nobody bought vanishes from OF's history.
         </Kpi>
       </div>
 

@@ -108,7 +108,7 @@ function Stats() {
           hint={!median.exact ? 'Several accounts: weighted mean of each account’s median.' : undefined}
           verified={verified('reply_time')}
         >
-          Half of fan messages answered within {cfg ? formatWindow(cfg.replyCapSeconds) : 'the cap'} got a reply
+          Half of fan turns answered within {cfg ? formatWindow(cfg.replyCapSeconds) : 'the cap'} got a reply
           faster than this.
         </Kpi>
         <Kpi
@@ -119,7 +119,7 @@ function Stats() {
           value={formatPercent(sla)}
           verified={verified('reply_sla')}
         >
-          Fan messages answered within {cfg ? formatWindow(cfg.slaSeconds) : 'the SLA'}.
+          Fan turns answered within {cfg ? formatWindow(cfg.slaSeconds) : 'the SLA'}.
         </Kpi>
         <Kpi
           title="Openers"
