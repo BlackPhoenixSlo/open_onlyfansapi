@@ -1,6 +1,6 @@
 # Client story: account and shift performance stats
 
-Status (2026-10-06): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
+Status (2026-10-09): design sketch written 2026-10-02 and revised the same day after three reviews; step 0 backfill
 built (`apps/api/src/modules/analytics`, the `analytics:claim`, `analytics:backfill` and `analytics:diff` CLIs,
 [docs/analytics-backfill.md](../analytics-backfill.md)); a live last-7-days run on one account after the chat-list
 fixes took 92 requests (13 chat-list pages) in 268 s and listed 63 chats (all 62 known active plus one mass-only
@@ -13,6 +13,10 @@ totals shipped; openers and scripts still unverified (morning check pending).
 Completeness (6.1) checked 2026-10-06 with `--dry-run`, messages 2026-09-29..10-06 and transactions 2026-09-06..10-06:
 per-chat differences explained (late arrivals, fan deletions), the deleted-last-message chat gap fixed in code (not
 re-run live), one documented quiet-page miss, transactions vacuous (0 = 0).
+By 2026-10-09: live updates from `messages.received`, `messages.sent` and `messages.deleted`
+([docs/analytics.md](../analytics.md#live-updates)), stored messages per fan with export, and the dashboard's
+Conversations and Revenue pages and Run analytics (30, 90 or 180 days). Openers and scripts are still unverified and
+the Infloww diff still awaits the client's export.
 Feeds the user-designable statistics page in [FUTURE.md](../../FUTURE.md) and [handoff Phase 3](handoff-of-serving.md).
 
 ## 1. The ask
@@ -32,7 +36,8 @@ Terms used below:
 
 - **Inbound / outbound.** `fromUser.id` is not / is the account itself (the split `services/upstream/events.py` uses).
 - **Mass** = outbound whose `queueId` matches a broadcast with `sentCount > 1` in `mass`. `isFromQueue` alone is not
-  trusted: a scheduled 1:1 through `/messages/queue` (`of_client.schedule_message`) probably sets it too. Verify one.
+  enough: checked 2026-10-09, every stored broadcast copy has it (6,512 of 6,512), but so do 50 queued single DMs
+  (0.19% of 26,133 DMs). Live outbound rows before a backfill: [docs/analytics.md](../analytics.md#live-updates).
 - **Automated** = outbound that matches the OF welcome message (`tmpl`, text or media) or a text on the client's
   automation list (Infloww automations, bots). These arrive as ordinary DMs (`isFromQueue: false`), so without this
   rule they count as instant replies and openers.
@@ -94,7 +99,8 @@ What we cannot attribute today:
   account, per hour and per shift, not per chatter.
 - **When a fan read a message.** `isOpened` is a flag with no time.
 - **Unsent or deleted messages.** They vanish from history. The daily re-read (4.2) only catches recent ones;
-  `messages.deleted` is not emitted.
+  `messages.deleted` is emitted and marks the stored row (`deleted_at`), but an unsend while the gateway is down is
+  never seen ([docs/analytics.md](../analytics.md#live-updates)).
 - **Why a purchase happened.** Any script or opener credit is a model with a window, not a fact.
 
 ## 3. Where Infloww is likely wrong or unverifiable
@@ -142,7 +148,7 @@ with no allowlist sees its workspace's accounts, not every account. `script`, `s
 aggregate, sample and CSV export are scoped this way. This meets the Phase 3 acceptance (a second workspace cannot
 see the first's data). Events and REST keep the operator-wide model in [realtime.md](docs/realtime.md#tenancy).
 
-### 4.2 Ingestion: backfill only
+### 4.2 Ingestion: backfill, plus live updates
 
 - **Messages.** Per account, walk `GET chats` (most recent first) until chats fall before the range. For each chat,
   page messages newest first with `id=<oldest id seen>` until `hasMore` is false or a page adds no new id. Do not
@@ -154,9 +160,11 @@ see the first's data). Events and REST keep the operator-wide model in [realtime
 - **Refresh.** A daily re-read of the last `reread_days` for chats with new messages. A chat whose only new messages
   are mass is skipped, so one broadcast does not trigger a re-read of every recipient. Unsends older than the window
   are missed and shown in coverage. Upsert key `(account_id, message_id)`, so re-reads never double count.
-- **No live ingestion.** [`messages.received` and `messages.sent`](docs/webhooks.md#event-types) are emitted, but
-  delivery is at-most-once and live frames carry a reduced payload (`fromUser` is only `{id}`, no `toUser`; see the
-  webhooks.md payload notes). So an event is only a re-read hint: it marks its chat for the next re-read.
+- **Live updates** (since 2026-10-08). For a claimed account, [`messages.received` and
+  `messages.sent`](../webhooks.md#event-types) add the message's `message_fact` row and `messages.deleted` marks it
+  deleted ([docs/analytics.md](../analytics.md#live-updates)). Delivery is at-most-once and live frames carry a
+  reduced payload (`fromUser` is only `{id}`, no `toUser`; see the webhooks.md payload notes), so a backfill stays
+  the complete view.
 
 ### 4.3 Tables
 
