@@ -1,5 +1,5 @@
 """Per-proxy traffic counters, keyed by proxy label: how many OF calls went through
-each proxy, how many failed in transport (each failed attempt, retries included),
+each proxy, how many failed in transport (once per call, after its retries ran out),
 how many OF answered 403/429 (`blocked`), and the last error, success and use.
 
 In-process only: nothing is persisted, so every counter resets when upstream

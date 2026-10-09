@@ -287,25 +287,47 @@ def test_proxied_calls_are_counted_per_label():
         c._proxy_retry(fail(curl_errors.Timeout("took too long")))
     with pytest.raises(curl_errors.ConnectionError):
         c._proxy_retry(fail(curl_errors.ConnectionError("curl: (7) Failed to connect")))
-    with pytest.raises(curl_errors.ProxyError):  # 3 tries, each one counted
+    with pytest.raises(curl_errors.ProxyError):  # 5 tries, counted once when they run out
         c._proxy_retry(fail(curl_errors.ProxyError("CONNECT 403")), pause_s=0)
     s = proxy_stats.get("p")
-    assert (s["ok"], s["failed"], s["last_error"]) == (2, 5, "proxy_error: CONNECT 403")
+    assert (s["ok"], s["failed"], s["last_error"]) == (2, 3, "proxy_error: CONNECT 403")
 
 
-def test_a_retry_that_recovers_still_counts_the_failed_attempt():
-    c = OFClient(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"}, proxy_label="p")
-    answers = [curl_errors.ProxyError("blip"), SimpleNamespace(status_code=200)]
+def _flaky(*answers):
+    """A raw call that raises or returns each of `answers` in turn."""
+    answers = list(answers)
 
-    def flaky():
+    def call():
         a = answers.pop(0)
         if isinstance(a, Exception):
             raise a
         return a
+    return call
 
-    c._proxy_retry(flaky, pause_s=0)
+
+def test_a_proxy_error_is_retried_5_times_with_growing_pauses(monkeypatch, caplog):
+    sleeps = []
+    monkeypatch.setattr("of_client.time.sleep", sleeps.append)
+    c = OFClient(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"}, proxy_label="p")
+    with caplog.at_level("INFO", logger="of-client"), pytest.raises(curl_errors.ProxyError):
+        c._proxy_retry(_flaky(*[curl_errors.ProxyError("CONNECT 403")] * 5), what="GET /x")
+    assert sleeps == [0.4, 0.8, 1.6, 3.2]
+    retries = [r for r in caplog.records if r.getMessage().startswith("proxy_error_retry")]
+    assert [f"attempt={n}/5 GET /x" in r.getMessage() and r.levelname == "INFO"
+            for n, r in enumerate(retries, 1)] == [True] * 4
     s = proxy_stats.get("p")
-    assert (s["ok"], s["failed"], s["last_error"]) == (1, 1, "proxy_error: blip")
+    assert (s["ok"], s["failed"], s["last_error"]) == (0, 1, "proxy_error: CONNECT 403")
+
+
+def test_a_retry_that_recovers_is_not_counted_as_failed(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("of_client.time.sleep", sleeps.append)
+    c = OFClient(FAKE_SESSION, proxies={"https": "http://203.0.113.10:8080"}, proxy_label="p")
+    blip = curl_errors.ProxyError("blip")
+    assert c._proxy_retry(_flaky(blip, blip, blip, SimpleNamespace(status_code=200))).status_code == 200
+    assert sleeps == [0.4, 0.8, 1.6]
+    s = proxy_stats.get("p")
+    assert (s["ok"], s["failed"], s["last_error"]) == (1, 0, None)
 
 
 def test_unproxied_calls_are_not_counted():

@@ -104,7 +104,7 @@ export const proxy = z.object({
   /** Whether the last Test reached onlyfans.com through the proxy (null: not checked); `ofError` says why not. */
   ofReachable: z.boolean().nullable(),
   ofError: z.string().nullable(),
-  /** `failed` counts every failed attempt (retries included); `blocked` the responses OF answered 403 or 429. */
+  /** `failed` counts calls that still failed after their retries; `blocked` the responses OF answered 403 or 429. */
   stats: z.object({
     ok: z.number().int(),
     failed: z.number().int(),

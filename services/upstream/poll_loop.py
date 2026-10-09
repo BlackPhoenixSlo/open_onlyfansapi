@@ -2,7 +2,8 @@
 
 `run()` polls every `interval` seconds until cancelled. A dead session calls `on_expired` and ends the task; any other
 failure is logged once per failure run and backs off, doubling up to BACKOFF_MAX_S, or, on a 429, sleeps its
-`Retry-After` (never below the interval).
+`Retry-After` (never below the interval). A failure with no response at all (transport) retries after the plain
+interval when it is the first of a run, and only starts doubling from the second consecutive failure.
 """
 from __future__ import annotations
 
@@ -57,7 +58,8 @@ async def run(name: str, poller: PollerLike, on_expired: Callable[[], None],
             status = getattr(resp, "status_code", None)
             retry = _retry_after(resp) if status == 429 else None
             if retry is None:
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
+                if status is not None or failing:  # a first failure with no response (a proxy blip) keeps the interval
+                    backoff = min(backoff * 2, BACKOFF_MAX_S)
                 delay = backoff
             else:
                 delay = max(retry, interval)

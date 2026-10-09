@@ -4,6 +4,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from curl_cffi.requests import exceptions as curl_errors
 
 import poll_loop
 from of_client import OFAPIError
@@ -60,11 +61,23 @@ def test_429_sleeps_retry_after_or_doubles_and_resets_after_a_clean_poll():
 
 
 def test_any_other_failure_is_logged_once_and_backed_off(caplog):
-    poller = StubPoller(RuntimeError("boom"), of_error(500), None)
+    poller = StubPoller(of_error(500), RuntimeError("boom"), None)
     with caplog.at_level(logging.INFO, logger="upstream.poll_loop"):
         assert run_loop(poller, 3) == [2 * INTERVAL, 4 * INTERVAL, INTERVAL]
     assert [r.getMessage() for r in caplog.records] == [
-        f"sent poller failed account={ACCT} status=None: retrying in {2 * INTERVAL}s",
+        f"sent poller failed account={ACCT} status=500: retrying in {2 * INTERVAL}s",
+        f"sent poller recovered account={ACCT}"]
+
+
+def test_a_first_transport_failure_waits_the_interval_then_doubles_and_resets(caplog):
+    blip = curl_errors.ProxyError("CONNECT tunnel failed, response 403")
+    poller = StubPoller(blip, None, blip, blip, blip, None)
+    with caplog.at_level(logging.INFO, logger="upstream.poll_loop"):
+        assert run_loop(poller, 6) == [INTERVAL, INTERVAL, INTERVAL, 2 * INTERVAL, 4 * INTERVAL, INTERVAL]
+    assert [r.getMessage() for r in caplog.records] == [
+        f"sent poller failed account={ACCT} status=None: retrying in {INTERVAL}s",
+        f"sent poller recovered account={ACCT}",
+        f"sent poller failed account={ACCT} status=None: retrying in {INTERVAL}s",
         f"sent poller recovered account={ACCT}"]
 
 

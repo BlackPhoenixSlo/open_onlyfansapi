@@ -289,8 +289,8 @@ class OFClient:
             headers["Content-Type"] = "application/json"
         try:
             # Datacenter proxy providers sporadically 403 on CONNECT
-            # under load; the same IP works again ~400ms later. _proxy_retry()
-            # retries a few times against the SAME self.http session (sticky IP,
+            # under load; the same IP works again moments later. _proxy_retry()
+            # retries with growing pauses against the SAME self.http session (sticky IP,
             # no rotation) — shared with every raw self.http call below.
             def _do() -> requests.Response:
                 if method == "GET":
@@ -346,34 +346,36 @@ class OFClient:
         except Exception:
             return "?"
 
-    def _proxy_retry(self, fn, *, tries: int = 3, pause_s: float = 0.4, what: str = ""):
+    def _proxy_retry(self, fn, *, tries: int = 5, pause_s: float = 0.4, what: str = ""):
         """Run a raw curl_cffi call `fn`, retrying the transient datacenter
-        CONNECT 403 (datacenter proxies blip ~400ms under load). Retries run against
-        the SAME self.http session — no proxy lookup, no rebuild, no rotation —
-        so OF still sees one sticky IP. This is the single retry policy: both
-        _http_call AND the handful of raw self.http.get/post calls (CDN media
-        download, /users/list, convert upload) funnel through it, so one
-        half-second proxy blip can no longer hard-fail a request. It is also where
-        proxy_stats counts each proxied attempt: ok (and blocked on a 403/429), or
-        failed on any transport error."""
+        CONNECT 403. These outages can outlast a few hundred ms (several
+        concurrent calls have burned 3 x 0.4 s and failed together), so the
+        pause doubles between attempts: 0.4, 0.8, 1.6, 3.2 s (~6 s over 5
+        tries). Retries run against the SAME self.http session — no proxy
+        lookup, no rebuild, no rotation — so OF still sees one sticky IP. This
+        is the single retry policy: both _http_call AND the handful of raw
+        self.http.get/post calls (CDN media download, /users/list, convert
+        upload) funnel through it, so a proxy blip no longer hard-fails a
+        request. It is also where proxy_stats counts each proxied call: ok (and
+        blocked on a 403/429), or failed once when the call finally fails in
+        transport (a blip a retry rescues is not counted as failed)."""
         for attempt in range(tries):
             try:
                 r = fn()
             except requests.exceptions.RequestException as e:
-                # Every failed attempt counts, so a flapping proxy shows even when a retry rescues the call.
-                if self.proxy_label:
-                    kind = ("proxy_error" if isinstance(e, requests.exceptions.ProxyError)
-                            else "timeout" if isinstance(e, requests.exceptions.Timeout)
-                            else type(e).__name__)
-                    proxy_stats.record_failed(self.proxy_label, f"{kind}: {str(e)[:160]}")
                 if isinstance(e, requests.exceptions.ProxyError) and attempt < tries - 1:
                     log_of.info(
                         "proxy_error_retry account=%s proxy=%s(%s) attempt=%d/%d %s err=%s",
                         self.account_id, self.proxy_label or "—", self._proxy_ip(),
                         attempt + 1, tries, what, str(e)[:200],
                     )
-                    time.sleep(pause_s)
+                    time.sleep(pause_s * 2 ** attempt)
                     continue
+                if self.proxy_label:
+                    kind = ("proxy_error" if isinstance(e, requests.exceptions.ProxyError)
+                            else "timeout" if isinstance(e, requests.exceptions.Timeout)
+                            else type(e).__name__)
+                    proxy_stats.record_failed(self.proxy_label, f"{kind}: {str(e)[:160]}")
                 raise
             # Any response (an OF 4xx included) means the proxy carried the call.
             if self.proxy_label:
