@@ -90,7 +90,7 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
   const user = sql`${purchaseFact.raw}->'user'`;
   const inRange = sql`${purchaseFact.createdAt} >= ${scope.from} and ${purchaseFact.createdAt} < ${scope.to}`;
   const unnamed = sql`coalesce(nullif(${user}->>'name', ''), nullif(${user}->>'username', '')) is null`;
-  const newest = (expr: SQL) => sql`(array_agg(${expr} order by ${unnamed}, ${purchaseFact.createdAt} desc) filter (where ${inRange}))[1]`;
+  const newest = (expr: SQL) => sql`(array_agg(${expr} order by ${unnamed}, ${purchaseFact.createdAt} desc, ${purchaseFact.txId}) filter (where ${inRange}))[1]`;
   const rows = await db
     .select({
       accountId: purchaseFact.accountId,

@@ -388,19 +388,16 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
     async messages(covered, tail) {
       const page = [...covered, ...tail].map(({ raw: _r, fetchedAt: _f, ...d }) => d);
       rows.messages.push(...page);
-      const queueIds = new Set<number>();
+      const touched = new Set<{ chats: Set<number>; rows: DerivedMessage[] }>();
       for (const m of page) {
         if (m.direction !== 'outbound' || m.queueId === null) continue;
         const send = sends.get(m.queueId) ?? { chats: new Set<number>(), rows: [] };
         sends.set(m.queueId, send);
         send.chats.add(m.chatId);
         send.rows.push(m);
-        queueIds.add(m.queueId);
+        touched.add(send);
       }
-      for (const id of queueIds) {
-        const send = sends.get(id)!;
-        if (send.chats.size >= BULK_CHATS) for (const m of send.rows) m.isMass = true;
-      }
+      for (const send of touched) if (send.chats.size >= BULK_CHATS) for (const m of send.rows) m.isMass = true;
     },
     async coverage(walk) {
       rows.chats.push(walk);

@@ -196,9 +196,10 @@ export type DerivedMessage = {
  * marks bulk sends mass (a queue id in 8+ chats, backfill.ts `BULK_CHATS`). Every OF message carries a numeric
  * `queueId`; `isFromQueue` is true on every broadcast (6,512 of 6,512 mass rows, 2026-10-09) and on some sends the mass
  * history a run read does not list: bulk sends and single-chat queued sends (about 0.2% of DMs). On 2026-10-09 (account
- * 337749380, before the bulk mark), 671 non-mass outbound rows shared one of 6 queue ids, each in 8 to 321 of their
- * chats (OF set `isFromQueue` on 321 of the rows), and every other non-mass outbound row had a queue id of its own:
- * none was shared by 2 to 7 chats. The backfill uses the mass history; live rows (live.ts) use `isFromQueue`. Automated =
+ * 337749380, before the bulk mark), 671 non-mass outbound rows shared one of 6 queue ids, each in 8 to 321 chats (one
+ * row per chat). OF set `isFromQueue` only on the largest (321 rows; 541 more copies of it were already mass); the other
+ * 5 (8 to 174 chats, 350 rows) had it false. Every other non-mass outbound row had a queue id of its own: none was
+ * shared by 2 to 7 chats. The backfill uses the mass history; live rows (live.ts) use `isFromQueue`. Automated =
  * it matches the welcome message (text or media) or an automation text. `names` are the fan's names from the chat
  * list; any on the message's fan user object are added.
  */

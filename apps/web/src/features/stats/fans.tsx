@@ -85,7 +85,7 @@ export function FansCard({ range }: { range?: StatsRange }) {
                     <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
                     <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
                     <TableCell className="text-right">
-                      {f.hasChat && (
+                      {f.lastAt !== null && (
                         <Button
                           size="sm"
                           variant="ghost"

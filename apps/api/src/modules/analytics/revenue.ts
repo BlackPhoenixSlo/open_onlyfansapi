@@ -2,7 +2,7 @@ import { and, max, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
-import { booked, dm, fanSpends, inScope, ppvDm, txStatus, type FanSpend, type Scope } from './messages.js';
+import { booked, dm, fanSpends, inScope, ppvDm, txStatus, type Scope } from './messages.js';
 
 // Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.
@@ -88,8 +88,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   const top = [...payers.values()].sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.fanId - b.fanId).slice(0, TOP_PAYERS);
   // Per payer, the name and isDeleted on the newest transaction of the range with a name (else the newest), and whether
   // the fan's chat is stored: `fanSpends`, as on the fans list. Every payer has a row: both read the range's booked sales.
-  const detail = new Map<string, FanSpend>();
-  for (const d of spends) if (d.paidInRange) detail.set(`${d.accountId}:${d.fanId}`, d);
+  const detail = new Map(spends.map((d) => [`${d.accountId}:${d.fanId}`, d]));
   const withoutChat = { payers: 0, gross: 0 };
   for (const [key, p] of payers) {
     if (detail.get(key)!.hasChat) continue;
