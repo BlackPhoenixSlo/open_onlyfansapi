@@ -107,10 +107,11 @@ counted as not found. A chat the list leaves out that neither paid in the range 
 missed.
 
 One chat's 4xx does not end the run: a chat the upstream answers any other 4xx (a 404 after its first page, or one
-that is not OF's) is skipped, and its id is printed. Five failed chats in a row do end it: OF answers every chat read
-of a dead session 400 "Wrong user" or 403, so the run fails with "OF session of account <id> looks dead (5 chats in a
-row failed with a 4xx, …): re-connect it in Accounts, then run the backfill again" (`errorCode: session_expired`, as
-for a 401). A walked chat resets the count; a chat OF answers 404 for (not found) neither counts nor resets it. A 401
+that is not OF's) is skipped, and its id is printed. Five chats in a row that OF itself refuses with a 400 or 403 do
+end it: OF answers every chat read of a dead session 400 "Wrong user" or 403, so the run fails with "OF session of
+account <id> expired (OF refused 5 chats in a row with a 400 or 403): re-connect it in Accounts, then run the
+backfill again" (`errorCode: session_expired`, as for a 401). A walked chat resets the count; a chat OF answers 404
+for (not found) and a chat skipped on another 4xx (one not OF's own 400 or 403) neither count nor reset it. A 401
 still ends the run (the session expired), a 429 ends it past its retries, and a 5xx ends it (a 502, 503 or 504 past
 its retries).
 
@@ -121,7 +122,7 @@ so far. If the run fails (a dead session, the upstream down or rate limiting pas
 prints the error, the last progress line and the counts below, and still writes the CSVs from what was stored (a dry
 run: from what it read), then exits 1. A CSV that cannot be written (the database is down) is an error of its own.
 
-It prints the request count and whether it was stopped, then:
+It prints the request count and whether it was stopped (`failed` after an error), then:
 
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
@@ -157,16 +158,16 @@ chat, and the pages of each chat the list left out. The limits:
 | `ANALYTICS_BACKOFF_MAX_MS` | `300000` | Longest wait after a 429, `Retry-After` included |
 
 A 429 waits for `Retry-After`, or 1 s doubling per retry, never longer than the cap. After 8 retries of one request
-the next 429 (the 9th in a row) fails the run; what was stored stays. Its message names the waits and the cap
+the next 429 (the 9th in a row) fails the run; what was stored stays. Its message names the retries and the cap
 (`ANALYTICS_REQUESTS_PER_HOUR`) and says to wait, then run again with a lower cap. A 502, 503, 504 or network error (a
 transient proxy failure) is retried up to 8 times after 1 s, 3 s, 9 s, 30 s, 1 min, 2 min, 5 min and 10 min (about
 19 min in all, so a restart of the upstream container does not end a long run), each attempt spaced like any
 request; the 9th failure in a row fails the run, with a message to check that the upstream at `UPSTREAM_URL` is
-running and read its logs ("The upstream is unreachable: check that it is running and that UPSTREAM_URL points to
-it" when it could not be reached at all), other 4xx fail it at once, and the dashboard shows the run's retries
-("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF session expired
-for account <id>: re-connect it in Accounts" (`errorCode: session_expired`), and the account shows "Session expired ·
-re-connect". One account is read at a time. The spacing paces one run's
+running and answers within `UPSTREAM_TIMEOUT_MS` and to read its logs. Other 4xx fail it at once (an OF 400 or 403
+outside a chat walk adds: if the account's OF session is dead, re-connect it in Accounts), and the dashboard shows
+the run's retries ("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF
+session of account <id> expired: re-connect it in Accounts, then run the backfill again" (`errorCode:
+session_expired`), and the account shows "Session expired · re-connect". One account is read at a time. The spacing paces one run's
 requests only (each run, in its own process, paces itself), so two runs at once (a CLI run and a dashboard run) make
 twice the requests: run one at a time, or lower the cap.
 
