@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { WebhookHealthBadge } from '@/components/webhook-health';
 import { overviewQuery } from '@/lib/api';
 
-export const Route = createFileRoute('/_app/')({ component: Home });
+export const Route = createFileRoute('/_app/dashboard')({ component: Home });
 
 function Home() {
   const overview = useQuery(overviewQuery);

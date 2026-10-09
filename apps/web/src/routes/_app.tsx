@@ -23,7 +23,7 @@ export const Route = createFileRoute('/_app')({
 });
 
 const nav = [
-  { to: '/', label: 'Home' },
+  { to: '/dashboard', label: 'Home' },
   { to: '/accounts', label: 'Accounts' },
   { to: '/keys', label: 'API keys' },
   { to: '/logs', label: 'Logs' },
@@ -58,7 +58,6 @@ function AppLayout() {
             <Link
               key={item.to}
               to={item.to}
-              activeOptions={{ exact: item.to === '/' }}
               className="rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               activeProps={{ className: 'bg-accent text-accent-foreground font-medium' }}
             >

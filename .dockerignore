@@ -26,6 +26,7 @@ coverage
 services
 deploy
 docs
+!docs/media/*.png
 docker
 docker-compose.yml
 README.md

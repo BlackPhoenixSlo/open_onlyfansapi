@@ -166,7 +166,7 @@ async function shoot(page, name) {
 
 /** Each shot (`<name>.png`): opens its page and waits until it is ready. */
 const SHOTS = {
-  home: (page) => open(page, '/', ready.home),
+  home: (page) => open(page, '/dashboard', ready.home),
   accounts: (page) => open(page, '/accounts', ready.accounts),
   keys: (page) => open(page, '/keys', ready.keys),
   playground: async (page, linked) => {
@@ -211,7 +211,7 @@ async function screenshots(page, linked) {
 async function tour(page, linked) {
   const nav = (label) => page.getByRole('link', { name: label, exact: true }).click();
 
-  await open(page, '/', ready.home);
+  await open(page, '/dashboard', ready.home);
   await beat(page, 4000);
 
   await nav('Accounts');

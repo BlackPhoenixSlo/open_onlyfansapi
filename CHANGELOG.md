@@ -48,6 +48,7 @@ All notable changes to this project are documented here. The format is based on
 - A Postgres restart no longer crashes the API or an analytics CLI: an idle pool connection's error is logged and the next query reconnects.
 
 ### Changed
+- Dashboard: `/` is a public landing page (the pitch, a screenshot tour and the tutorial that were `docs/index.html`, now removed) with Log in and Register, or Open dashboard when signed in. The signed-in home moved from `/` to `/dashboard`; sign-in and the email verification link land there.
 - Analytics backfill: `messages.csv` `text_hash` is the script hash ([docs/analytics.md](docs/analytics.md#scripts)): the fan's names become `<name>` and it is empty for text too short to be a script. Automation matching still hashes the text without replacing names.
 - Parity baseline lists `GET settings/welcome-message` (served since analytics step 0), so losing it fails `parity-audit check`.
 - `OF_REQUIRE_PROXY` now defaults to `false` in the upstream, both compose files and the deploy env example: an account connected without a proxy uses the server's own IP. Set `true` to keep refusing proxy-less accounts.

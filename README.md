@@ -5,7 +5,8 @@ A self-hosted API gateway and dashboard for a creator-platform service, with the
 [![CI](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 
-Landing page with screenshots and a tutorial: [docs/index.html](docs/index.html).
+The dashboard's root `/` is the landing page, with screenshots and a tutorial: signed-out visitors get Log in and
+Register there, signed-in users an Open dashboard button. The dashboard home is `/dashboard`.
 
 Gateway sits in front of an upstream service, the one in `services/upstream` or your own. Each workspace creates
 its own scoped API keys and calls `/v1/{account}/...`. Gateway checks the key, forwards the call with one upstream

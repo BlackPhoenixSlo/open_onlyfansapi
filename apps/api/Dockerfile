@@ -20,6 +20,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 COPY tsconfig.base.json ./
 COPY apps ./apps
+COPY docs/media ./docs/media
 RUN pnpm build
 
 # --- production dependencies for @gateway/api only ---

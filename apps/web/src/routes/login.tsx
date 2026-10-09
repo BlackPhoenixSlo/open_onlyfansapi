@@ -17,7 +17,7 @@ export const Route = createFileRoute('/login')({
   // Already signed in (e.g. right after following the verification link): go to the dashboard.
   beforeLoad: async () => {
     const { data } = await authClient.getSession();
-    if (data) throw redirect({ to: '/' });
+    if (data) throw redirect({ to: '/dashboard' });
   },
   component: Login,
 });
@@ -64,7 +64,7 @@ function Login() {
       toast.error(error.message ?? 'Sign in failed');
       return;
     }
-    await navigate({ to: '/' });
+    await navigate({ to: '/dashboard' });
   }
 
   return (
