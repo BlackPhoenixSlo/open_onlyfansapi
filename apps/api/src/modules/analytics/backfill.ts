@@ -365,7 +365,7 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
             lt(purchaseFact.createdAt, to),
           ),
         );
-      return rows.map((r) => r.fanId!);
+      return rows.flatMap((r) => (r.fanId !== null ? [r.fanId] : []));
     },
     async finish(refreshedAt) {
       await syncScripts(teamId, accountId);
@@ -592,6 +592,8 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
     if (!opts.signal?.aborted) throw err;
     result.stopped = true;
   }
+  // A lock lost after the last request: fail before the finish moves refreshed_at.
+  lost.throwIfAborted();
   // refreshed_at: only a run that read up to now (its start) moves it, not one of an older range.
   await store.finish(result.stopped || to < startedAt ? null : new Date(startedAt));
   return result;
