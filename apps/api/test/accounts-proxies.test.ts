@@ -111,6 +111,37 @@ describe('GET /api/proxies', () => {
   });
 });
 
+describe('POST /api/proxies', () => {
+  const create = (payload: unknown, headers: Record<string, string> = dashboard(linked.cookie)) =>
+    app.inject({ method: 'POST', url: '/api/proxies', headers, payload: payload as object });
+
+  it('forwards label and url and answers the new unbound proxy without credentials', async () => {
+    const res = await create({ label: 'pool-1', url: 'http://u:secret-pw@203.0.113.50:8080' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('secret-pw');
+    expect(res.json().proxy).toMatchObject({ label: 'pool-1', scheme: 'http', host: '203.0.113.50', port: 8080, assignedAccountIds: [] });
+    const call = calls('/proxies').filter((r) => r.method === 'POST').at(-1)!;
+    expect(call.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(call.body!)).toEqual({ label: 'pool-1', url: 'http://u:secret-pw@203.0.113.50:8080' });
+  });
+
+  it("passes the upstream's 409 proxy_exists through", async () => {
+    const res = await create({ label: 'dead', url: 'http://203.0.113.1:8080' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: { code: 'proxy_exists' } });
+  });
+
+  it('rejects reserved and unroutable labels, a missing url, and API keys without calling the upstream', async () => {
+    const before = upstream.requests.length;
+    for (const label of ['acct-42', '.x', 'a/b', '']) {
+      expect((await create({ label, url: 'http://203.0.113.1:8080' })).statusCode).toBe(400);
+    }
+    expect((await create({ label: 'ok' })).statusCode).toBe(400);
+    expect((await create({ label: 'ok', url: 'http://203.0.113.1:8080' }, bearer(key))).statusCode).toBe(401);
+    expect(upstream.requests.length).toBe(before);
+  });
+});
+
 describe('POST /api/proxies/:label/probe', () => {
   const probe = (label: string, headers: Record<string, string> = dashboard(linked.cookie)) =>
     app.inject({ method: 'POST', url: `/api/proxies/${label}/probe`, headers });

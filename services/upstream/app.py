@@ -11,6 +11,7 @@ import functools
 import hmac
 import logging
 import os
+import re
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any
@@ -404,6 +405,27 @@ def proxies_list() -> list[dict]:
     """Registered proxies with their bound accounts, last probe and traffic counters
     (`stats` are in-process and reset on restart: counted since `since`)."""
     return [_proxy_view(p) for p in proxies.list_proxies() if p.get("label")]
+
+
+class NewProxy(BaseModel):
+    # One path segment (the probe route takes it), never `.`/`..`; `acct-<id>` names are per-account.
+    label: str = Field(min_length=1, max_length=200, pattern=r"^[^/.][^/]*$")
+    url: str
+
+
+def _create_proxy(body: NewProxy) -> dict:
+    if re.fullmatch(r"acct-\d+", body.label):
+        raise ApiError(400, "invalid_label", "acct-<id> labels are reserved for per-account proxies")
+    entry = _proxy_entry(body.url)
+    if proxies.get_by_label(body.label) is not None:
+        raise ApiError(409, "proxy_exists", f"a proxy named {body.label!r} already exists")
+    return _proxy_view(proxies.upsert({"label": body.label, **entry}))
+
+
+@app.post("/proxies", tags=["operator"], operation_id="proxies.create")
+async def proxies_create(body: NewProxy) -> dict:
+    """Register a proxy bound to no account (bind it with PATCH /of-accounts/{id}); 409 when the label is taken."""
+    return await asyncio.to_thread(_create_proxy, body)
 
 
 def _probe(label: str) -> dict:

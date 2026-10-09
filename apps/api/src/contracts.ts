@@ -75,6 +75,19 @@ export const updateAccountBody = z.object({
 });
 export type UpdateAccountBody = z.infer<typeof updateAccountBody>;
 
+/** A proxy label: one path segment (no `/`, no leading `.`, so never `.` or `..`). */
+export const proxyLabel = z.string().min(1).max(200).regex(/^[^/.][^/]*$/, 'No "/" and no leading "."');
+
+/**
+ * `POST /api/proxies` (dashboard only): a proxy bound to no account. `acct-<id>` labels are reserved for per-account
+ * proxies; `url` is `scheme://[user:pass@]host:port`, checked by the upstream.
+ */
+export const createProxyBody = z.object({
+  label: proxyLabel.refine((l) => !/^acct-\d+$/.test(l), 'acct-<id> labels are reserved for per-account proxies'),
+  url: z.string().trim().min(1).max(2048),
+});
+export type CreateProxyBody = z.infer<typeof createProxyBody>;
+
 /**
  * A proxy in the upstream's registry (`GET /api/proxies`, dashboard only); never its credentials. `stats` count the OF
  * calls made through it since `since` (the upstream's start: they reset when it restarts).

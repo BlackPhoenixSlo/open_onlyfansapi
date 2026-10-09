@@ -87,7 +87,10 @@ export function EditAccountDialog({ account, onClose }: { account: Account; onCl
             </Select>
             {proxies.isError && <p className="text-xs text-destructive">Couldn't load proxies: {proxies.error.message}</p>}
             {selected === NO_PROXY && !proxies.isError && (
-              <p className="text-xs text-muted-foreground">Requests will leave from the server's own IP.</p>
+              <p className="text-xs text-muted-foreground">
+                Requests leave from this server's own IP. That's fine if you self-host for one account on your own
+                machine or VPS. Use a proxy when several accounts share one host or you host for other people.
+              </p>
             )}
             {selected === NEW_PROXY && (
               <Input

@@ -170,7 +170,7 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
  * `/of/shaped?status&type&body&next&gzip` answers as told (`next` becomes `x-next-page`),
  * `/of-accounts` serves one account list, `/docs/json` a small OpenAPI spec and `/session/bootstrap` answers 200 for a
  * curl with a numeric `user-id` header, else 400 `invalid_curl` (shaped like the upstream). `PATCH /of-accounts/:id` edits a
- * listed account, and `/proxies` and `/proxies/:label/probe` serve `proxies` (probing `dead` answers 502 `proxy_error`). `/ws` (plan-v4 §2.2) instead needs
+ * listed account, and `/proxies` (GET, POST) and `/proxies/:label/probe` serve `proxies` (probing `dead` answers 502 `proxy_error`). `/ws` (plan-v4 §2.2) instead needs
  * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
  * `pushFrame()` is given.
  */
@@ -252,6 +252,22 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     return row;
   });
   app.get('/proxies', async () => proxies);
+  app.post('/proxies', async (request, reply) => {
+    const { label, url } = JSON.parse(String(request.body)) as { label: string; url: string };
+    if (proxies.some((p) => p.label === label)) return reply.status(409).send({ error: { code: 'proxy_exists' } });
+    const u = new URL(url);
+    const entry = {
+      label,
+      scheme: u.protocol.slice(0, -1),
+      host: u.hostname,
+      port: Number(u.port),
+      assigned_account_ids: [],
+      stats: {},
+      since: '2026-10-09T10:00:00Z',
+    };
+    proxies.push(entry);
+    return entry;
+  });
   app.post('/proxies/:label/probe', async (request, reply) => {
     const entry = proxies.find((p) => p.label === (request.params as { label: string }).label);
     if (!entry) return reply.status(404).send({ error: { code: 'proxy_not_found' } });

@@ -1,10 +1,14 @@
-import type { Account, ProxyInfo } from '@api/contracts';
+import type { Account, CreateProxyBody, ProxyInfo } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatAgo } from '@/features/stats/series';
 import { api, proxiesQuery } from '@/lib/api';
@@ -19,6 +23,7 @@ const ago = (iso: string | null) => (iso ? <span title={new Date(iso).toLocaleSt
 export function ProxiesCard({ accounts }: { accounts: Account[] }) {
   const queryClient = useQueryClient();
   const proxies = useQuery(proxiesQuery);
+  const [adding, setAdding] = useState(false);
   const probe = useMutation({
     mutationFn: (label: string) => api<{ proxy: ProxyInfo }>(`/api/proxies/${encodeURIComponent(label)}/probe`, { method: 'POST' }),
     onSuccess: ({ proxy }) =>
@@ -38,8 +43,13 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Proxies</CardTitle>
+        <CardAction>
+          <Button size="sm" onClick={() => setAdding(true)}>
+            Add proxy
+          </Button>
+        </CardAction>
         <CardDescription>
-          OK counts responses through each proxy, Blocked those OnlyFans answered 403 or 429, and Failed every
+          Optional if you self-host for a single account. OK counts responses through each proxy, Blocked those OnlyFans answered 403 or 429, and Failed every
           failed attempt
           {since ? ` since ${new Date(since).toLocaleString()}` : ''}; they reset when the upstream restarts. Test
           checks the proxy's egress IP.
@@ -52,7 +62,8 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
           <p className="text-destructive">{proxies.error.message}</p>
         ) : proxies.data.items.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No proxies yet. Add one when you connect an account, or with Edit → New proxy URL… on an account.
+            No proxies yet. They are optional if you self-host for a single account. Add one here, when you connect an
+            account, or with Edit → New proxy URL… on an account.
           </p>
         ) : (
           <Table>
@@ -123,6 +134,92 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
           </Table>
         )}
       </CardContent>
+      {/* Mounted only while open: closing it drops the proxy URL (its password) from React state. */}
+      {adding && <AddProxyDialog onClose={() => setAdding(false)} />}
     </Card>
+  );
+}
+
+/** Why `label` can't name a new proxy (the API's rules), or null. */
+function labelProblem(label: string): string | null {
+  if (label.includes('/') || label.startsWith('.')) return 'No "/" and no leading ".".';
+  if (/^acct-\d+$/.test(label)) return 'acct-<id> labels are reserved for per-account proxies.';
+  return null;
+}
+
+/** Register a proxy bound to no account; it then shows up in every account's Edit dialog. */
+function AddProxyDialog({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [label, setLabel] = useState('');
+  const [url, setUrl] = useState('');
+  const problem = labelProblem(label.trim());
+
+  const create = useMutation({
+    mutationFn: (body: CreateProxyBody) => api<{ proxy: ProxyInfo }>('/api/proxies', { method: 'POST', body }),
+    // The variables hold the proxy password: don't keep them once the dialog is gone.
+    gcTime: 0,
+    onSuccess: ({ proxy }) => {
+      toast.success(`Added ${proxy.label}; press Test to check it`);
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: proxiesQuery.queryKey });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (problem) return;
+    create.mutate({ label: label.trim(), url: url.trim() });
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !create.isPending && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <form onSubmit={onSubmit} className="min-w-0 space-y-4">
+          <DialogHeader>
+            <DialogTitle>Add proxy</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="proxy-label">Label</Label>
+            <Input
+              id="proxy-label"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="residential-1"
+              maxLength={200}
+              aria-invalid={problem !== null}
+              required
+            />
+            {problem && <p className="text-sm text-destructive">{problem}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="proxy-url">Proxy URL</Label>
+            <Input
+              id="proxy-url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="http://user:pass@host:port or socks5h://…"
+              className="font-mono"
+              spellCheck={false}
+              autoComplete="off"
+              maxLength={2048}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Schemes: http, https, socks5, socks5h. It is added unassigned; pick it in an account's Edit dialog.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={create.isPending}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={create.isPending || problem !== null}>
+              {create.isPending && <LoaderCircle className="animate-spin" />}
+              Add
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

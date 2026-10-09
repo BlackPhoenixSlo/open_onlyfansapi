@@ -152,6 +152,37 @@ def test_proxies_list_masks_the_password_and_carries_stats(client):
     assert stats["last_error_at"] and stats["last_used_at"] and stats["last_ok_at"]
 
 
+# ─── POST /proxies ─────────────────────────────────────────────────
+
+def test_create_proxy_is_unbound_and_hides_the_password(client):
+    r = client.post("/proxies", headers=AUTH, json={"label": "pool-1", "url": "socks5h://u:secret-pw@203.0.113.50:1080"})
+    assert r.status_code == 200
+    assert "secret-pw" not in r.text
+    body = r.json()
+    assert (body["label"], body["scheme"], body["host"], body["port"], body["assigned_account_ids"]) == (
+        "pool-1", "socks5h", "203.0.113.50", 1080, [])
+    stored = proxies.get_by_label("pool-1")
+    assert (stored["username"], stored["password"]) == ("u", "secret-pw")
+
+
+@pytest.mark.parametrize(("body", "status", "code"), [
+    ({"label": "taken", "url": "http://203.0.113.1:8080"}, 409, "proxy_exists"),
+    ({"label": "acct-100001", "url": "http://203.0.113.1:8080"}, 400, "invalid_label"),
+    ({"label": "new", "url": "ftp://203.0.113.1:21"}, 400, "invalid_proxy_url"),
+])
+def test_create_proxy_errors(client, body, status, code):
+    proxies.upsert({"label": "taken", "host": "203.0.113.9", "port": 8080, "password": "keep"})
+    r = client.post("/proxies", headers=AUTH, json=body)
+    assert (r.status_code, r.json()["error"]["code"]) == (status, code)
+    assert proxies.get_by_label("taken")["password"] == "keep"
+    assert [p["label"] for p in proxies.list_proxies()] == ["taken"]
+
+
+@pytest.mark.parametrize("label", ["", ".hidden", "a/b"])
+def test_create_proxy_label_is_one_path_segment(client, label):
+    assert client.post("/proxies", headers=AUTH, json={"label": label, "url": "http://203.0.113.1:1"}).status_code == 422
+
+
 # ─── POST /proxies/{label}/probe ───────────────────────────────────
 
 def test_probe_records_the_egress(client, monkeypatch):

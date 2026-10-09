@@ -21,6 +21,8 @@ export interface Upstream {
   updateAccount(id: number, body: string, requestId: string): Promise<UpstreamResponse>;
   /** `GET {origin}/proxies` → JSON array of proxy entries with their traffic stats (never a password). */
   listProxies(requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/proxies` with a JSON `{ label, url }` body → the new (unbound) entry, or 409 `proxy_exists`. */
+  createProxy(body: string, requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/proxies/{label}/probe` → the entry with its fresh egress IP, or 502 `proxy_error`. */
   probeProxy(label: string, requestId: string): Promise<UpstreamResponse>;
   /** `{method} {origin}/of{path}` with `x-of-proxy-account-id: {accountId}`. */
@@ -79,6 +81,12 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
       }),
     listProxies: (requestId) =>
       request(new URL('/proxies', origin), { headers: { accept: 'application/json', 'x-request-id': requestId } }),
+    createProxy: (body, requestId) =>
+      request(new URL('/proxies', origin), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
+        body,
+      }),
     probeProxy: (label, requestId) =>
       request(new URL(`/proxies/${encodeURIComponent(label)}/probe`, origin), {
         method: 'POST',
