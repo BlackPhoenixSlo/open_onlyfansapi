@@ -31,7 +31,7 @@ export function backfillConfig(over: Partial<BackfillConfig> = {}): BackfillConf
     backoffBaseMs: 1000,
     backoffMaxMs: env.ANALYTICS_BACKOFF_MAX_MS,
     maxRetries: 8,
-    transientDelaysMs: [1000, 3000, 9000],
+    transientDelaysMs: [1000, 3000, 9000, 30_000, 60_000, 120_000, 300_000, 600_000],
     automationTexts: [],
     ...over,
   };

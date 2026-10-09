@@ -147,8 +147,9 @@ chat, and the pages of each chat the list left out. The limits:
 
 A 429 waits for `Retry-After`, or 1 s doubling per retry, never longer than the cap. After 8 retries of one request
 the next 429 (the 9th in a row) fails the run; what was stored stays. A 502, 503, 504 or network error (a
-transient proxy failure) is retried up to 3 times after 1 s, 3 s and 9 s, each attempt counting against the hourly
-cap; the 4th failure in a row fails the run, other 4xx fail it at once, and the dashboard shows the run's retries
+transient proxy failure) is retried up to 8 times after 1 s, 3 s, 9 s, 30 s, 1 min, 2 min, 5 min and 10 min (about
+19 min in all, so a restart of the upstream container does not end a long run), each attempt counting against the hourly
+cap; the 9th failure in a row fails the run, other 4xx fail it at once, and the dashboard shows the run's retries
 ("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF session expired
 for account <id>: re-connect it in Accounts" (`errorCode: session_expired`), and the account shows "Session expired ·
 re-connect". One account is read at a time. The hourly cap counts one run's

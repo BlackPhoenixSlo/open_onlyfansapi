@@ -562,7 +562,7 @@ describe('analytics backfill', () => {
     fakeClock();
     Object.assign(fake.state.of!, { badGateway: 4 });
     const p = probe();
-    const run = backfill(opts({ upstream: p.upstream }));
+    const run = backfill(opts({ upstream: p.upstream, config: { transientDelaysMs: [1000, 3000, 9000] } }));
     const failed = expect(run).rejects.toThrow(/answered 502 to GET \/payouts\/transactions/);
     for (const [i, wait] of [1000, 3000, 9000].entries()) {
       await until(() => p.answered() === i + 1);
