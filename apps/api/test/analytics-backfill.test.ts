@@ -438,6 +438,21 @@ describe('analytics backfill', () => {
     expect(await db.$count(messageFact, eq(messageFact.messageId, 205))).toBe(1);
   });
 
+  it('walks the payers of sales already stored from 12 hours before the range start (OF lists sales late), not earlier ones', async () => {
+    const of = fake.state.of!;
+    of.messages[2011] = [msg(1101, '09-01T10:00', 2011)]; // neither chat is listed
+    of.messages[2012] = [msg(1201, '09-01T10:00', 2012)];
+    const sale = (txId: string, fanId: number, hoursBefore: number) => ({
+      teamId: teamA, accountId: ACCOUNT, txId, fanId, kind: 'message', createdAt: new Date(FROM.getTime() - hoursBefore * HOUR), raw: {},
+    });
+    // Stored by the hourly poll after the run that covered them: 2011 bought 11 h before the range, 2012 13 h before.
+    await db.insert(purchaseFact).values([sale('lag1', 2011, 11), sale('lag2', 2012, 13)]);
+    expect(await backfill(opts())).toMatchObject({ seededChats: 1 }); // 2011
+    const walked = (await db.select({ id: chatCoverage.chatId }).from(chatCoverage)).map((c) => c.id);
+    expect(walked).toContain(2011);
+    expect(walked).not.toContain(2012);
+  });
+
   it("re-reads a PPV bought in the range in a chat the list names inactive (the payer's newest page): isOpened", async () => {
     const of = fake.state.of!;
     const ppv = msg(402, '08-26T10:00', ACCOUNT, { price: 3, isOpened: false });

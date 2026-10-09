@@ -189,9 +189,10 @@ since these jobs call OF on their own). They are in-process jobs, so they also n
   time is due and gets one backfill ([analytics-backfill.md](analytics-backfill.md#running-a-backfill)) from
   max(now - 7 days, `refreshed_at` - 1 hour) to now. It starts like the dashboard's Run analytics (queued behind the
   one-account-at-a-time limiter, its status on the Accounts page, `GET /v1/stats/backfill`) and the job does not wait
-  for it. The run walks the window's payers even when the chat list names them as not active in the window, so a PPV
-  bought in the window is read again with its `isOpened` when it is on the payer's pages down to the window start (a
-  PPV older than those pages is not). One attempt per account a day: a run that ends moves `refreshed_at` forward,
+  for it. The run walks the window's payers even when the chat list names them as not active in the window, and the
+  payers of sales already stored (the poll's) from 12 hours before the window start, so a sale OF listed after the
+  previous run still gets its chat walked; a PPV bought in the window is read again with its `isOpened` when it is
+  on the payer's pages down to the window start (a PPV older than those pages is not). One attempt per account a day: a run that ends moves `refreshed_at` forward,
   so the account is not due again until tomorrow's refresh time, and an account whose last run started after today's
   refresh time is skipped until then too, so a run that fails (a dead session, the upstream down, `backfill_running`
   while the CLI backfills it) is tried again the next day, from `refreshed_at` - 1 hour (at most 7 days back). That

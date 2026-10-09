@@ -106,7 +106,9 @@ read. A chat listed without a readable last-message time is not walked.
 
 OF's offset also counts chats the list does not return: a page of 20 places held 13 to 19 chats on 2026-10-09, and
 a chat with messages in the range (a fan with `isActive: false`) was never listed. So after the listed chats the run
-walks the range's payers (the fans of its transactions) that the list did not name or names as not active in the
+walks the range's payers (the fans of its transactions, and of the transactions already stored from 12 hours
+before `--from`: OF lists a sale hours late, so the hourly poll may store one after the run that covered its time)
+that the list did not name or names as not active in the
 range (a fan who bought an older PPV in the range has no newer message; the walk reads the PPV again, with its
 `isOpened`, when it is on the pages down to `--from`), with the list's names when it named them, and the chats with
 stored messages (from earlier runs and live events) that the list did not name (fan ids that are positive safe

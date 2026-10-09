@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { and, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
+import { and, eq, getTableColumns, gte, isNotNull, lt, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db, pool } from '../../db/index.js';
 import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
@@ -13,6 +13,8 @@ import { syncScripts } from './scripts.js';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+/** How far before the range start a stored sale still seeds its payer's chat: OF's ledger lags real time by hours. */
+const PAYER_LAG_MS = 12 * HOUR_MS;
 const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers 10 to 20 a page whatever the limit
 /** Chat-list pages in a row adding no new chat that end the list: OF repeating itself, not the list moving. */
 const STALE_CHAT_PAGES = 3;
@@ -59,6 +61,8 @@ export interface BackfillStore {
   transactions(rows: WalkedPurchase[]): Promise<void>;
   /** The chats of the account's stored messages: walked too when the chat list leaves them out. */
   chatIds(): Promise<number[]>;
+  /** The fans of the account's stored transactions in `[from, to)`. */
+  payers(from: Date, to: Date): Promise<number[]>;
   /**
    * After the walk, stopped or not. `refreshedAt` when the run ran to its end and read up to its start (`to` not
    * before it): that start; null when it was stopped or read an older range.
@@ -317,6 +321,21 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
         .where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId)));
       return rows.map((r) => r.chatId);
     },
+    async payers(from, to) {
+      const rows = await db
+        .selectDistinct({ fanId: purchaseFact.fanId })
+        .from(purchaseFact)
+        .where(
+          and(
+            eq(purchaseFact.teamId, teamId),
+            eq(purchaseFact.accountId, accountId),
+            isNotNull(purchaseFact.fanId),
+            gte(purchaseFact.createdAt, from),
+            lt(purchaseFact.createdAt, to),
+          ),
+        );
+      return rows.map((r) => r.fanId!);
+    },
     async finish(refreshedAt) {
       await syncScripts(teamId, accountId);
       if (!refreshedAt) return;
@@ -347,6 +366,9 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
     async chatIds() {
       return rows.messages.map((m) => m.chatId);
     },
+    async payers(from, to) {
+      return rows.transactions.flatMap((t) => (t.fanId !== null && t.createdAt >= from && t.createdAt < to ? [t.fanId] : []));
+    },
     async finish() {},
   };
 }
@@ -355,7 +377,8 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * Backfills one account's range (spec §4.2): first the range's transactions (a few pages, so a long run that dies
  * still has them), then mass history in one-day windows from a day before `from` up to now (the walks store messages
  * on both sides of the range) and the welcome template (both feed the derived columns), then the chats active in the
- * range in the chat list's order, then the range's payers the list left out or names as not active in the range and
+ * range in the chat list's order, then the range's payers (and those of sales stored from 12 hours before it) the list
+ * left out or names as not active in the range and
  * the chats with stored messages that the list left out,
  * each chat's messages newest first down to the range start, all into `store` (`dbStore` upserts, so a re-run never
  * double counts). A chat whose first messages page OF answers 404 is skipped, as is one the upstream answers another
@@ -475,6 +498,9 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
       result.transactions += stored.length;
       for (const tx of stored) if (tx.fanId !== null) payers.add(tx.fanId);
     });
+    // And the payers of sales stored before (the hourly poll's, say) from 12 hours before the range on: OF lists a sale
+    // hours late, so one made just before the range start may reach the store after the run that covered it.
+    for (const fanId of await store.payers(new Date(from - PAYER_LAG_MS), new Date(to))) payers.add(fanId);
     // Mass history from a day before the range up to now: the walks store outbound messages outside the range too.
     result.phase = 'mass history';
     const massFrom = from - DAY_MS;
