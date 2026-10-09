@@ -139,16 +139,10 @@ class StatusError extends Error {
 }
 /** OF's own 400 or 403 (`ofError`): its answer to a dead session's reads, e.g. 400 "Wrong user". */
 const ofRefused = (status: number, ofError: boolean) => ofError && (status === 400 || status === 403);
-/** What to do after the upstream's last answer `status` fails the run, if anything (`ofError`: OF's error passed through). */
-function nextStep(status: number, ofError: boolean, cfg: BackfillConfig): string | undefined {
-  if (status === 429) {
-    return `still rate limited after ${cfg.maxRetries} retries (waits from ${cfg.backoffBaseMs} ms, doubling) at ${cfg.requestsPerHourPerAccount} requests an hour (ANALYTICS_REQUESTS_PER_HOUR): wait, then run again with a lower cap`;
-  }
-  if (TRANSIENT.has(status)) {
-    return `still failing after ${cfg.transientDelaysMs.length} retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again`;
-  }
-  if (ofRefused(status, ofError)) return "if the account's OF session is dead, re-connect it in Accounts, then run again";
-  return undefined;
+/** How the chat loop skips a chat after a 4xx (401 and 429 aside): `refused` (`ofRefused`) or `failed`; null when the error ends the run. */
+function chatSkip(err: unknown): 'refused' | 'failed' | null {
+  if (!(err instanceof StatusError) || err.status < 400 || err.status >= 500 || err.status === 429) return null;
+  return ofRefused(err.status, err.ofError) ? 'refused' : 'failed';
 }
 const isOfError = (body: Buffer): boolean => {
   try {
@@ -493,6 +487,8 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
     lastStart = Date.now();
   }
 
+  /** The next step once transient failures outlast their retries. */
+  const stillFailing = `still failing after ${cfg.transientDelaysMs.length} retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again`;
   async function get(path: string): Promise<unknown> {
     let limited = 0;
     let transient = 0;
@@ -519,15 +515,17 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
         await sleep(delay, undefined, { signal });
         continue;
       }
-      if (out instanceof AppError) throw new AppError(out.statusCode, out.code, `${out.message}: ${nextStep(out.statusCode, false, cfg)}`);
+      if (out instanceof AppError) throw new AppError(out.statusCode, out.code, `${out.message}: ${stillFailing}`);
       if (out.status === 429 && limited < cfg.maxRetries) {
         await sleep(retryDelay(out.headers.get('retry-after'), limited++, cfg), undefined, { signal });
         continue;
       }
       if (out.status === 401) throw new SessionExpiredError(accountId);
+      if (out.status === 429) throw new StatusError(429, isOfError(out.body), path, `still rate limited after ${cfg.maxRetries} retries (waits from ${cfg.backoffBaseMs} ms, doubling) at ${cfg.requestsPerHourPerAccount} requests an hour (ANALYTICS_REQUESTS_PER_HOUR): wait, then run again with a lower cap`);
+      if (TRANSIENT.has(out.status)) throw new StatusError(out.status, isOfError(out.body), path, stillFailing);
       if (!out.ok) {
         const ofError = isOfError(out.body);
-        throw new StatusError(out.status, ofError, path, nextStep(out.status, ofError, cfg));
+        throw new StatusError(out.status, ofError, path, ofRefused(out.status, ofError) ? "if the account's OF session is dead, re-connect it in Accounts, then run again" : undefined);
       }
       return JSON.parse(out.body.toString('utf8')) as unknown;
     }
@@ -578,8 +576,9 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
       // run. `refused`: OF's own 400 or 403, its answer to a dead session's chat reads; DEAD_SESSION_CHATS in a row end
       // the run. Another 4xx (`failed`) or a missing chat neither counts nor resets the run of refusals.
       const walk = await walkChat(get, store, ctx, chat, from, massFrom).catch((err: unknown) => {
-        if (!(err instanceof StatusError) || err.status < 400 || err.status >= 500 || err.status === 429) throw err;
-        return ofRefused(err.status, err.ofError) ? ('refused' as const) : ('failed' as const);
+        const skip = chatSkip(err);
+        if (!skip) throw err;
+        return skip;
       });
       if (walk === 'missing') {
         result.missingChats++;
