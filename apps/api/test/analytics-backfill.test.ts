@@ -792,7 +792,7 @@ describe('analytics backfill lock', () => {
   it('fails the run at its next request when the lock connection ends mid-run, without moving refreshed_at', async () => {
     const before = new Date('2026-08-01T00:00:00.000Z');
     await db.update(accountWorkspace).set({ refreshedAt: before }).where(eq(accountWorkspace.accountId, ACCOUNT));
-    // The lock's connection is the run's only bare pool.connect() (queries pass a callback).
+    // The lock's connection is the run's first bare pool.connect() (queries pass a callback).
     const connect = pool.connect.bind(pool);
     let lockClient: PoolClient | undefined;
     const spy = vi.spyOn(pool, 'connect').mockImplementation(((...args: Parameters<typeof pool.connect>) => {

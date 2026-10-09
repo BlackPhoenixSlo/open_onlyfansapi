@@ -1,10 +1,10 @@
-import { and, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact, script } from '../../db/schema.js';
 import type { StatsConfig, StatsScript } from '../../contracts.js';
 import { DAY_MS } from './config.js';
 import { fanNames, messageFanNames, NORMALISER_VERSION, normaliseText, scriptHash } from './derive.js';
-import { dm } from './facts.js';
+import { dm, inScope, owned } from './facts.js';
 import { statusAsOf, workspaceAccounts } from './metrics.js';
 
 // Script candidates (spec §2 "Script", "Script sends", "Script reply rate"; §6 step 3): auto-detected DM text
@@ -37,7 +37,6 @@ export function isScript(sends: Send[]): boolean {
   return false;
 }
 
-const scoped = (teamId: string, accountId: number) => and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId));
 /** The sends `isScript` decides on: DMs (outbound, not mass, not automated) hashed by the current normaliser version. */
 const scriptSends = and(dm, isNotNull(messageFact.textHash), eq(messageFact.normaliserVersion, NORMALISER_VERSION));
 const rawText = sql<string | null>`${messageFact.raw}->>'text'`;
@@ -55,7 +54,7 @@ export async function syncScripts(teamId: string, accountId: number): Promise<nu
   const rows = await db
     .select({ hash: messageFact.textHash, chatId: messageFact.chatId, at: messageFact.createdAt })
     .from(messageFact)
-    .where(and(scoped(teamId, accountId), scriptSends));
+    .where(and(owned(messageFact, teamId, [accountId]), scriptSends));
   const byHash = new Map<string, Send[]>();
   for (const r of rows) {
     const sends = byHash.get(r.hash!);
@@ -94,7 +93,7 @@ export async function rehashAccount(teamId: string, accountId: number): Promise<
       toUser: sql<unknown>`${messageFact.raw}->'toUser'`,
     })
     .from(messageFact)
-    .where(and(scoped(teamId, accountId), eq(messageFact.direction, 'outbound')));
+    .where(and(owned(messageFact, teamId, [accountId]), eq(messageFact.direction, 'outbound')));
   const changed = rows.flatMap((r) => {
     const hash = scriptHash(r.text, [...(names.get(r.chatId) ?? []), ...messageFanNames({ fromUser: r.fromUser, toUser: r.toUser }, r.chatId)]);
     return hash === r.textHash && r.normaliserVersion === NORMALISER_VERSION ? [] : [{ messageId: r.messageId, hash }];
@@ -193,13 +192,7 @@ export async function scopedScripts(
         text: sql<string | null>`case when ${messageFact.direction} = 'inbound' or ${messageFact.textHash} is not null then ${rawText} end`,
       })
       .from(messageFact)
-      .where(
-        and(
-          scoped(teamId, accountId),
-          gte(messageFact.createdAt, range.from),
-          lt(messageFact.createdAt, new Date(range.to.getTime() + openReplyMs)),
-        ),
-      );
+      .where(inScope(messageFact, { teamId, accountIds: [accountId], from: range.from, to: new Date(range.to.getTime() + openReplyMs) }));
     const chats = new Map<number, Row[]>();
     for (const m of rows) {
       const list = chats.get(m.chatId);
@@ -260,7 +253,7 @@ export async function scopedScripts(
         chats: sql<number>`count(distinct (${messageFact.accountId}, ${messageFact.chatId}))::int`,
       })
       .from(messageFact)
-      .where(and(eq(messageFact.teamId, teamId), inArray(messageFact.accountId, accounts), scriptSends, inArray(messageFact.textHash, [...tallies.keys()])))
+      .where(and(owned(messageFact, teamId, accounts), scriptSends, inArray(messageFact.textHash, [...tallies.keys()])))
       .groupBy(messageFact.textHash);
     for (const r of totals) all.set(r.hash!, { sends: r.sends, chats: r.chats });
   }

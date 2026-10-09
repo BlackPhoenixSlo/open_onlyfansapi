@@ -8,7 +8,7 @@ import { messageDetail, plainText } from './derive.js';
 import { booked, dm, inScope, owned, ppvDm, type Scope } from './facts.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`, `GET /v1/stats/messages`): read from `message_fact` of the
-// workspace's own rows, with the fan's username from `chat_coverage`.
+// workspace's own rows, with the fan's username from `chat_coverage`, and each fan's spend from `purchase_fact`.
 
 export const MESSAGE_EXPORT_COLUMNS = [
   'account_id',
@@ -70,7 +70,7 @@ export type FanSpend = {
  */
 export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
   const user = sql`${purchaseFact.raw}->'user'`;
-  const inRange = sql`${purchaseFact.createdAt} >= ${scope.from} and ${purchaseFact.createdAt} < ${scope.to}`;
+  const inRange = inScope(purchaseFact, scope);
   const unnamed = sql`coalesce(nullif(${user}->>'name', ''), nullif(${user}->>'username', '')) is null`;
   const newest = (expr: SQL) => sql`(array_agg(${expr} order by ${unnamed}, ${purchaseFact.createdAt} desc, ${purchaseFact.txId}) filter (where ${inRange}))[1]`;
   const rows = await db

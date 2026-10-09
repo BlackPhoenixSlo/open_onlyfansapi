@@ -35,7 +35,6 @@ function updateAll(table: PgTable, keep: string[]): Record<string, SQL> {
  * script candidates and, for a run that ran to its end, moves `account_workspace.refreshed_at` forward (never back).
  */
 export function dbStore(teamId: string, accountId: number): BackfillStore {
-  const owned = { teamId, accountId };
   return {
     async messages(covered, tail) {
       // One transaction: the covered upsert re-derives `is_mass` from the mass history, so a run that died before the
@@ -44,13 +43,13 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
         if (covered.length) {
           await tx
             .insert(messageFact)
-            .values(covered.map((r) => ({ ...owned, ...r })))
+            .values(covered.map((r) => ({ teamId, accountId, ...r })))
             .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
         }
         if (tail.length) {
           await tx
             .insert(messageFact)
-            .values(tail.map((r) => ({ ...owned, ...r })))
+            .values(tail.map((r) => ({ teamId, accountId, ...r })))
             .onConflictDoUpdate({
               target: [messageFact.accountId, messageFact.messageId],
               set: updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']),
@@ -78,7 +77,7 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
       const older = sql`(${chatCoverage.oldestMessageId} is null or excluded.oldest_message_id < ${chatCoverage.oldestMessageId})`;
       const [merged] = await db
         .insert(chatCoverage)
-        .values({ ...owned, ...walk })
+        .values({ teamId, accountId, ...walk })
         .onConflictDoUpdate({
           target: [chatCoverage.accountId, chatCoverage.chatId],
           set: {
@@ -100,7 +99,7 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
       if (!rows.length) return;
       await db
         .insert(purchaseFact)
-        .values(rows.map((r) => ({ ...owned, ...r })))
+        .values(rows.map((r) => ({ teamId, accountId, ...r })))
         .onConflictDoUpdate({ target: [purchaseFact.accountId, purchaseFact.txId], set: updateAll(purchaseFact, ['accountId', 'txId']) });
     },
     async chatIds() {

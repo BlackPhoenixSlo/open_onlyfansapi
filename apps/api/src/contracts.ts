@@ -740,7 +740,7 @@ export type StatsMessage = z.infer<typeof statsMessage>;
 
 export const statsMessages = z.object({
   ...statsWindow,
-  /** `limit` cut the list: more messages match. */
+  /** `limit` cut the list: more messages match. Always `nextCursor !== null`; kept for compatibility. */
   truncated: z.boolean(),
   /** Pass as `cursor` for the next page; null when nothing is cut. */
   nextCursor: z.string().nullable(),
