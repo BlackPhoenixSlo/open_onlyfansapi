@@ -78,7 +78,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
 
   // The payers of the range (a booked sale in it has a `lastAt`), with the fan's details as on the fans list.
   const payers = spends.flatMap(({ lastAt, ...p }) => (lastAt ? [{ ...p, lastAt }] : []));
-  const top = payers.sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.fanId - b.fanId).slice(0, TOP_PAYERS);
+  const top = payers.sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.chatId - b.chatId).slice(0, TOP_PAYERS);
   const withoutChat = { payers: 0, gross: 0 };
   for (const p of payers) {
     if (p.hasChat) continue;
@@ -103,8 +103,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     byKind: [...kinds].map(([kind, s]) => ({ kind, ...s })).sort((a, b) => b.gross - a.gross || a.kind.localeCompare(b.kind)),
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
-    // The response schema drops the fields the contract does not name.
-    topPayers: top.map(({ fanId, name, username, lastAt, ...p }) => ({ ...p, chatId: fanId, name: name ?? username, lastAt: lastAt.toISOString() })),
+    topPayers: top.map(({ accountId, chatId, name, username, isDeleted, hasChat, gross, net, transactions, lastAt }) => ({ accountId, chatId, name: name ?? username, isDeleted, hasChat, gross, net, transactions, lastAt: lastAt.toISOString() })),
     withoutChat,
   };
 }

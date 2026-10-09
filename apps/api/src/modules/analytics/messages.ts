@@ -46,7 +46,7 @@ const coverage = and(
 /** One known fan's booked sales on an account (`fanSpends`). */
 export type FanSpend = {
   accountId: number;
-  fanId: number;
+  chatId: number;
   /** Booked gross in the range, and over every stored transaction, in cents. */
   gross: number;
   grossAllTime: number;
@@ -77,7 +77,7 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
   const rows = await db
     .select({
       accountId: purchaseFact.accountId,
-      fanId: purchaseFact.fanId,
+      chatId: purchaseFact.fanId,
       gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${inRange}), 0)::int`,
       grossAllTime: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
       net: sql<number>`coalesce(sum(${purchaseFact.netCents}) filter (where ${inRange}), 0)::int`,
@@ -92,7 +92,7 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
     .from(purchaseFact)
     .where(and(owned(purchaseFact, scope.teamId, scope.accountIds), booked, isNotNull(purchaseFact.fanId)))
     .groupBy(purchaseFact.teamId, purchaseFact.accountId, purchaseFact.fanId);
-  return rows.flatMap(({ fanId, ...r }) => (fanId !== null ? [{ ...r, fanId }] : []));
+  return rows.flatMap(({ chatId, ...r }) => (chatId !== null ? [{ ...r, chatId }] : []));
 }
 
 /** Per fan (chat) with a message in the range: the message counts and times, and the chat list's names. */
@@ -137,7 +137,7 @@ const newer = (a: string | null, b: string | null) => (a === b ? 0 : a === null 
  */
 export async function scopedFans(scope: Scope, limit: number, search = ''): Promise<{ total: number; items: StatsFan[] }> {
   const [chats, spends] = await Promise.all([fanMessages(scope), fanSpends(scope)]);
-  const spend = new Map(spends.map((p) => [`${p.accountId}:${p.fanId}`, p]));
+  const spend = new Map(spends.map((p) => [`${p.accountId}:${p.chatId}`, p]));
   const items: (StatsFan & { names: (string | null)[] })[] = chats.map(({ fanName, fanCustomName, ...r }) => {
     const p = spend.get(`${r.accountId}:${r.chatId}`);
     return {
@@ -155,10 +155,10 @@ export async function scopedFans(scope: Scope, limit: number, search = ''): Prom
   });
   const listed = new Set(items.map((f) => `${f.accountId}:${f.chatId}`));
   for (const p of spends) {
-    if (!p.paidInRange || listed.has(`${p.accountId}:${p.fanId}`)) continue;
-    const { accountId, fanId, username, name, gross, grossAllTime, isDeleted, hasChat } = p;
+    if (!p.paidInRange || listed.has(`${p.accountId}:${p.chatId}`)) continue;
+    const { accountId, chatId, username, name, gross, grossAllTime, isDeleted, hasChat } = p;
     const times = { firstAt: null, lastAt: null, lastFanAt: null };
-    items.push({ accountId, chatId: fanId, fanUsername: username, name, ...NO_MESSAGES, ...times, gross, grossAllTime, isDeleted, hasChat, names: [username, name] });
+    items.push({ accountId, chatId, fanUsername: username, name, ...NO_MESSAGES, ...times, gross, grossAllTime, isDeleted, hasChat, names: [username, name] });
   }
   const q = search.trim().replace(/^@/, '').toLowerCase();
   const shown = items.filter((f) => !q || f.names.some((n) => n?.toLowerCase().includes(q)) || String(f.chatId).includes(q));
