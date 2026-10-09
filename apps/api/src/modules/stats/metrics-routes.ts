@@ -46,6 +46,7 @@ import {
 } from '../analytics/metrics.js';
 import { connectedAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
+import { assertBackfillUnlocked } from '../analytics/backfill.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
 import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } from '../analytics/messages.js';
@@ -204,6 +205,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const { actor, body } = request;
       assertAccountAllowed(actor, body.accountId);
       assertBackfillIdle(body.accountId);
+      await assertBackfillUnlocked(body.accountId);
       const connected = await connectedAccounts(app.upstream, actor, request.id);
       if (!connected.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
       await assignAccount(actor.teamId, body.accountId);

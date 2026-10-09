@@ -86,6 +86,20 @@ describe('POST /v1/stats/backfill', () => {
     expect(await db.$count(messageFact, eq(messageFact.teamId, owner.teamId))).toBe(2);
   });
 
+  it('409s while another process (the CLI) holds the account backfill lock', async () => {
+    const cli = await pool.connect();
+    try {
+      await cli.query('select pg_advisory_lock($1)', [ACCOUNT]);
+      const res = await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({ code: 'backfill_running', message: expect.stringContaining('analytics:backfill') });
+      expect((await status(dashboard(owner.cookie))).json()).toMatchObject({ status: 'done' }); // no run started
+    } finally {
+      await cli.query('select pg_advisory_unlock($1)', [ACCOUNT]);
+      cli.release();
+    }
+  });
+
   it('retries a transient 502 and records it on the run', async () => {
     fake.state.of = { ...ofData(), rateLimit: 0, badGateway: 1 };
     expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);

@@ -60,8 +60,8 @@ Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a d
   workspace's accounts. `accountId` outside the allowlist is `403 account_not_allowed`.
 - **Write scope.** `PUT /v1/stats/config` and `POST /v1/stats/backfill` with a read-only key are `403 insufficient_scope`.
 - **Backfill.** `POST /v1/stats/backfill` takes an account the caller sees in `GET /v1/accounts` (else `404 not_found`);
-  one another workspace owns is `409 account_workspace_conflict`, and one with a run queued or running is
-  `409 backfill_running`. `GET /v1/stats/backfill` shows only the caller's workspace's runs.
+  one another workspace owns is `409 account_workspace_conflict`, and one with a run queued or running (in this API,
+  or holding the account's backfill lock in another process, such as `analytics:backfill`) is `409 backfill_running`. `GET /v1/stats/backfill` shows only the caller's workspace's runs.
 
 ### Stored messages and export
 

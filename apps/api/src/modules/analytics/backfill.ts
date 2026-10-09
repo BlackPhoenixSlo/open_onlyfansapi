@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { and, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { db } from '../../db/index.js';
+import { db, pool } from '../../db/index.js';
 import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
@@ -152,6 +152,58 @@ export class SessionExpiredError extends Error {
 /** One account at a time across the process (spec §6.1). */
 const oneAtATime = limiter(1);
 
+/** 409 `backfill_running`: another session (the CLI, another API process, or a run in this one) holds the account's backfill lock. */
+export class BackfillRunningError extends AppError {
+  constructor(accountId: number) {
+    super(
+      409,
+      'backfill_running',
+      `A backfill of account ${accountId} is already running (from the dashboard, the daily refresh or analytics:backfill, in this or another process): wait for it to end, then run again`,
+    );
+  }
+}
+
+/**
+ * The account's backfill lock, `pg_try_advisory_lock(accountId)`, on a connection of its own held until `release`;
+ * null when another session holds it. Session-level, so it holds across processes (CLI, API) on one database, and ends
+ * with its connection: a connection lost mid-run drops the lock (and is logged, not thrown, so it cannot crash the
+ * process).
+ */
+async function lockAccount(accountId: number): Promise<{ release(): Promise<void> } | null> {
+  const client = await pool.connect();
+  const onError = (err: Error) => console.error(`backfill: the lock connection of account ${accountId} failed:`, err.message);
+  client.on('error', onError);
+  let locked = false;
+  try {
+    const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock($1) as locked', [accountId]);
+    locked = rows[0]?.locked === true;
+  } finally {
+    if (!locked) {
+      client.off('error', onError);
+      client.release();
+    }
+  }
+  if (!locked) return null;
+  return {
+    async release() {
+      // A connection that could not unlock is closed instead of pooled, which drops the lock.
+      const unlocked = await client.query('select pg_advisory_unlock($1)', [accountId]).then(
+        () => true,
+        () => false,
+      );
+      client.off('error', onError);
+      client.release(!unlocked);
+    },
+  };
+}
+
+/** 409 `backfill_running` when a backfill of the account holds its lock now (`POST /v1/stats/backfill`, before starting a run). */
+export async function assertBackfillUnlocked(accountId: number): Promise<void> {
+  const lock = await lockAccount(accountId);
+  if (!lock) throw new BackfillRunningError(accountId);
+  await lock.release();
+}
+
 /** `YYYY-MM-DD HH:MM:SS` in UTC, the date format OF's stats and transaction calls take. */
 const ofDate = (t: number) => new Date(t).toISOString().slice(0, 19).replace('T', ' ');
 
@@ -296,10 +348,19 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * / cap), backs off on 429, retries transient failures (502, 503, 504, network errors) up to
  * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
  * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or refuses DEAD_SESSION_CHATS chats
- * in a row with its 400 or 403 (a walked chat resets the count).
+ * in a row with its 400 or 403 (a walked chat resets the count). Holds the account's lock (`lockAccount`) for the run,
+ * across processes: `BackfillRunningError` (409 `backfill_running`) when another run of the account holds it.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
-  return oneAtATime(() => run(opts));
+  return oneAtATime(async () => {
+    const lock = await lockAccount(opts.accountId);
+    if (!lock) throw new BackfillRunningError(opts.accountId);
+    try {
+      return await run(opts);
+    } finally {
+      await lock.release();
+    }
+  });
 }
 
 async function run(opts: BackfillOptions): Promise<BackfillResult> {

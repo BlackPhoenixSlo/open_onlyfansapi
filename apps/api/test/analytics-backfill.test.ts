@@ -674,6 +674,61 @@ describe('analytics backfill', () => {
   });
 });
 
+/** Advisory locks held on account ACCOUNT's key in the test database (a backfill's lock). */
+const accountLocks = async () =>
+  (
+    await pool.query<{ n: number }>(
+      "select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = $1 and database = (select oid from pg_database where datname = current_database())",
+      [ACCOUNT],
+    )
+  ).rows[0]!.n;
+
+describe('analytics backfill lock', () => {
+  it('lets one of two concurrent runs of an account through across processes; the other is 409 backfill_running', async () => {
+    // A second copy of the module, as in another process (the CLI beside the API): its own one-at-a-time limiter
+    // and pool, so only the database lock can stop the second run.
+    vi.resetModules();
+    const other = await import('../src/modules/analytics/backfill.js');
+    const otherDb = await import('../src/db/index.js');
+    expect(other.backfill).not.toBe(backfill);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let started = false;
+    // The first run holds its first request until the second has failed.
+    const slow: Upstream = {
+      ...upstream,
+      forward: async (req) => {
+        started = true;
+        await gate;
+        return upstream.forward(req);
+      },
+    };
+    const first = backfill(opts({ upstream: slow }));
+    try {
+      await until(() => started);
+      const second = await other.backfill(opts()).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(second).toBeInstanceOf(other.BackfillRunningError);
+      expect(second).toMatchObject({ statusCode: 409, code: 'backfill_running', message: expect.stringContaining('wait for it to end, then run again') });
+    } finally {
+      open();
+      await otherDb.pool.end();
+    }
+    expect((await first).chats).toBe(3);
+    expect(await accountLocks()).toBe(0);
+  });
+
+  it('releases the lock when the run fails', async () => {
+    fake.state.of!.unauthorized = true;
+    await expect(backfill(opts())).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(await accountLocks()).toBe(0);
+    fake.state.of!.unauthorized = false;
+    expect((await backfill(opts())).chats).toBe(3);
+  });
+});
+
 describe('analytics tenancy', () => {
   it('scopes reply times to the workspace', async () => {
     await backfill(opts());

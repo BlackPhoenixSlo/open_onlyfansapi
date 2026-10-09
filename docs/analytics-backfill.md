@@ -25,7 +25,9 @@ pacing, hourly cap and 429 backoff ([Request budget](#request-budget)), and it e
 Limits:
 
 - **One run per account at a time** (`409 backfill_running`), and one account at a time per API process: a second
-  account's run shows `Queued…` until the first ends. A CLI run is a separate process and is not counted.
+  account's run shows `Queued…` until the first ends. A CLI run counts too: every run holds the account's backfill
+  lock in Postgres ([Running a backfill](#running-a-backfill)), so the button answers `409 backfill_running` while
+  `analytics:backfill` reads the account.
 - **The status is in memory.** Restarting the API ends a run in flight and forgets its status (the account shows the
   button again). The rows already stored stay; press the button again (rows upsert, it requests everything again).
 - **No stop button.** A run ends on its own, on an error, or with the API process.
@@ -132,7 +134,15 @@ It prints the request count and whether it was stopped (`failed` after an error)
   the list entries dropped for no readable fan id; and the chats failed on another 4xx (skipped), with the first 20
   ids.
 
-Then the row count of each file. Last, stopped or not, it records the account's script candidates
+Then the row count of each file.
+
+**One run per account across processes.** A run (CLI, dry run included, or the API's) holds a Postgres advisory lock
+on the account id, `pg_try_advisory_lock(<account id>)`, on a connection of its own from its start to its end, and
+releases it with `pg_advisory_unlock` on that connection (a lost connection drops it). A second run of the same
+account on the same database, from any process, fails at once with "A backfill of account <id> is already running
+(…): wait for it to end, then run again" (`409 backfill_running` from the dashboard), and the CLI exits 1. Runs of
+different accounts in different processes still run side by side. To see who holds it: `SELECT pid, objid FROM
+pg_locks WHERE locktype = 'advisory'`. Last, stopped or not, it records the account's script candidates
 ([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
 again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
 `reached_start` an earlier run reached.
@@ -167,9 +177,9 @@ running and answers within `UPSTREAM_TIMEOUT_MS` and to read its logs. Other 4xx
 outside a chat walk adds: if the account's OF session is dead, re-connect it in Accounts), and the dashboard shows
 the run's retries ("Done · 2 retries"). A 401 means OF refused the account's session: the run fails at once with "OF
 session of account <id> expired: re-connect it in Accounts, then run the backfill again" (`errorCode:
-session_expired`), and the account shows "Session expired · re-connect". One account is read at a time. The spacing paces one run's
-requests only (each run, in its own process, paces itself), so two runs at once (a CLI run and a dashboard run) make
-twice the requests: run one at a time, or lower the cap.
+session_expired`), and the account shows "Session expired · re-connect". One account is read at a time per process, and one run per account across processes (the lock above). The spacing
+paces one run's requests only (each run, in its own process, paces itself), so runs of two accounts at once (a CLI
+run and a dashboard run) make twice the requests through the upstream: run one at a time, or lower the cap.
 
 ## Stopping
 
