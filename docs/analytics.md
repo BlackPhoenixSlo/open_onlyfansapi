@@ -28,7 +28,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list, and then `nextCursor`, passed as `cursor`, returns the next page (`400 invalid_cursor` for a malformed one). `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
 | `GET /v1/stats/revenue` | Gross and net by kind and by day, payers, fan CVR, the golden ratio, DM PPV unlocks, and the top 50 payers, from the stored transactions and messages ([Revenue](#revenue)) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
-| `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `failedChats` (chats skipped on a 4xx), `error`, `errorCode` (`session_expired` when OF refused the account's session or refused 5 chats in a row with its 400 or 403, else null); or `{ "status": "idle" }` |
+| `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to` (when it was asked for: it reads up to when it starts), `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `failedChats` (chats skipped on a 4xx), `error`, `errorCode` (`session_expired` when OF refused the account's session or refused 5 chats in a row with its 400 or 403, else null); or `{ "status": "idle" }` |
 
 Query parameters:
 
@@ -164,8 +164,8 @@ down is never applied, and `deleted_at` null means "no unsend event seen", not "
 and a row already stored is kept. Live outbound rows are DMs; mass messages and queued single DMs are stored only by a backfill. A live row's `isOpened` is OF's flag when the event arrived (false on a PPV just sent) and no purchase event updates it, so a PPV bought since reads not bought until a backfill reads the message again. The live mapper has no
 welcome message or automation texts either, so no live message counts as automated until then. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
-the event ledger), `liveEvents24h` and `lastRefreshAt` (the newest `account_workspace.refreshed_at`, the end of the
-last backfill's data: [Keeping it fresh](#keeping-it-fresh)), over the claimed accounts in the key's scope, and
+the event ledger), `liveEvents24h` and `lastRefreshAt` (the newest `account_workspace.refreshed_at`, the start of the
+newest backfill that read up to now: [Keeping it fresh](#keeping-it-fresh)), over the claimed accounts in the key's scope, and
 `nextRefreshAt`, the next daily refresh time (null when `STATS_REFRESH_HOUR_UTC` is unset). The Stats, Revenue and
 Conversations pages show them under their range: "Live: last message event 5m ago · 4 events last 24h", then
 "Backfill: refreshed 6h ago · next after 03:00 UTC" (the job ticks hourly from the API's start, so the run starts
@@ -199,9 +199,10 @@ since these jobs call OF on their own). They are in-process jobs, so they also n
   (the next tick starts it again: rows upsert). A quiet
   week costs about 0.6 to 1 hour of requests per account at the default cap, a busy one 2.5 to 4.5 hours.
 
-`account_workspace.refreshed_at` is the time up to which the stored data is complete: the start of the latest
-stored backfill that ran to its end (CLI, dashboard or refresh; not a dry run, not a stopped or failed run), or its
-`to` when that is earlier. It never moves back. To see it:
+`account_workspace.refreshed_at` is the start of the newest run that read up to now (chats are walked over hours, so the next window overlaps by 1 h). A run that reads up to now is a dashboard or refresh run
+(each reads up to its own start, later than the request when it was queued) or a CLI run whose `--to` is not before
+its start; it counts once it ran to its end and stored its rows (not a dry run, not a stopped or failed run). A run
+of an older range does not move it, and it never moves back. To see it:
 `SELECT account_id, refreshed_at FROM account_workspace ORDER BY account_id;`
 
 ## Terms
@@ -219,7 +220,7 @@ by `(createdAt, id)`.
 ## Reply time metrics
 
 A turn has one of four statuses, set against `reply_cap` (default 12 h) and the **status time**: the account's
-`account_workspace.refreshed_at` (the end of its last backfill's data, [Keeping it fresh](#keeping-it-fresh)), or the
+`account_workspace.refreshed_at` (the start of its newest backfill that read up to now, [Keeping it fresh](#keeping-it-fresh)), or the
 request's `asOf` (now) when no backfill has ended since migration `0015`. Live events add fan messages after the last
 backfill but the account's own messages only as `messages.sent` delivers them, so judged as of now a fan message after
 the last run could read `breached` for good although it was answered; as of the status time it is `pending` until a

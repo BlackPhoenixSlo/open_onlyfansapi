@@ -77,7 +77,9 @@ describe('POST /v1/stats/backfill', () => {
     const pending = (await status(dashboard(owner.cookie))).json();
     expect(pending).toMatchObject({ runId, accountId: ACCOUNT, finishedAt: null, error: null });
     expect(['queued', 'running']).toContain(pending.status);
-    expect(Date.parse(pending.to) - Date.parse(pending.from)).toBe(24 * HOUR);
+    // `days` before the request (`to`, when it was asked for), give or take the request's own milliseconds.
+    expect(Date.parse(pending.to) - Date.parse(pending.from) - 24 * HOUR).toBeGreaterThanOrEqual(0);
+    expect(Date.parse(pending.to) - Date.parse(pending.from) - 24 * HOUR).toBeLessThan(1000);
 
     const run = await waitForRun();
     expect(run).toMatchObject({ status: 'done', runId, retries: 0, chats: 1, messages: 2, error: null });

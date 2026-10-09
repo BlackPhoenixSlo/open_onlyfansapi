@@ -276,7 +276,7 @@ describe('analytics backfill', () => {
     ]);
   });
 
-  it('moves refreshed_at forward on a stored run that ends: to its start, or `to` when earlier; never back, not on a stop or a dry run', async () => {
+  it('moves refreshed_at forward to its start on a stored run that ends and read up to it; never back, not on an older range, a stop or a dry run', async () => {
     const refreshedAt = async () => (await db.select({ at: accountWorkspace.refreshedAt }).from(accountWorkspace).where(eq(accountWorkspace.accountId, ACCOUNT)))[0]!.at;
     await db.update(accountWorkspace).set({ refreshedAt: null }).where(eq(accountWorkspace.accountId, ACCOUNT));
     await backfill(opts({ store: memoryStore({ messages: [], chats: [], transactions: [] }) }));
@@ -286,14 +286,19 @@ describe('analytics backfill', () => {
     expect(await backfill(opts({ signal: stop.signal }))).toMatchObject({ stopped: true });
     expect(await refreshedAt()).toBeNull();
 
-    await backfill(opts()); // the clock (NOW) is past `to`
-    expect(await refreshedAt()).toEqual(TO);
+    await backfill(opts()); // the clock (NOW) is past `to`: an older range, not read up to now
+    expect(await refreshedAt()).toBeNull();
     await backfill(opts({ to: new Date(NOW.getTime() + HOUR) })); // `to` is past the run's start
     const atStart = await refreshedAt();
     expect(atStart!.getTime()).toBeGreaterThanOrEqual(NOW.getTime());
     expect(atStart!.getTime()).toBeLessThan(NOW.getTime() + 60_000);
-    await backfill(opts()); // an older range does not move it back
-    expect(await refreshedAt()).toEqual(atStart);
+    await backfill(opts({ to: undefined })); // no `to`: up to its start, which is later
+    const next = await refreshedAt();
+    expect(next!.getTime()).toBeGreaterThanOrEqual(atStart!.getTime());
+    expect(next!.getTime()).toBeLessThan(NOW.getTime() + 60_000);
+    await db.update(accountWorkspace).set({ refreshedAt: new Date(NOW.getTime() + 24 * HOUR) }).where(eq(accountWorkspace.accountId, ACCOUNT));
+    await backfill(opts({ to: undefined })); // an earlier start does not move it back
+    expect(await refreshedAt()).toEqual(new Date(NOW.getTime() + 24 * HOUR));
   });
 
   it('upserts: a second run stores the same rows', async () => {

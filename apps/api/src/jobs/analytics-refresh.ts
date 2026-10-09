@@ -62,7 +62,7 @@ export async function refreshDue(upstream: Upstream, log: FastifyBaseLogger, hou
     if (last.status !== 'idle' && Date.parse(last.startedAt) >= boundary) continue;
     const from = refreshedAt ? Math.max(now.getTime() - REFRESH_MAX_MS, refreshedAt.getTime() - HOUR_MS) : now.getTime() - REFRESH_MAX_MS;
     try {
-      startBackfillRun({ upstream, teamId, accountId, from: new Date(from), to: now });
+      startBackfillRun({ upstream, teamId, accountId, from: new Date(from) });
       started++;
     } catch (err) {
       log.error({ err, accountId }, 'stats refresh failed to start');

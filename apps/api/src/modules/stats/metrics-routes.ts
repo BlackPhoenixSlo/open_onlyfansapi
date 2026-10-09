@@ -209,13 +209,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const connected = await connectedAccounts(app.upstream, actor, request.id);
       if (!connected.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
       await assignAccount(actor.teamId, body.accountId);
-      const to = new Date();
       const runId = startBackfillRun({
         upstream: app.upstream,
         teamId: actor.teamId,
         accountId: body.accountId,
-        from: new Date(to.getTime() - body.days * DAY_MS),
-        to,
+        from: new Date(Date.now() - body.days * DAY_MS),
       });
       return reply.status(202).send({ runId });
     },

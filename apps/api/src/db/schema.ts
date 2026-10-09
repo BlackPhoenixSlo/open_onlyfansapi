@@ -157,7 +157,10 @@ const analyticsAt = (name: string) => timestamp(name, { withTimezone: true, prec
 export const accountWorkspace = pgTable('account_workspace', {
   accountId: integer('account_id').primaryKey(),
   teamId: analyticsTeamId(),
-  /** The stored data is complete up to here: the start (or `to`, when earlier) of the latest stored backfill that ran to its end; never moves back. */
+  /**
+   * The start of the newest stored backfill that ran to its end and read up to now (its `to` not before its start;
+   * chats are walked over hours, so the next window overlaps by 1 h); never moves back.
+   */
   refreshedAt: analyticsAt('refreshed_at'),
 });
 

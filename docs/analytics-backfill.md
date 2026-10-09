@@ -15,8 +15,8 @@ the API takes 1 to 366), which:
 1. checks the account is in the workspace's account list (`GET /v1/accounts`; for a key, within its allowlist), so no
    key naming the account is needed;
 2. claims the account for the workspace (once; `409 account_workspace_conflict` if another workspace owns it);
-3. starts the backfill of the last `days` days, now minus `days` days to now, inside the API process, and answers at
-   once. A long range takes hours at the per-hour request cap.
+3. starts the backfill of the last `days` days, now minus `days` days up to when the run starts (later, if it is
+   queued behind another account), inside the API process, and answers at once. A long range takes hours at the per-hour request cap.
 
 The row then polls `GET /v1/stats/backfill` every 3 s and shows `Running… N chats, M messages`, then
 `Done · view Stats` (Stats for that account; `Done · N chats failed` when chats were skipped on a 4xx) or the error. The run is the CLI's backfill without CSVs, with the same
@@ -141,9 +141,9 @@ It prints the request count and whether it was stopped (`failed` after an error)
   ids.
 
 Then the row count of each file. Last, stopped or not, it records the account's script candidates
-([analytics.md](analytics.md#scripts)), and a stored run that ran to its end moves `account_workspace.refreshed_at`
-forward to its start (or `--to`, when earlier; [analytics.md](analytics.md#keeping-it-fresh)), which the daily
-refresh reads. Rows upsert, so a re-run never double counts, but it does request everything
+([analytics.md](analytics.md#scripts)), and a stored run that ran to its end and whose `--to` is not before
+its start moves `account_workspace.refreshed_at` forward to its start ([analytics.md](analytics.md#keeping-it-fresh));
+a run of an older range does not move it. The daily refresh and the status time read it. Rows upsert, so a re-run never double counts, but it does request everything
 again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
 `reached_start` an earlier run reached.
 

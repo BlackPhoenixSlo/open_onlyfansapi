@@ -394,7 +394,7 @@ export const statsFreshness = z.object({
   lastLiveAt: z.string().nullable(),
   /** Message events in the last 24 hours. */
   liveEvents24h: z.number().int(),
-  /** The newest `refreshed_at` of those accounts: the stored data is complete up to here (null = no backfill has ended since migration 0015). */
+  /** The newest `refreshed_at` of those accounts: the start of the newest backfill that read up to now (null = none has ended since migration 0015). */
   lastRefreshAt: z.string().nullable(),
   /** The next daily refresh time (`STATS_REFRESH_HOUR_UTC`:00 UTC); null when the refresh is off. */
   nextRefreshAt: z.string().nullable(),

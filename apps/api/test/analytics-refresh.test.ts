@@ -137,16 +137,17 @@ describe('daily refresh', () => {
     expect(await refreshDue(upstream, log(), h, t)).toBe(2);
     // Returned with the runs still queued or running: the job never awaits a run.
     expect(['queued', 'running']).toContain(run(1001).status);
-    expect(run(1001)).toMatchObject({ from: new Date(t.getTime() - 7 * DAY).toISOString(), to: t.toISOString() });
-    expect(run(1003)).toMatchObject({ from: new Date(t.getTime() - 2 * DAY - HOUR).toISOString(), to: t.toISOString() });
+    expect(run(1001)).toMatchObject({ from: new Date(t.getTime() - 7 * DAY).toISOString() });
+    expect(run(1003)).toMatchObject({ from: new Date(t.getTime() - 2 * DAY - HOUR).toISOString() });
     expect(run(1002)).toEqual(before);
     // A tick while they run starts nothing more.
     expect(await refreshDue(upstream, log(), h, t)).toBe(0);
     await settle();
     expect([run(1001).status, run(1003).status]).toEqual(['done', 'done']);
-    // Each run ran to its end, so refreshed_at moved to its `to`: no account is due until tomorrow.
-    const rows = await db.select().from(accountWorkspace);
-    expect(rows.filter((r) => r.accountId !== 1002).map((r) => r.refreshedAt)).toEqual([t, t]);
+    // Each run read up to its start and ran to its end, so refreshed_at moved to its start: no account is due until tomorrow.
+    const rows = (await db.select().from(accountWorkspace)).filter((r) => r.accountId !== 1002);
+    expect(rows).toHaveLength(2);
+    for (const { refreshedAt } of rows) expect(refreshedAt!.getTime()).toBeGreaterThanOrEqual(t.getTime());
     expect(await refreshDue(upstream, log(), h, new Date())).toBe(0);
   });
 

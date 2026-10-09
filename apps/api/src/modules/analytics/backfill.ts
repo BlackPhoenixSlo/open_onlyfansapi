@@ -23,9 +23,9 @@ const DEAD_SESSION_CHATS = 5;
 export type BackfillOptions = {
   upstream: Upstream;
   accountId: number;
-  /** The range, `from` inclusive, `to` exclusive. */
+  /** The range, `from` inclusive, `to` exclusive; no `to` = the run's start (it reads up to now, queued or not). */
   from: Date;
-  to: Date;
+  to?: Date;
   config?: Partial<BackfillConfig>;
   /** Aborting ends the run at once (a request in flight finishes), keeping the rows already stored. */
   signal?: AbortSignal;
@@ -60,8 +60,8 @@ export interface BackfillStore {
   /** The chats of the account's stored messages: walked too when the chat list leaves them out. */
   chatIds(): Promise<number[]>;
   /**
-   * After the walk, stopped or not. `refreshedAt` when the run ran to its end: its start, or `to` when earlier (the
-   * stored data is complete up to then); null when it was stopped.
+   * After the walk, stopped or not. `refreshedAt` when the run ran to its end and read up to its start (`to` not
+   * before it): that start; null when it was stopped or read an older range.
    */
   finish(refreshedAt: Date | null): Promise<void>;
 }
@@ -382,11 +382,11 @@ export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
 async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillResult> {
   const { upstream, accountId, store } = opts;
   const signal = opts.signal ? AbortSignal.any([opts.signal, lost]) : lost;
+  const startedAt = Date.now();
   const from = opts.from.getTime();
-  const to = opts.to.getTime();
+  const to = opts.to?.getTime() ?? startedAt;
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
   const cfg = backfillConfig(opts.config);
-  const startedAt = Date.now();
 
   const result: BackfillResult = {
     phase: 'transactions',
@@ -533,7 +533,8 @@ async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillRe
     if (!opts.signal?.aborted) throw err;
     result.stopped = true;
   }
-  await store.finish(result.stopped ? null : new Date(Math.min(startedAt, to)));
+  // refreshed_at: only a run that read up to now (its start) moves it, not one of an older range.
+  await store.finish(result.stopped || to < startedAt ? null : new Date(startedAt));
   return result;
 }
 
