@@ -425,8 +425,10 @@ export const statsBackfillRun = z.union([
     chats: z.number().int(),
     /** Messages stored. */
     messages: z.number().int(),
+    /** Chats skipped after a 4xx; 5 in a row end the run as `session_expired`. */
+    failedChats: z.number().int(),
     error: z.string().nullable(),
-    /** `session_expired`: OF answered 401, so the account must be re-connected before a run can work. */
+    /** `session_expired`: OF answered 401, or 5 chats in a row failed, so the account must be re-connected before a run can work. */
     errorCode: z.enum(['session_expired']).nullable(),
   }),
 ]);

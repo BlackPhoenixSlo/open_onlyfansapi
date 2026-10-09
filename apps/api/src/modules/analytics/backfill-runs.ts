@@ -42,6 +42,7 @@ export function backfillRun(teamId: string, accountId: number): StatsBackfillRun
     retries: progress?.retries ?? 0,
     chats: progress?.chats ?? 0,
     messages: progress?.messages ?? 0,
+    failedChats: progress?.failedChats.length ?? 0,
     error: run.error,
     errorCode: run.errorCode,
   };

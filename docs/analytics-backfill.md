@@ -19,7 +19,7 @@ the API takes 1 to 366), which:
    once. A long range takes hours at the per-hour request cap.
 
 The row then polls `GET /v1/stats/backfill` every 3 s and shows `Running… N chats, M messages`, then
-`Done · view Stats` (Stats for that account) or the error. The run is the CLI's backfill without CSVs, with the same
+`Done · view Stats` (Stats for that account; `Done · N chats failed` when chats were skipped on a 4xx) or the error. The run is the CLI's backfill without CSVs, with the same
 pacing, hourly cap and 429 backoff ([Request budget](#request-budget)), and it ends by syncing script candidates.
 
 Limits:
@@ -107,8 +107,12 @@ counted as not found. A chat the list leaves out that neither paid in the range 
 missed.
 
 One chat's 4xx does not end the run: a chat the upstream answers any other 4xx (a 404 after its first page, or one
-that is not OF's) is skipped, and its id is printed. A 401 still ends the run (the session expired), a 429 ends it
-past its retries, and a 5xx ends it (a 502, 503 or 504 past its retries).
+that is not OF's) is skipped, and its id is printed. Five failed chats in a row do end it: OF answers every chat read
+of a dead session 400 "Wrong user" or 403, so the run fails with "OF session of account <id> looks dead (5 chats in a
+row failed with a 4xx, …): re-connect it in Accounts, then run the backfill again" (`errorCode: session_expired`, as
+for a 401). A walked chat resets the count; a chat OF answers 404 for (not found) neither counts nor resets it. A 401
+still ends the run (the session expired), a 429 ends it past its retries, and a 5xx ends it (a 502, 503 or 504 past
+its retries).
 
 It prints the request count and whether it was stopped, then:
 

@@ -15,6 +15,7 @@ type Days = (typeof DAYS)[number];
 type BusyRun = Exclude<StatsBackfillRun, { status: 'idle' }> & { status: 'queued' | 'running' };
 const busy = (run: StatsBackfillRun | undefined): run is BusyRun => run?.status === 'queued' || run?.status === 'running';
 const retries = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'retry' : 'retries'}` : '');
+const failed = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'chat' : 'chats'} failed` : '');
 
 /** Claims the account for this workspace and backfills its last 30, 90 or 180 days in the background, polling every 3 s while it runs. */
 export function RunAnalytics({ accountId }: { accountId: number }) {
@@ -61,7 +62,7 @@ export function RunAnalytics({ accountId }: { accountId: number }) {
         </Button>
         {data?.status === 'done' && (
           <span className="text-muted-foreground">
-            Done{retries(data.retries)} ·{' '}
+            Done{failed(data.failedChats)}{retries(data.retries)} ·{' '}
             <Link to="/stats" search={{ accountId }} className="text-foreground underline">
               view Stats
             </Link>

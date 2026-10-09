@@ -107,7 +107,8 @@ type Raw = Record<string, unknown>;
  * `status` with OF's error body (`{ error: { code: 'of_error', status } }`, as the upstream passes OF's errors on), or
  * the upstream's own `{ detail }` with `notOf`. `rateLimit` answers that many requests
  * 429 (with `retryAfter` when set), then `badGateway` that many 502; `unauthorized` answers every request 401, as
- * the upstream does once OF refuses the session.
+ * the upstream does once OF refuses the session; `deadSession` answers every messages page 400 "Wrong user", as OF
+ * answers a dead session's chat reads.
  */
 export type FakeOf = {
   chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } | null }[];
@@ -125,6 +126,7 @@ export type FakeOf = {
   retryAfter?: string;
   badGateway?: number;
   unauthorized?: boolean;
+  deadSession?: boolean;
 };
 
 /** `YYYY-MM-DD HH:MM:SS` (UTC) → epoch ms. */
@@ -228,6 +230,7 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
       }
       if (state.of.unauthorized) return reply.status(401).send({ error: { code: 'of_error', status: 401 } });
       const chat = /^\/of\/chats\/(\d+)\/messages/.exec(request.url);
+      if (chat && state.of.deadSession) return reply.status(400).send({ error: { code: 'of_error', status: 400, message: 'Wrong user' } });
       const fail = chat ? state.of.chatErrors?.[Number(chat[1])] : undefined;
       if (fail && (!fail.afterFirst || (request.query as Record<string, string | undefined>).first_id)) {
         return reply.status(fail.status).send(fail.notOf ? { detail: 'Not Found' } : { error: { code: 'of_error', status: fail.status } });

@@ -17,6 +17,8 @@ const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers 10 to 20 a pag
 /** Chat-list pages in a row adding no new chat that end the list: OF repeating itself, not the list moving. */
 const STALE_CHAT_PAGES = 3;
 const PAGE = 100; // the upstream's cap on messages, mass history and transactions
+/** Chats in a row failing with a 4xx that end the run: a dead session answers every chat read 400 "Wrong user" or 403. */
+const DEAD_SESSION_CHATS = 5;
 
 export type BackfillOptions = {
   upstream: Upstream;
@@ -87,7 +89,7 @@ export type BackfillResult = {
   seededChats: number;
   /** Chats whose first messages page OF answered 404 (a deleted fan's): skipped. */
   missingChats: number;
-  /** Chats whose walk the upstream answered another 4xx (not 401 or 429): skipped, their ids here. */
+  /** Chats whose walk the upstream answered another 4xx (not 401 or 429): skipped, their ids here. DEAD_SESSION_CHATS in a row end the run. */
   failedChats: number[];
   /** Chat-list entries without a readable fan id. */
   droppedChats: number;
@@ -114,10 +116,17 @@ const isOfError = (body: Buffer): boolean => {
   }
 };
 
-/** OF answered 401: the session behind the account is dead, so it must be re-connected in Accounts before a run can work. */
+/**
+ * OF answered 401, or `reason`: DEAD_SESSION_CHATS chats in a row failed. The session behind the account is dead, so it
+ * must be re-connected in Accounts before a run can work.
+ */
 export class SessionExpiredError extends Error {
-  constructor(accountId: number) {
-    super(`OF session expired for account ${accountId}: re-connect it in Accounts`);
+  constructor(accountId: number, reason?: string) {
+    super(
+      reason
+        ? `OF session of account ${accountId} looks dead (${reason}): re-connect it in Accounts, then run the backfill again`
+        : `OF session expired for account ${accountId}: re-connect it in Accounts`,
+    );
   }
 }
 
@@ -266,7 +275,8 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * double counts). A chat whose first messages page OF answers 404 is skipped, as is one the upstream answers another
  * 4xx (not 401 or 429). Paced and capped per account within the run, backs off on 429, retries transient failures
  * (502, 503, 504, network errors) up to `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
- * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401.
+ * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or DEAD_SESSION_CHATS chats in a
+ * row fail with a 4xx (a walked chat resets the count).
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(() => run(opts));
@@ -380,6 +390,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       (id) => Number.isSafeInteger(id) && id > 0 && id !== accountId && !list.listed.has(id),
     );
     result.seededChats = seeded.length;
+    let failedInARow = 0;
     for (const chat of [...list.active, ...seeded.map((id) => ({ id, username: null, name: null, customName: null }))]) {
       // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the run.
       const walk = await walkChat(get, store, ctx, chat, from, massFrom).catch((err: unknown) => {
@@ -387,7 +398,13 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
         throw err;
       });
       if (walk === 'missing') result.missingChats++;
-      if (walk === 'failed') result.failedChats.push(chat.id);
+      if (walk === 'failed') {
+        result.failedChats.push(chat.id);
+        if (++failedInARow >= DEAD_SESSION_CHATS) {
+          opts.onProgress?.(result);
+          throw new SessionExpiredError(accountId, `${failedInARow} chats in a row failed with a 4xx, as OF answers a dead session's chat reads`);
+        }
+      }
       if (typeof walk === 'string') {
         opts.onProgress?.(result);
         continue;
@@ -395,6 +412,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       result.messages += walk.messages;
       if (walk.incomplete) result.incompleteChats++;
       result.chats++;
+      failedInARow = 0;
       opts.onProgress?.(result);
     }
   } catch (err) {

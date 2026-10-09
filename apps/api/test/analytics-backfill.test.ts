@@ -10,7 +10,7 @@ import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS,
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
-import { backfill, dbStore, memoryStore, SessionExpiredError, type BackfillOptions, type BackfillRows } from '../src/modules/analytics/backfill.js';
+import { backfill, dbStore, memoryStore, SessionExpiredError, type BackfillOptions, type BackfillResult, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
@@ -421,6 +421,36 @@ describe('analytics backfill', () => {
     await expect(backfill(opts({ config: { pageDelayMs: 0, maxRetries: 0 } }))).rejects.toThrow(/answered 429 to GET \/chats\/2002\/messages/);
     of.chatErrors = { 2002: { status: 500 } };
     await expect(backfill(opts())).rejects.toThrow(/answered 500 to GET \/chats\/2002\/messages/);
+  });
+
+  /** Four more chats active in the range, listed after those of ofData: 2011 to 2014, one fan message each. */
+  function moreChats() {
+    const of = fake.state.of!;
+    for (const id of [2011, 2012, 2013, 2014]) {
+      const m = msg(id * 10, '09-02T10:00', id);
+      of.messages[id] = [m];
+      of.chats.push(chat(id, m));
+    }
+  }
+
+  it('fails the run as a dead session when 5 chats in a row answer a 4xx; the 6th is not read', async () => {
+    moreChats();
+    fake.state.of!.deadSession = true;
+    let progress: Readonly<BackfillResult> | undefined;
+    const start = fake.requests.length;
+    const run = backfill(opts({ onProgress: (r) => (progress = r) }));
+    await expect(run).rejects.toBeInstanceOf(SessionExpiredError);
+    await expect(run).rejects.toThrow(
+      `OF session of account ${ACCOUNT} looks dead (5 chats in a row failed with a 4xx, as OF answers a dead session's chat reads): re-connect it in Accounts, then run the backfill again`,
+    );
+    expect(progress).toMatchObject({ chats: 0, failedChats: [2003, 2001, 2002, 2011, 2012] });
+    expect(ofCalls(start).filter((u) => u.startsWith('/of/chats/2013/'))).toEqual([]);
+  });
+
+  it('a walked chat resets the count of failed chats in a row', async () => {
+    moreChats();
+    fake.state.of!.chatErrors = Object.fromEntries([2003, 2001, 2011, 2012, 2013, 2014].map((id) => [id, { status: 403 }])); // 2002 walks
+    expect(await backfill(opts())).toMatchObject({ chats: 1, failedChats: [2003, 2001, 2011, 2012, 2013, 2014] });
   });
 
   it('splits a full mass window in halves, and fails on a full hour', async () => {
