@@ -136,8 +136,8 @@ function ofData(): FakeOf {
 
 let teamA: string;
 let teamB: string;
-/** No page delay and no hourly cap: the tests' clock is frozen at NOW unless a test moves it. */
-const FAST = { pageDelayMs: 0, requestsPerHourPerAccount: Infinity };
+/** No page delay (the env, vitest.config.ts, turns the cap's spacing off): the tests' clock is frozen at NOW unless a test moves it. */
+const FAST = { pageDelayMs: 0 };
 const opts = (over: Partial<BackfillOptions> = {}): BackfillOptions => ({
   upstream,
   store: dbStore(teamA, ACCOUNT),
@@ -446,7 +446,7 @@ describe('analytics backfill', () => {
     }
   }
 
-  it('fails the run as a dead session when 5 chats in a row answer a 4xx; the 6th is not read', async () => {
+  it('fails the run as a dead session when OF refuses 5 chats in a row (its 400 "Wrong user"); the 6th is not read', async () => {
     moreChats();
     fake.state.of!.deadSession = true;
     let progress: Readonly<BackfillResult> | undefined;
@@ -454,16 +454,26 @@ describe('analytics backfill', () => {
     const run = backfill(opts({ onProgress: (r) => (progress = r) }));
     await expect(run).rejects.toBeInstanceOf(SessionExpiredError);
     await expect(run).rejects.toThrow(
-      `OF session of account ${ACCOUNT} looks dead (5 chats in a row failed with a 4xx, as OF answers a dead session's chat reads): re-connect it in Accounts, then run the backfill again`,
+      `OF session of account ${ACCOUNT} expired (OF refused 5 chats in a row with a 400 or 403): re-connect it in Accounts, then run the backfill again`,
     );
     expect(progress).toMatchObject({ chats: 0, chatsTotal: 7, failedChats: [2003, 2001, 2002, 2011, 2012] });
     expect(ofCalls(start).filter((u) => u.startsWith('/of/chats/2013/'))).toEqual([]);
   });
 
-  it('a walked chat resets the count of failed chats in a row', async () => {
+  it('a walked chat resets the count of refused chats in a row', async () => {
     moreChats();
     fake.state.of!.chatErrors = Object.fromEntries([2003, 2001, 2011, 2012, 2013, 2014].map((id) => [id, { status: 403 }])); // 2002 walks
     expect(await backfill(opts())).toMatchObject({ chats: 1, failedChats: [2003, 2001, 2011, 2012, 2013, 2014] });
+  });
+
+  it("another 4xx (not OF's 400 or 403) neither counts nor resets the refused chats in a row", async () => {
+    moreChats();
+    const refused = { status: 400 };
+    // 2011's 400 is the upstream's own: skipped, but the run of refusals goes on through it and ends at 2013, the 5th.
+    fake.state.of!.chatErrors = { 2003: refused, 2001: refused, 2002: refused, 2011: { status: 400, notOf: true }, 2012: refused, 2013: refused };
+    let progress: Readonly<BackfillResult> | undefined;
+    await expect(backfill(opts({ onProgress: (r) => (progress = r) }))).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(progress).toMatchObject({ chats: 0, failedChats: [2003, 2001, 2002, 2011, 2012, 2013] });
   });
 
   it('splits a full mass window in halves, and fails on a full hour', async () => {
@@ -574,7 +584,7 @@ describe('analytics backfill', () => {
     const stop = new AbortController();
     // Each response takes a second of the fake clock.
     const p = probe({ after: () => vi.setSystemTime(Date.now() + 1000) });
-    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 5000, requestsPerHourPerAccount: Infinity } }));
+    const run = backfill(opts({ upstream: p.upstream, signal: stop.signal, config: { pageDelayMs: 5000 } }));
     await until(() => p.answered() === 1);
     await vi.advanceTimersByTimeAsync(4999);
     expect(p.started).toHaveLength(1);
@@ -609,7 +619,7 @@ describe('analytics backfill', () => {
     const p = probe();
     const run = backfill(opts({ upstream: p.upstream, config: { ...FAST, transientDelaysMs: [1000, 3000, 9000] } }));
     const failed = expect(run).rejects.toThrow(
-      /answered 502 to GET \/payouts\/transactions.*: still failing after 3 retries; check that the upstream at UPSTREAM_URL is running and read its logs, then run again \(rows upsert\)$/,
+      /answered 502 to GET \/payouts\/transactions.*: still failing after 3 retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again$/,
     );
     for (const [i, wait] of [1000, 3000, 9000].entries()) {
       await until(() => p.answered() === i + 1);
@@ -624,7 +634,11 @@ describe('analytics backfill', () => {
 
   it('retries a network error, and does not retry a 4xx', async () => {
     const down: Upstream = { ...upstream, forward: async () => Promise.reject(new AppError(502, 'upstream_unavailable', 'The upstream is unreachable')) };
-    await expect(backfill(opts({ upstream: down, config: { ...FAST, transientDelaysMs: [0, 0] } }))).rejects.toMatchObject({ code: 'upstream_unavailable' });
+    await expect(backfill(opts({ upstream: down, config: { ...FAST, transientDelaysMs: [0, 0] } }))).rejects.toMatchObject({
+      code: 'upstream_unavailable',
+      message:
+        'The upstream is unreachable: still failing after 2 retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again',
+    });
     let calls = 0;
     const gone: Upstream = {
       ...upstream,
@@ -635,14 +649,6 @@ describe('analytics backfill', () => {
     };
     await expect(backfill(opts({ upstream: gone }))).rejects.toThrow(/answered 404/);
     expect(calls).toBe(1);
-  });
-
-  it('names UPSTREAM_URL when the upstream is unreachable', async () => {
-    const unreachable = createUpstream({ url: 'http://127.0.0.1:9', token: TOKEN, timeoutMs: 2000 });
-    await expect(unreachable.forward({ accountId: ACCOUNT, path: '/me', method: 'GET', headers: {} })).rejects.toMatchObject({
-      code: 'upstream_unavailable',
-      message: 'The upstream is unreachable: check that it is running and that UPSTREAM_URL points to it',
-    });
   });
 
   it('names an expired OF session when the upstream answers 401', async () => {
@@ -656,15 +662,14 @@ describe('analytics backfill', () => {
     };
     const run = backfill(opts({ upstream: expired }));
     await expect(run).rejects.toBeInstanceOf(SessionExpiredError);
-    await expect(run).rejects.toThrow(`OF session expired for account ${ACCOUNT}: re-connect it in Accounts`);
+    await expect(run).rejects.toThrow(`OF session of account ${ACCOUNT} expired: re-connect it in Accounts, then run the backfill again`);
     expect(calls).toBe(1);
   });
 
   it('fails the run after maxRetries 429s in a row', async () => {
     Object.assign(fake.state.of!, { rateLimit: 3, retryAfter: '0' });
-    vi.useRealTimers(); // the clock moves: the 1 ms spacing passes
-    await expect(backfill(opts({ config: { ...FAST, maxRetries: 2, requestsPerHourPerAccount: 3_600_000, backoffMaxMs: 300_000 } }))).rejects.toThrow(
-      'backfill: the upstream answered 429 to GET /payouts/transactions?limit=100&offset=0&startDate=2026-09-01%2000%3A00%3A00: still rate limited after 2 waits (Retry-After, else 1 s doubling, at most 300 s each) at a cap of 3600000 requests an hour (ANALYTICS_REQUESTS_PER_HOUR); wait, then run again with a lower cap (rows upsert)',
+    await expect(backfill(opts({ config: { ...FAST, maxRetries: 2 } }))).rejects.toThrow(
+      /answered 429 to GET \/payouts\/transactions.*: still rate limited after 2 retries \(waits from 1000 ms, doubling\) at \d+ requests an hour \(ANALYTICS_REQUESTS_PER_HOUR\): wait, then run again with a lower cap$/,
     );
   });
 });
@@ -804,9 +809,9 @@ describe('backfill progress line', () => {
 
   it('counts walked, missing and failed chats as done, and projects the ETA from the pace since the chat phase began', () => {
     const r = result({ requests: 480, chats: 28, missingChats: 1, failedChats: [7], chatsTotal: 100 }); // 30 done
-    // 20 chats in 20 minutes since the phase began with 10 done: 70 left at a minute each.
-    expect(progressLine(r, { at: 0, doneThen: 10 }, 20 * 60_000)).toBe('progress: chats, 480 requests, chats 30/100, ETA 1h 10m');
-    expect(progressLine(r, { at: 0, doneThen: 30 }, 20 * 60_000)).toBe('progress: chats, 480 requests, chats 30/100, ETA after the first chat');
+    // 30 chats in the 30 minutes since the chat phase began: 70 left at a minute each.
+    expect(progressLine(r, 0, 30 * 60_000)).toBe('progress: chats, 480 requests, chats 30/100, ETA 1h 10m');
+    expect(progressLine(result({ requests: 480, chatsTotal: 100 }), 0, 30 * 60_000)).toBe('progress: chats, 480 requests, chats 0/100, ETA after the first chat');
   });
 });
 

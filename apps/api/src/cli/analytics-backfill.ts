@@ -13,7 +13,6 @@ import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
 import {
   backfill,
-  chatsDone,
   dbStore,
   memoryStore,
   progressLine,
@@ -62,12 +61,14 @@ process.on('SIGINT', () => {
 
 /** The run's counts so far, and when its chat phase began (for the ETA). */
 let last: Readonly<BackfillResult> | null = null;
-let chatsSince: { at: number; doneThen: number } | null = null;
-const progress = setInterval(() => last && console.error(progressLine(last, chatsSince)), PROGRESS_EVERY_MS);
+let chatsStartedAt: number | null = null;
+const progress = setInterval(() => last && console.error(progressLine(last, chatsStartedAt)), PROGRESS_EVERY_MS);
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-function report(result: Readonly<BackfillResult>) {
+/** The run's counts; `threw` when the run failed (the counts are its last progress). */
+function report(result: Readonly<BackfillResult>, threw = false) {
   const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
-  console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
+  console.log(`requests: ${result.requests}; ${threw ? 'failed' : `stopped: ${result.stopped ? partial : 'no'}`}`);
   console.log(
     `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
   );
@@ -95,17 +96,17 @@ try {
   }
   const onProgress = (r: Readonly<BackfillResult>) => {
     last = r;
-    if (r.phase === 'chats' && !chatsSince) chatsSince = { at: Date.now(), doneThen: chatsDone(r) };
+    if (r.phase === 'chats') chatsStartedAt ??= Date.now();
   };
   try {
     report(await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store: sink.store, onProgress }));
   } catch (err) {
     // The rows stored so far stay: print the counts and write the CSVs of what was stored.
-    console.error(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`backfill failed: ${errorText(err)}`);
     process.exitCode = 1;
     if (last) {
-      console.error(progressLine(last, chatsSince));
-      report(last);
+      console.error(progressLine(last, chatsStartedAt));
+      report(last, true);
     }
   }
   const written = await sink.write();
@@ -113,7 +114,7 @@ try {
     `wrote ${outDir}: messages.csv ${written.messages}, chats.csv ${written.chats}, transactions.csv ${written.transactions}, reply_times.csv ${written.replyTimes} rows`,
   );
 } catch (err) {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(errorText(err));
   process.exitCode = 1;
 } finally {
   clearInterval(progress);

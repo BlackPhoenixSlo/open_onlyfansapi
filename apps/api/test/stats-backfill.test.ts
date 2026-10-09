@@ -120,6 +120,26 @@ describe('POST /v1/stats/backfill', () => {
   it('records an expired OF session on the run', async () => {
     fake.state.of = { ...ofData(), rateLimit: 0, unauthorized: true };
     expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
-    expect(await waitForRun()).toMatchObject({ status: 'error', errorCode: 'session_expired', error: `OF session expired for account ${ACCOUNT}: re-connect it in Accounts` });
+    expect(await waitForRun()).toMatchObject({
+      status: 'error',
+      errorCode: 'session_expired',
+      error: `OF session of account ${ACCOUNT} expired: re-connect it in Accounts, then run the backfill again`,
+    });
+  });
+
+  it('counts a chat OF refuses as failed on a run that ends done', async () => {
+    fake.state.of = { ...ofData(), rateLimit: 0, deadSession: true };
+    expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
+    expect(await waitForRun()).toMatchObject({ status: 'done', chats: 0, failedChats: 1, error: null, errorCode: null });
+  });
+
+  it('ends the run session_expired when OF refuses 5 chats in a row', async () => {
+    const data = ofData();
+    for (const id of [2002, 2003, 2004, 2005, 2006]) data.chats.push({ withUser: { id, username: `fan_${id}` }, lastMessage: { id: id * 10, createdAt: ago(HOUR) } });
+    fake.state.of = { ...data, rateLimit: 0, deadSession: true };
+    expect((await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 })).statusCode).toBe(202);
+    const run = await waitForRun();
+    expect(run).toMatchObject({ status: 'error', errorCode: 'session_expired', chats: 0, failedChats: 5 });
+    expect(run.error).toContain('re-connect it in Accounts');
   });
 });

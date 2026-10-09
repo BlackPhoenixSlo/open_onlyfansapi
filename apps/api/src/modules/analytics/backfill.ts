@@ -17,7 +17,7 @@ const CHAT_PAGE = 50; // the upstream's cap on /chats; OF answers 10 to 20 a pag
 /** Chat-list pages in a row adding no new chat that end the list: OF repeating itself, not the list moving. */
 const STALE_CHAT_PAGES = 3;
 const PAGE = 100; // the upstream's cap on messages, mass history and transactions
-/** Chats in a row failing with a 4xx that end the run: a dead session answers every chat read 400 "Wrong user" or 403. */
+/** Chats in a row OF refuses (its 400 or 403) that end the run: a dead session answers every chat read 400 "Wrong user" or 403. */
 const DEAD_SESSION_CHATS = 5;
 
 export type BackfillOptions = {
@@ -95,7 +95,7 @@ export type BackfillResult = {
   seededChats: number;
   /** Chats whose first messages page OF answered 404 (a deleted fan's): skipped. */
   missingChats: number;
-  /** Chats whose walk the upstream answered another 4xx (not 401 or 429): skipped, their ids here. DEAD_SESSION_CHATS in a row end the run. */
+  /** Chats whose walk the upstream answered another 4xx (not 401 or 429): skipped, their ids here. DEAD_SESSION_CHATS of OF's 400 or 403 in a row end the run. */
   failedChats: number[];
   /** Chat-list entries without a readable fan id. */
   droppedChats: number;
@@ -118,6 +118,17 @@ class StatusError extends Error {
     super(`backfill: the upstream answered ${status} to GET ${path}${nextStep ? `: ${nextStep}` : ''}`);
   }
 }
+/** What to do after the upstream's last answer `status` fails the run, if anything (`ofError`: OF's error passed through). */
+function nextStep(status: number, ofError: boolean, cfg: BackfillConfig): string | undefined {
+  if (status === 429) {
+    return `still rate limited after ${cfg.maxRetries} retries (waits from ${cfg.backoffBaseMs} ms, doubling) at ${cfg.requestsPerHourPerAccount} requests an hour (ANALYTICS_REQUESTS_PER_HOUR): wait, then run again with a lower cap`;
+  }
+  if (TRANSIENT.has(status)) {
+    return `still failing after ${cfg.transientDelaysMs.length} retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again`;
+  }
+  if (ofError && (status === 400 || status === 403)) return "if the account's OF session is dead, re-connect it in Accounts, then run again";
+  return undefined;
+}
 const isOfError = (body: Buffer): boolean => {
   try {
     return (JSON.parse(body.toString('utf8')) as { error?: { code?: unknown } } | null)?.error?.code === 'of_error';
@@ -127,16 +138,12 @@ const isOfError = (body: Buffer): boolean => {
 };
 
 /**
- * OF answered 401, or `reason`: DEAD_SESSION_CHATS chats in a row failed. The session behind the account is dead, so it
+ * OF answered 401, or `reason`: DEAD_SESSION_CHATS chats in a row refused. The session behind the account is dead, so it
  * must be re-connected in Accounts before a run can work.
  */
 export class SessionExpiredError extends Error {
   constructor(accountId: number, reason?: string) {
-    super(
-      reason
-        ? `OF session of account ${accountId} looks dead (${reason}): re-connect it in Accounts, then run the backfill again`
-        : `OF session expired for account ${accountId}: re-connect it in Accounts`,
-    );
+    super(`OF session of account ${accountId} expired${reason ? ` (${reason})` : ''}: re-connect it in Accounts, then run the backfill again`);
   }
 }
 
@@ -286,8 +293,8 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * 4xx (not 401 or 429). Paced per account within the run (the hourly cap spread evenly: a request starts every hour
  * / cap), backs off on 429, retries transient failures (502, 503, 504, network errors) up to
  * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
- * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or DEAD_SESSION_CHATS chats in a
- * row fail with a 4xx (a walked chat resets the count).
+ * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or refuses DEAD_SESSION_CHATS chats
+ * in a row with its 400 or 403 (a walked chat resets the count).
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(() => run(opts));
@@ -323,15 +330,16 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
    */
   const spacingMs = Math.floor(HOUR_MS / cfg.requestsPerHourPerAccount);
   /** When the previous request started: the spacing runs from there. */
-  let lastStart: number | null = null;
+  let lastStart = -Infinity;
   /** When the previous response ended: the page delay runs from there. */
-  let lastDone: number | null = null;
+  let lastDone = -Infinity;
 
   /** Waits for the page delay and the hourly cap's spacing. */
   async function pace() {
     for (;;) {
       const now = Date.now();
-      const wait = Math.max(lastDone === null ? 0 : lastDone + cfg.pageDelayMs - now, lastStart === null || !spacingMs ? 0 : lastStart + spacingMs - now);
+      // No spacing (a cap over 3,600,000 an hour) must not wait at all, even if the clock went back since the last start.
+      const wait = Math.max(lastDone + cfg.pageDelayMs - now, spacingMs ? lastStart + spacingMs - now : 0);
       if (wait <= 0) break;
       await sleep(wait, undefined, { signal });
     }
@@ -364,19 +372,16 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
         await sleep(delay, undefined, { signal });
         continue;
       }
-      if (out instanceof AppError) throw out;
+      if (out instanceof AppError) throw new AppError(out.statusCode, out.code, `${out.message}: ${nextStep(out.statusCode, false, cfg)}`);
       if (out.status === 429 && limited < cfg.maxRetries) {
         await sleep(retryDelay(out.headers.get('retry-after'), limited++, cfg), undefined, { signal });
         continue;
       }
       if (out.status === 401) throw new SessionExpiredError(accountId);
-      const nextStep =
-        out.status === 429
-          ? `still rate limited after ${cfg.maxRetries} waits (Retry-After, else 1 s doubling, at most ${cfg.backoffMaxMs / 1000} s each) at a cap of ${cfg.requestsPerHourPerAccount} requests an hour (ANALYTICS_REQUESTS_PER_HOUR); wait, then run again with a lower cap (rows upsert)`
-          : TRANSIENT.has(out.status)
-            ? `still failing after ${cfg.transientDelaysMs.length} retries; check that the upstream at UPSTREAM_URL is running and read its logs, then run again (rows upsert)`
-            : undefined;
-      if (!out.ok) throw new StatusError(out.status, isOfError(out.body), path, nextStep);
+      if (!out.ok) {
+        const ofError = isOfError(out.body);
+        throw new StatusError(out.status, ofError, path, nextStep(out.status, ofError, cfg));
+      }
       return JSON.parse(out.body.toString('utf8')) as unknown;
     }
   }
@@ -415,30 +420,30 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     result.seededChats = seeded.length;
     result.chatsTotal = list.active.length + seeded.length;
     result.phase = 'chats';
-    let failedInARow = 0;
+    let refusedInARow = 0;
     for (const chat of [...list.active, ...seeded.map((id) => ({ id, username: null, name: null, customName: null }))]) {
-      // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the run.
+      // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the
+      // run. `refused`: OF's own 400 or 403, its answer to a dead session's chat reads; DEAD_SESSION_CHATS in a row end
+      // the run. Another 4xx (`failed`) or a missing chat neither counts nor resets the run of refusals.
       const walk = await walkChat(get, store, ctx, chat, from, massFrom).catch((err: unknown) => {
-        if (err instanceof StatusError && err.status >= 400 && err.status < 500 && err.status !== 429) return 'failed' as const;
-        throw err;
+        if (!(err instanceof StatusError) || err.status < 400 || err.status >= 500 || err.status === 429) throw err;
+        return err.ofError && (err.status === 400 || err.status === 403) ? ('refused' as const) : ('failed' as const);
       });
-      if (walk === 'missing') result.missingChats++;
-      if (walk === 'failed') {
+      if (walk === 'missing') {
+        result.missingChats++;
+      } else if (walk === 'refused' || walk === 'failed') {
         result.failedChats.push(chat.id);
-        if (++failedInARow >= DEAD_SESSION_CHATS) {
-          opts.onProgress?.(result);
-          throw new SessionExpiredError(accountId, `${failedInARow} chats in a row failed with a 4xx, as OF answers a dead session's chat reads`);
-        }
+        if (walk === 'refused') refusedInARow++;
+      } else {
+        result.messages += walk.messages;
+        if (walk.incomplete) result.incompleteChats++;
+        result.chats++;
+        refusedInARow = 0;
       }
-      if (typeof walk === 'string') {
-        opts.onProgress?.(result);
-        continue;
-      }
-      result.messages += walk.messages;
-      if (walk.incomplete) result.incompleteChats++;
-      result.chats++;
-      failedInARow = 0;
       opts.onProgress?.(result);
+      if (refusedInARow >= DEAD_SESSION_CHATS) {
+        throw new SessionExpiredError(accountId, `OF refused ${refusedInARow} chats in a row with a 400 or 403`);
+      }
     }
   } catch (err) {
     if (!signal?.aborted) throw err;
@@ -448,18 +453,15 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   return result;
 }
 
-/** Chats walked or skipped (not found, failed). */
-export const chatsDone = (r: Readonly<BackfillResult>) => r.chats + r.missingChats + r.failedChats.length;
-
 /**
- * The CLI's progress line: phase, requests, chats done of the total and the ETA, from the pace of the chats done
- * since `chatsSince` (when the chat phase began, with `doneThen` chats done).
+ * The CLI's progress line: phase, requests, chats done (walked or skipped) of the total and the ETA, from the pace of
+ * the chats done since `chatsStartedAt` (when the chat phase began).
  */
-export function progressLine(r: Readonly<BackfillResult>, chatsSince: { at: number; doneThen: number } | null, now = Date.now()): string {
-  const done = chatsDone(r);
+export function progressLine(r: Readonly<BackfillResult>, chatsStartedAt: number | null, now = Date.now()): string {
+  const done = r.chats + r.missingChats + r.failedChats.length;
   let eta = 'ETA once the chat list is read';
   if (r.phase === 'chats') {
-    const pace = chatsSince && done > chatsSince.doneThen ? (now - chatsSince.at) / (done - chatsSince.doneThen) : null;
+    const pace = chatsStartedAt !== null && done > 0 ? (now - chatsStartedAt) / done : null;
     const minutes = pace === null ? null : Math.ceil((pace * (r.chatsTotal - done)) / 60_000);
     eta = minutes === null ? 'ETA after the first chat' : `ETA ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   }
