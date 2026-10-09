@@ -93,7 +93,7 @@ function ofData(): FakeOf {
       chat(2003, messages[2003][0]!, 'fan_three'),
       chat(2001, messages[2001][0]!, 'fan_one'),
       chat(2002, messages[2002][0]!),
-      chat(2004, messages[2004][0]!), // before the range: the chat list stops here
+      chat(2004, messages[2004][0]!), // quiet since before the range: not walked
       chat(2005, messages[2005][0]!),
     ],
     messages,
@@ -211,6 +211,9 @@ describe('analytics backfill', () => {
       transactions: 3,
       welcome: true,
       incompleteChats: 1, // 2002: OF ignored the cursor before the walk reached the range start
+      seededChats: 0,
+      missingChats: 0,
+      droppedChats: 0,
     });
     expect(ofCalls(start)).toEqual([
       '/of/payouts/transactions?limit=100&offset=0&startDate=2026-09-01%2000%3A00%3A00',
@@ -342,19 +345,41 @@ describe('analytics backfill', () => {
   it.each([
     ['nextOffset', false],
     ['the chats returned, without nextOffset', true],
-  ])('pages the chat list by %s, past one page with none active, down to two in a row', async (_, noNextOffset) => {
+  ])('pages the chat list by %s to its end, past pages with none active', async (_, noNextOffset) => {
     const of = fake.state.of!;
     const at = (id: number, active: boolean) => chat(id, { id, createdAt: active ? '2026-09-02T10:00:00.000Z' : '2026-08-20T10:00:00.000Z' }, `fan_${id}`);
-    // OF pages of 10 (asked for 50): 10 active, 10 quiet, 1 active among 9 quiet, then 20 quiet; the active one after them is not read.
+    // OF pages of 10 (asked for 50): 10 active, 10 quiet, 1 active among 9 quiet, then 20 quiet and 1 active.
     of.chats = Array.from({ length: 51 }, (_, i) => at(3000 + i, i < 10 || i === 25 || i === 50));
     of.noNextOffset = noNextOffset;
+    of.transactions = []; // no payer to walk besides the list
     const start = fake.requests.length;
-    expect(await backfill(opts())).toMatchObject({ chats: 11 });
+    expect(await backfill(opts())).toMatchObject({ chats: 12, seededChats: 0 });
     expect(ofCalls(start).filter((u) => u.startsWith('/of/chats?'))).toEqual(
-      [0, 10, 20, 30, 40].map((o) => `/of/chats?limit=50&offset=${o}&order=recent&skip_users=none`),
+      [0, 10, 20, 30, 40, 50].map((o) => `/of/chats?limit=50&offset=${o}&order=recent&skip_users=none`),
     );
     const coverage = await db.select().from(chatCoverage).orderBy(chatCoverage.chatId);
-    expect(coverage.map((c) => [c.chatId, c.fanUsername])).toEqual([...Array.from({ length: 10 }, (_, i) => 3000 + i), 3025].map((id) => [id, `fan_${id}`]));
+    expect(coverage.map((c) => [c.chatId, c.fanUsername])).toEqual([...Array.from({ length: 10 }, (_, i) => 3000 + i), 3025, 3050].map((id) => [id, `fan_${id}`]));
+  });
+
+  it("walks the chats the list leaves out (the range's payers, then chats with stored messages), skips a 404, counts unreadable entries", async () => {
+    const of = fake.state.of!;
+    const paid = (id: string, fan: number) => ({ id, descriptionDetails: { type: 'message' }, amount: 3, net: 2.4, currency: 'USD', createdAt: '2026-09-02T12:00:00Z', user: { id: fan } });
+    of.transactions.unshift(paid('tx6', 2008), paid('tx5', 2007)); // 2008's 404 comes first; 2007 is still walked
+    of.messages[2007] = [msg(701, '09-02T11:00', ACCOUNT, { price: 3 }), msg(700, '09-02T10:00', ACCOUNT)]; // a payer's chat OF does not list
+    of.missingChats = [2008]; // a deleted fan's: 404
+    of.chats.push(
+      { withUser: {}, lastMessage: { id: 1, createdAt: '2026-09-02T10:00:00.000Z' } } as FakeOf['chats'][number],
+      chat(2010, { id: 1, createdAt: 'not a date' }),
+    );
+    expect(await backfill(opts())).toMatchObject({ chats: 4, transactions: 5, seededChats: 2, missingChats: 1, droppedChats: 2 });
+    const walked = async () => (await db.select().from(chatCoverage).orderBy(chatCoverage.chatId)).map((c) => [c.chatId, c.reachedStart]);
+    expect(await walked()).toEqual([[2001, false], [2002, false], [2003, true], [2007, true]]);
+
+    // Chat 2002, stored by that run, drops out of the list: it is walked from the stored rows, its new message read.
+    of.chats = of.chats.filter((c) => c.withUser.id !== 2002);
+    of.messages[2002]!.unshift(msg(205, '09-03T10:00', 2002));
+    expect(await backfill(opts())).toMatchObject({ seededChats: 3, missingChats: 1 }); // 2002, 2007, 2008
+    expect(await db.$count(messageFact, eq(messageFact.messageId, 205))).toBe(1);
   });
 
   it('splits a full mass window in halves, and fails on a full hour', async () => {

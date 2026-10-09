@@ -102,9 +102,10 @@ type Raw = Record<string, unknown>;
  * chats however large `limit` is and carry `nextOffset` (unless `noNextOffset`), `withUser` is only `{ _view, id }`
  * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is (with `endPage`, every
  * page of messages says `hasMore` and the page after a chat's last is `{ list: [], hasMore: endPage.hasMore }`, as OF's
- * are with `false`), mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
- * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set), then
- * `badGateway` that many 502; `unauthorized` answers every request 401, as the upstream does once OF refuses the session.
+ * are with `false`), mass history ignores `offset` and always reports `hasMore`, a chat in `stuckChats` ignores the
+ * `first_id` cursor, and one in `missingChats` (a deleted fan's) answers 404. `rateLimit` answers that many requests
+ * 429 (with `retryAfter` when set), then `badGateway` that many 502; `unauthorized` answers every request 401, as
+ * the upstream does once OF refuses the session.
  */
 export type FakeOf = {
   chats: { withUser: { id: number; username?: string; name?: string; displayName?: string }; lastMessage: { id: number; createdAt: string } | null }[];
@@ -117,6 +118,7 @@ export type FakeOf = {
   chatPageCap?: number;
   noNextOffset?: boolean;
   stuckChats?: number[];
+  missingChats?: number[];
   rateLimit?: number;
   retryAfter?: string;
   badGateway?: number;
@@ -223,6 +225,8 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
         return reply.status(429).send({ error: 'RATE_LIMITED' });
       }
       if (state.of.unauthorized) return reply.status(401).send({ error: { code: 'of_error', status: 401 } });
+      const chat = /^\/of\/chats\/(\d+)\/messages/.exec(request.url);
+      if (chat && state.of.missingChats?.includes(Number(chat[1]))) return reply.status(404).send({ error: { code: 'of_error', status: 404 } });
       if (state.of.badGateway) {
         state.of.badGateway--;
         return reply.status(502).send({ error: 'PROXY_ERROR' });

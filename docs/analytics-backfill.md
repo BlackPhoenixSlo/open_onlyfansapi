@@ -79,48 +79,56 @@ The run reads, in order: the range's transactions (first, so a run that dies dur
 stores the money), mass-message history in one-day windows from the day before `--from` up to the run's start (the
 chat walks store messages on both sides of the range, and each outbound message's queue id is looked up there; it is
 read once, before the walks, so a broadcast sent during the run is stored as DMs until the next run over its day), the
-welcome message, the chat list (most recent first, with `skip_users=none` so each chat carries the fan's username;
-see below), each chat's messages newest first down to the page that reaches
-`--from` or to the chat's start (OF's last page of a chat's messages still says `hasMore`; the empty page after it says
-false, and the walk records `reached_start`). Messages on that boundary page older than the mass window (before the day
-before `--from`) were derived without their mass history, so a later run that reads them again updates every column
-but `is_mass`, `is_automated` and `automated_reason`, and clears `deleted_at`; only a run whose `--from` covers them
-re-derives those flags. Mass history answers
-one page of 100 per window; a full page may have been cut, so that window is split in halves until a page is not
-full, and a full page for an hour or less fails the run.
+welcome message, the whole chat list (with `skip_users=none` so each chat carries the fan's username; see below), then
+each chat active in the range and each chat the list left out (below), its messages newest first down to the page that
+reaches `--from` or to the chat's start (OF's last page of a chat's messages still says `hasMore`; the empty page
+after it says false, and the walk records `reached_start`). Messages on that boundary page older than the mass window
+(before the day before `--from`) were derived without their mass history, so a later run that reads them again updates
+every column but `is_mass`, `is_automated` and `automated_reason`, and clears `deleted_at`; only a run whose `--from`
+covers them re-derives those flags. Mass history answers one page of 100 per window; a full page may have been cut, so
+that window is split in halves until a page is not full, and a full page for an hour or less fails the run.
 
-OF answers about 10 chats a page (sometimes 17 to 19) whatever the `limit`, so the list is paged by each page's
-`nextOffset` (by the number of chats returned when it is missing) until `hasMore` is false or a page adds no new
-chat. The list is not strictly newest first: pinned and unread chats come first and older chats appear mid-list. So
-one page with no chat active since `--from` does not end it; two such pages in a row do (`QUIET_CHAT_PAGES`). An
-active chat listed after two quiet pages in a row is missed. OF lists a chat whose latest message was deleted with
-`lastMessage: null`; such a chat counts as active and is walked, so its other messages are read.
+OF answers 10 to 20 chats a page whatever the `limit`, so the list is paged by each page's `nextOffset` (by the
+number of chats returned when it is missing) until a page is empty or `hasMore` is false. The list is read to its end
+(about 80 to 160 pages for 1,600 chats): it is not newest first (unread chats come first, a mass message does not
+move a chat, and the last part is ordered by fan id), so a page with no chat active since `--from` does not end it.
+OF lists a chat whose latest message was deleted with `lastMessage: null`; such a chat counts as active and is
+walked, so its other messages are read.
 
-It prints the request count and whether it was stopped, then one check:
+OF's offset also counts chats the list does not return: a page of 20 places held 13 to 19 chats on 2026-10-09, and
+a chat with messages in the range (a fan with `isActive: false`) was never listed. So after the listed chats the run
+walks the range's payers (the fans of its transactions) and the chats with stored messages (from earlier runs and
+live events) that the list did not name; a dry run seeds from the transactions only. A chat the upstream answers 404
+for (a deleted fan's) is skipped and counted. A chat the list leaves out that neither paid in the range nor has a
+stored message is still missed.
+
+It prints the request count and whether it was stopped, then:
 
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
   messages before that time are missing. A walk that ends on OF's empty last page (`hasMore` false) reached the chat's
   start and is not counted.
+- **chats the list left out**: walked from the payers and stored messages, with how many the upstream answered 404 for
+  (skipped), and the list entries dropped for no readable fan id or last-message time (walked only if seeded).
 
 Then the row count of each file. Last, stopped or not, it records the account's script candidates
 ([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything
 again: there is no resume. A chat's coverage never moves back: a narrower re-run keeps the older oldest message and
 `reached_start` an earlier run reached.
 
-`--dry-run` makes the same requests but stores nothing (no claim, rows, coverage or script candidates) and writes the
-CSVs from what it read, for comparing a fresh re-read with the stored rows. Its `chats.csv` lists this run's walks only,
-and its `reply_times.csv` sees only the messages walked (back to each chat's boundary page). Its incomplete-chats count
-comes from this run's walks only (no stored coverage is merged). `--team` is unchecked in a dry run: nothing checks
-that the workspace is linked or allowed the account.
+`--dry-run` makes the same requests (less the walks of chats seeded from stored messages) but stores nothing (no
+claim, rows, coverage or script candidates) and writes the CSVs from what it read, for comparing a fresh re-read with
+the stored rows. Its `chats.csv` lists this run's walks only, and its `reply_times.csv` sees only the messages walked
+(back to each chat's boundary page). Its incomplete-chats count comes from this run's walks only (no stored coverage
+is merged). `--team` is unchecked in a dry run: nothing checks that the workspace is linked or allowed the account.
 
 ## Request budget
 
 For one account-week: chat-list pages + for each chat active that week (its pages in the week + 1 boundary page) +
 one mass-history window per day from the day before `--from` to today (8 for last week, more for an older week) +
 transaction pages. With 1,000 active chats at about 2 pages each, that is roughly 2,000 requests, about 3.5 hours at
-the default cap. Add 1 messages page per chat listed with `lastMessage: null`, and up to `QUIET_CHAT_PAGES` more list
-pages. The limits:
+the default cap. Add 1 messages page per chat listed with `lastMessage: null`, the list pages past the last active
+chat, and the pages of each chat the list left out. The limits:
 
 | Variable | Default | Meaning |
 |---|---|---|

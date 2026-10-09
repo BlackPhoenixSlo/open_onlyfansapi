@@ -70,6 +70,9 @@ try {
     `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
   );
   console.log(`incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`);
+  console.log(
+    `chats the list left out ${result.seededChats} (the range's payers and chats with stored messages, walked; ${result.missingChats} not found upstream, skipped); list entries dropped ${result.droppedChats} (no readable fan id or last-message time)`,
+  );
   const written = await sink.write();
   console.log(
     `wrote ${outDir}: messages.csv ${written.messages}, chats.csv ${written.chats}, transactions.csv ${written.transactions}, reply_times.csv ${written.replyTimes} rows`,
