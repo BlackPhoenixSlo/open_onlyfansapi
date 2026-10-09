@@ -48,6 +48,9 @@ export const inScope = (table: typeof messageFact | typeof purchaseFact, s: Scop
     lt(table.createdAt, s.to),
   );
 
+/** A DM: outbound, not mass, not automated (welcome message or automation). Unsent ones count. */
+export const dm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated}`;
+
 /** A PPV DM: outbound, not mass, priced. Unsent ones count. */
 export const ppvDm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
 
@@ -72,7 +75,7 @@ export async function scopedFans(scope: Scope, limit: number): Promise<{ total: 
       chatId: messageFact.chatId,
       fanUsername: chatCoverage.fanUsername,
       fanMessages: sql<number>`(count(*) filter (where ${messageFact.direction} = 'inbound'))::int`,
-      dmMessages: sql<number>`(count(*) filter (where ${outbound} and not ${messageFact.isMass} and not ${messageFact.isAutomated}))::int`,
+      dmMessages: sql<number>`(count(*) filter (where ${dm}))::int`,
       massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
       automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
       ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,

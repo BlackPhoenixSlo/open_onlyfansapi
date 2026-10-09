@@ -3,6 +3,7 @@ import { db } from '../../db/index.js';
 import { messageFact } from '../../db/schema.js';
 import { REPLY_CAP_MS } from './config.js';
 import { normaliseText } from './derive.js';
+import { dm } from './messages.js';
 
 export type TurnMessage = {
   chatId: number;
@@ -113,7 +114,7 @@ export async function turnMessages(teamId: string, accountId: number, range: Tur
           chatId: messageFact.chatId,
           at: sql<Date>`coalesce(least(
               max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound'),
-              max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated})
+              max(${messageFact.createdAt}) filter (where ${dm})
             ), min(${messageFact.createdAt}))`.as('at'),
         })
         .from(messageFact)

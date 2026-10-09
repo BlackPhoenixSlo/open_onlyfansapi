@@ -1,8 +1,8 @@
-import { and, desc, inArray, isNotNull, max, sql } from 'drizzle-orm';
+import { and, desc, isNotNull, max, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
-import { inScope, ppvDm, type Scope } from './messages.js';
+import { dm, inScope, ppvDm, type Scope } from './messages.js';
 
 // Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.
@@ -12,8 +12,8 @@ type Sums = { gross: number; net: number; transactions: number };
 const TOP_PAYERS = 50;
 
 const txStatus = sql`${purchaseFact.raw}->>'status'`;
-/** A booked transaction: not refunded or reversed (OF's status `undo` or `pending_return`); a missing status counts. */
-const booked = sql`coalesce(${txStatus}, '') not in ('undo', 'pending_return')`;
+/** A booked sale: OF's status `done` (settled) or `loading` (pending); `undo` (refunded) and `pending_return` (being reversed) are not. */
+const booked = sql`${txStatus} in ('done', 'loading')`;
 
 const zero = (): Sums => ({ gross: 0, net: 0, transactions: 0 });
 
@@ -31,8 +31,10 @@ const percent = (part: number, whole: number) => (whole > 0 ? (part / whole) * 1
  * of the range; see `statsRevenue`.
  */
 export async function scopedRevenue(scope: Scope, days: string[], tz: string): Promise<Pick<StatsRevenue, 'totals' | 'byKind' | 'byDay' | 'ppv' | 'topPayers' | 'withoutChat'>> {
-  // A DM as Infloww's golden ratio counts it: outbound, not mass, not automated (welcome message or automation).
-  const dm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated}`;
+  const sales = and(inScope(purchaseFact, scope), booked);
+  // Fans are counted only on accounts with a booked sale in the range: an account whose sales were never read would
+  // count fans against no payers. DMs and PPVs count on every account.
+  const salesAccount = sql`${messageFact.accountId} in (select distinct ${purchaseFact.accountId} from ${purchaseFact} where ${sales})`;
   const [groups, [messages]] = await Promise.all([
     // `day` is grouped by its output name: the timezone parameter would make a repeated expression differ.
     db
@@ -49,28 +51,18 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
         lastAt: max(purchaseFact.createdAt),
       })
       .from(purchaseFact)
-      .where(and(inScope(purchaseFact, scope), booked))
+      .where(sales)
       .groupBy(purchaseFact.accountId, purchaseFact.fanId, purchaseFact.kind, sql`"day"`),
     db
       .select({
-        fansMessaged: sql<number>`(count(distinct (${messageFact.accountId}, ${messageFact.chatId})) filter (where ${messageFact.deletedAt} is null))::int`,
+        fansMessaged: sql<number>`(count(distinct (${messageFact.accountId}, ${messageFact.chatId})) filter (where ${messageFact.deletedAt} is null and ${salesAccount}))::int`,
         dmMessages: sql<number>`(count(*) filter (where ${dm}))::int`,
         dmPpvs: sql<number>`(count(*) filter (where ${dm} and ${messageFact.priceCents} > 0))::int`,
         ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
         ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
       })
       .from(messageFact)
-      // Only accounts with a booked transaction in the range: messages of an account whose sales were never read
-      // would count fans and PPVs against no revenue.
-      .where(
-        and(
-          inScope(messageFact, scope),
-          inArray(
-            messageFact.accountId,
-            db.selectDistinct({ accountId: purchaseFact.accountId }).from(purchaseFact).where(and(inScope(purchaseFact, scope), booked)),
-          ),
-        ),
-      ),
+      .where(inScope(messageFact, scope)),
   ]);
 
   const totals = zero();
@@ -110,12 +102,13 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
       hasChat: sql<boolean>`exists (select 1 from ${messageFact} where ${messageFact.teamId} = ${purchaseFact.teamId} and ${messageFact.accountId} = ${purchaseFact.accountId} and ${messageFact.chatId} = ${purchaseFact.fanId})`,
     })
     .from(purchaseFact)
-    .where(and(inScope(purchaseFact, scope), booked, isNotNull(purchaseFact.fanId)))
+    .where(and(sales, isNotNull(purchaseFact.fanId)))
     .orderBy(purchaseFact.accountId, purchaseFact.fanId, sql`${name} is null`, desc(purchaseFact.createdAt));
+  // Every payer has a detail row: both read the same transactions.
   const detail = new Map(details.map((d) => [`${d.accountId}:${d.fanId}`, d]));
   const withoutChat = { payers: 0, gross: 0 };
   for (const [key, p] of payers) {
-    if (detail.get(key)?.hasChat) continue;
+    if (detail.get(key)!.hasChat) continue;
     withoutChat.payers++;
     withoutChat.gross += p.gross;
   }
@@ -138,8 +131,8 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
     topPayers: top.map(({ lastAt, ...p }) => {
-      const d = detail.get(`${p.accountId}:${p.fanId}`);
-      return { ...p, name: d?.name ?? null, isDeleted: d?.isDeleted ?? false, lastAt: lastAt.toISOString(), hasChat: d?.hasChat ?? false };
+      const { name, isDeleted, hasChat } = detail.get(`${p.accountId}:${p.fanId}`)!;
+      return { ...p, name, isDeleted, lastAt: lastAt.toISOString(), hasChat };
     }),
     withoutChat,
   };

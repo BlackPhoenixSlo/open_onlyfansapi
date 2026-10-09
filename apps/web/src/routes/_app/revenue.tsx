@@ -28,7 +28,7 @@ function Revenue() {
 
   const data = revenue.data;
   const totals = data?.totals;
-  const dm = data?.ppv;
+  const ppv = data?.ppv;
   const kpiState = { loading: revenue.isPending, error: revenue.error?.message };
   const noSales = !totals?.transactions;
 
@@ -81,7 +81,7 @@ function Revenue() {
         >
           PPV DMs divided by all DMs sent (Infloww's formula).
         </Kpi>
-        <Kpi title="PPV unlock (DM)" {...kpiState} empty={!dm?.sent} value={formatPercent(dm?.rate)} sub={`${dm?.opened ?? 0} bought / ${dm?.sent ?? 0} sent`}>
+        <Kpi title="PPV unlock (DM)" {...kpiState} empty={!ppv?.sent} value={formatPercent(ppv?.rate)} sub={`${ppv?.opened ?? 0} bought / ${ppv?.sent ?? 0} sent`}>
           Priced DMs bought over those sent. Upper bound: an unsent PPV nobody bought vanishes from OF's history.
         </Kpi>
       </div>

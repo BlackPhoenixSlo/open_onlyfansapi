@@ -89,13 +89,14 @@ beforeAll(async () => {
     purchase(teamA, A1, 't2', 3001, 'tips', 500, 400, '09-03T12:00', { id: 3001, username: 'ann2' }, 'loading'),
     purchase(teamA, A1, 't3', 3002, 'subscription', 2000, 1600, '09-01T11:00', { id: 3002 }, 'done'),
     // Refunded or reversed: not booked, so in no sum, payer count or name.
-    purchase(teamA, A1, 't9', 3001, 'message', 5000, 4000, '09-02T10:00', { id: 3001, name: 'Refunded' }, 'undo'),
+    // t9 is 3001's newest transaction in the range, so 3001's name must not come from it.
+    purchase(teamA, A1, 't9', 3001, 'message', 5000, 4000, '09-03T15:00', { id: 3001, name: 'Refunded', isDeleted: true }, 'undo'),
     purchase(teamA, A1, 't10', 3009, 'tips', 2000, 1600, '09-02T11:00', { id: 3009, name: 'Reversed' }, 'pending_return'),
-    purchase(teamA, A1, 't4', null, null, 300, 240, '09-03T13:00'),
-    purchase(teamA, A1, 't5', 3008, 'post', 100, 80, '09-03T14:00', { id: 3008, name: 'Hal', isDeleted: true }),
-    purchase(teamA, A1, 't6', 3001, 'message', 999, 799, '09-05T10:00', { id: 3001, name: 'Ann' }),
-    purchase(teamA, A2, 't7', 4001, 'message', 700, 560, '09-03T09:00', { id: 4001, name: 'Cy' }),
-    purchase(b.teamId, B1, 't8', 5001, 'tips', 4000, 3200, '09-02T10:00', { id: 5001, name: 'Bo' }),
+    purchase(teamA, A1, 't4', null, null, 300, 240, '09-03T13:00', undefined, 'done'),
+    purchase(teamA, A1, 't5', 3008, 'post', 100, 80, '09-03T14:00', { id: 3008, name: 'Hal', isDeleted: true }, 'loading'),
+    purchase(teamA, A1, 't6', 3001, 'message', 999, 799, '09-05T10:00', { id: 3001, name: 'Ann' }, 'done'),
+    purchase(teamA, A2, 't7', 4001, 'message', 700, 560, '09-03T09:00', { id: 4001, name: 'Cy' }, 'done'),
+    purchase(b.teamId, B1, 't8', 5001, 'tips', 4000, 3200, '09-02T10:00', { id: 5001, name: 'Bo' }, 'done'),
   ]);
   await db.insert(messageFact).values([
     message(A1, 1, 3001, '09-01T09:00', { direction: 'inbound' }),
@@ -126,11 +127,11 @@ describe('stats revenue', () => {
     expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-03' });
     // Fan CVR: payers (A1 3001, 3002, 3008; A2 4001) over fans messaged in the range (A1 3001, 3003, 3004; A2 4001, 4002).
     // Golden ratio: DM PPVs (2, 4) over DMs (2, 3, 4, 12); mass and automated messages are not DMs.
-    // Settled: t1 and t3 (`done`); pending: t2 (`loading`); t4, t5 and t7 have no status, so gross only.
+    // Settled: t1, t3, t4 and t7 (`done`); pending: t2 and t5 (`loading`).
     expect(body.totals).toEqual({
       gross: 4600,
-      settledGross: 3000,
-      pendingGross: 500,
+      settledGross: 4000,
+      pendingGross: 600,
       net: 3680,
       transactions: 6,
       payers: 4,
@@ -169,23 +170,23 @@ describe('stats revenue', () => {
     expect(body.withoutChat).toEqual({ payers: 1, gross: 100 });
   });
 
-  it('counts fans, DMs and PPVs only on accounts with a booked transaction in the range', async () => {
+  it('counts fans messaged only on accounts with a booked transaction in the range, DMs and PPVs on all', async () => {
     // 09-01..02: A1 has t1 and t3; A2 has none, so its fans 4001 and 4002 are left out.
-    expect((await get('from=2026-09-01&to=2026-09-02')).totals).toMatchObject({ payers: 2, fansMessaged: 3, dmMessages: 4, dmPpvs: 2 });
-    // 09-02 alone: A1's only transactions are refunded or reversed, so no account counts.
+    expect((await get('from=2026-09-01&to=2026-09-02')).totals).toMatchObject({ payers: 2, fansMessaged: 3, fanCvr: (2 / 3) * 100 });
+    // 09-02 alone: A1's only transaction is being reversed, so no fan counts, but its DMs (3, 4, 12) and PPVs (4, 11) do.
     const body = await get('from=2026-09-02&to=2026-09-02');
-    expect(body.totals).toMatchObject({ transactions: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, goldenRatio: null });
-    expect(body.ppv).toEqual({ sent: 0, opened: 0, rate: null });
+    expect(body.totals).toMatchObject({ transactions: 0, fansMessaged: 0, fanCvr: null, dmMessages: 3, dmPpvs: 1, goldenRatio: (1 / 3) * 100 });
+    expect(body.ppv).toEqual({ sent: 2, opened: 1, rate: 50 });
   });
 
   it('has no fan CVR, golden ratio or PPV rate when nothing was sent', async () => {
     const body = await get('from=2026-09-05&to=2026-09-05');
-    expect(body.totals).toEqual({ gross: 999, settledGross: 0, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
+    expect(body.totals).toEqual({ gross: 999, settledGross: 999, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
     expect(body.ppv).toEqual({ sent: 0, opened: 0, rate: null });
   });
 
   it("scopes to the key's accounts, `accountId` and the workspace's own rows", async () => {
-    const a2 = { gross: 700, settledGross: 0, pendingGross: 0, net: 560, transactions: 1, payers: 1, fansMessaged: 2, fanCvr: 50, dmMessages: 0, dmPpvs: 0, goldenRatio: null };
+    const a2 = { gross: 700, settledGross: 700, pendingGross: 0, net: 560, transactions: 1, payers: 1, fansMessaged: 2, fanCvr: 50, dmMessages: 0, dmPpvs: 0, goldenRatio: null };
     expect((await get(RANGE, bearer(limitedKeyA))).totals).toEqual(a2);
     expect((await get(`${RANGE}&accountId=${A2}`)).totals).toEqual(a2);
     const denied = await app.inject({ method: 'GET', url: `/v1/stats/revenue?${RANGE}&accountId=${A1}`, headers: bearer(limitedKeyA) });

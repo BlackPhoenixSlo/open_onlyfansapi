@@ -228,7 +228,7 @@ function VerifyFlow() {
 const REVENUE_TERMS: [string, string][] = [
   [
     'Gross and net',
-    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed, in USD. Refunded or reversed transactions (OF's status undo or pending_return) are left out. Settled is the gross OF has cleared (status done), pending what it still holds (loading). Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
+    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed, in USD. Gross is booked sales: done plus loading, so refunded or reversed transactions (OF's status undo or pending_return) are left out. Settled is the gross OF has cleared (status done), pending what it still holds (loading). Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
   ],
   [
     'Kind',
@@ -237,15 +237,15 @@ const REVENUE_TERMS: [string, string][] = [
   ['Payers', 'Fans with a transaction in the range, per account. A transaction whose fan is unknown counts in the sums only.'],
   [
     'Fan CVR',
-    'Payers ÷ fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%. Fan CVR, golden ratio and PPV unlock count only the accounts with a transaction in the range: an account whose sales were never backfilled would add fans and PPVs with no payers.',
+    'Payers ÷ fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%. Fans count only on accounts with a transaction in the range: an account whose sales were never backfilled would add fans with no payers.',
   ],
   [
     'Golden ratio',
-    "Infloww's formula: PPV DMs sent ÷ DMs sent. A DM is an outbound message that is not mass and not automated (welcome message or automation); a PPV DM is a priced one. Unsent ones count.",
+    "Infloww's formula: PPV DMs sent ÷ DMs sent. A DM is an outbound message that is not mass and not automated (welcome message or automation); a PPV DM is a priced one. Automated DMs and PPVs are left out; unsent ones count. Counts every account in the selection.",
   ],
   [
     'PPV unlock',
-    "Priced DMs (not mass) sent in the range. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag (bought) as of the last read. The rate is an upper bound: a PPV unsent before anyone bought it vanishes from OF's history, so a backfill never stores it and it is missing from sent, while a bought one stays.",
+    "Priced DMs (not mass) sent in the range, automated ones included. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag (bought) as of the last read. The rate is an upper bound: a PPV unsent before anyone bought it vanishes from OF's history, so a backfill never stores it and it is missing from sent, while a bought one stays.",
   ],
   [
     'Top payers',

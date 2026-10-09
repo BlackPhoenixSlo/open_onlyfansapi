@@ -13,16 +13,14 @@ const toWire = ({ teamId: _teamId, updatedAt, ...rest }: Row): StatsConfig => ({
  * and Postgres read with opposite signs (Postgres takes `+02:00` as POSIX, two hours west of UTC).
  */
 export function resolveTimezone(tz: string): string {
-  let resolved: string;
+  if (/^[+-]/.test(tz)) {
+    throw new AppError(400, 'validation_error', `\`timezone\` ${JSON.stringify(tz)} is an offset; use an IANA name like Europe/Ljubljana`);
+  }
   try {
-    resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+    return new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
     throw new AppError(400, 'validation_error', `\`timezone\` ${JSON.stringify(tz)} is not a known time zone`);
   }
-  if (/^[+-]/.test(resolved)) {
-    throw new AppError(400, 'validation_error', `\`timezone\` ${JSON.stringify(tz)} is an offset; use an IANA name like Europe/Ljubljana`);
-  }
-  return resolved;
 }
 
 /** Workspace `teamId`'s stats config; the default row (§4.5) is made on first read. */
