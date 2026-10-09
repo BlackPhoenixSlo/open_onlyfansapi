@@ -43,3 +43,7 @@ curl.txt
 # owner OF devtools captures (docs/spec/plan-v6-capture-kit.md; never commit)
 of-captures/
 *.capture.md
+
+# local agent notes and command scratch (never commit)
+scratchpad/
+ZZZZZZ_COMANDS
