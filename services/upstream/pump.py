@@ -38,7 +38,7 @@ FrameSource = Callable[[Any], AsyncIterator[dict]]
 ClientFactory = Callable[[str], Any]
 # Builds a poller for each pump start (its interval bound) from the account id, client and publish; the pump runs
 # it in `poll_loop` until the pump stops.
-PollerFactory = Callable[[int, Any, Callable[[dict], None]], poll_loop.PollerLike]
+PollerFactory = Callable[[int, Any, poll_loop.Publish], poll_loop.PollerLike]
 
 
 async def of_frames(client: Any) -> AsyncIterator[dict]:

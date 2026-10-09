@@ -17,6 +17,8 @@ log = logging.getLogger("upstream.poll_loop")
 
 BACKOFF_MAX_S = 30 * 60
 
+Publish = Callable[[dict], None]
+
 
 class PollerLike(Protocol):
     """What `run()` reads from a poller."""

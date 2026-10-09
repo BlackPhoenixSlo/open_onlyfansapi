@@ -67,12 +67,13 @@ INTERVALS = ["SENT_POLL_INTERVAL_S", "MASS_POLL_INTERVAL_S"]
 @pytest.mark.parametrize("name", INTERVALS)
 @pytest.mark.parametrize(("value", "seconds"), [("0", 0), ("10", 10), ("86400", 86400), ("9", None),
                                                 ("-1", None), ("nan", None), ("inf", None), ("2m", None)])
-def test_poll_interval_is_0_or_10_to_86400_seconds(name, value, seconds):
+def test_poll_interval_is_0_or_10_to_86400_seconds(name, value, seconds, monkeypatch):
+    monkeypatch.setenv(name, value)
     if seconds is not None:
-        assert upstream._poll_interval(name, value) == seconds
+        assert upstream._poll_interval(name) == seconds
         return
     with pytest.raises(SystemExit) as e:
-        upstream._poll_interval(name, value)
+        upstream._poll_interval(name)
     assert str(e.value) == f"{name} must be 0 (off) or 10 to 86400 seconds, got {value!r}"
 
 

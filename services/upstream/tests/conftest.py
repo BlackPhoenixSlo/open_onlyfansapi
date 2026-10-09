@@ -1,4 +1,5 @@
 """Test env: a throwaway state dir and a known token, set before `app` is imported."""
+import asyncio
 import json
 import os
 import shutil
@@ -102,6 +103,26 @@ def mass_entry(qid, date, sent, /, **extra) -> dict:
         "isMediaReady": True, "isReportedByMe": False, "isTip": False, "canUnsend": True, "unsendSeconds": 1000000,
         "responseType": "message", "template": "group", **extra,
     }
+
+
+# ─── poller tests (test_sent_poller, test_mass_poller) ───────────
+
+@pytest.fixture
+def of():
+    return OFFake()
+
+
+@pytest.fixture
+def frames():
+    return []
+
+
+def poll(p):
+    asyncio.run(p.poll())
+
+
+def ids(frames):
+    return [f["id"] for f in frames]
 
 
 # ─── of_fake: OF at the wire ───────────────────────────────────────

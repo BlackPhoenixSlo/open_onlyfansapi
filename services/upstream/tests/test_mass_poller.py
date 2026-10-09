@@ -1,11 +1,10 @@
 """mass_poller against OFFake: mass-message history entries as OF answers them (`date` with a `+00:00` offset)."""
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import OFFake, mass_entry
+from conftest import ids, mass_entry, poll
 
 from mass_poller import MassPoller
 from of_client import OFAPIError
@@ -29,16 +28,6 @@ def history(*entries):
 
 
 @pytest.fixture
-def of():
-    return OFFake()
-
-
-@pytest.fixture
-def frames():
-    return []
-
-
-@pytest.fixture
 def clock():
     return [T0]
 
@@ -46,14 +35,6 @@ def clock():
 @pytest.fixture
 def poller(of, frames, clock):
     return MassPoller(ACCT, of, frames.append, interval=INTERVAL, now=lambda: clock[0])
-
-
-def poll(p):
-    asyncio.run(p.poll())
-
-
-def ids(frames):
-    return [f["id"] for f in frames]
 
 
 def test_each_poll_is_one_request_for_the_last_24_hours_in_utc(poller, of):

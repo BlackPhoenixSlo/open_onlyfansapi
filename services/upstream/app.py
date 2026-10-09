@@ -54,8 +54,9 @@ _BEARER = f"Bearer {TOKEN}".encode()
 _WS_PROTOCOL = f"bearer.{TOKEN}".encode()
 
 
-def _poll_interval(name: str, raw: str | None) -> float:
+def _poll_interval(name: str) -> float:
     """A poller's interval variable `name`: 120 when unset, 0 (off) or 10 to 86400 seconds, else SystemExit."""
+    raw = os.environ.get(name)
     error = SystemExit(f"{name} must be 0 (off) or 10 to 86400 seconds, got {raw!r}")
     try:
         seconds = float(raw or 120)
@@ -66,16 +67,13 @@ def _poll_interval(name: str, raw: str | None) -> float:
     return seconds
 
 
-SENT_POLL_INTERVAL_S = _poll_interval("SENT_POLL_INTERVAL_S", os.environ.get("SENT_POLL_INTERVAL_S"))
-MASS_POLL_INTERVAL_S = _poll_interval("MASS_POLL_INTERVAL_S", os.environ.get("MASS_POLL_INTERVAL_S"))
-
+pollers = {name: functools.partial(poller, interval=seconds) for name, poller, seconds in (
+    ("sent", sent_poller.SentPoller, _poll_interval("SENT_POLL_INTERVAL_S")),
+    ("mass", mass_poller.MassPoller, _poll_interval("MASS_POLL_INTERVAL_S"))) if seconds}
 hub = Hub()
 # `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
 supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "false").strip().lower()
-                        not in {"0", "false", "no", "off"},
-                        pollers={name: functools.partial(poller, interval=seconds) for name, poller, seconds in (
-                            ("sent", sent_poller.SentPoller, SENT_POLL_INTERVAL_S),
-                            ("mass", mass_poller.MassPoller, MASS_POLL_INTERVAL_S)) if seconds})
+                        not in {"0", "false", "no", "off"}, pollers=pollers)
 
 
 @asynccontextmanager

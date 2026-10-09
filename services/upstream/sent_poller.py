@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import events
+from poll_loop import Publish
 
 log = logging.getLogger("upstream.sent_poller")
 
@@ -35,7 +36,6 @@ MESSAGES_LIMIT = 10
 CHAT_PAGES = 3        # message pages per chat per poll
 PENDING_MAX = 200     # changed chats waiting for a fetch
 
-Publish = Callable[[dict], None]
 Changed = dict[int, tuple[int, Any]]   # chat id -> (lastMessage.id, withUser)
 
 

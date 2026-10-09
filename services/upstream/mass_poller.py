@@ -21,14 +21,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import events
+from poll_loop import Publish
 
 log = logging.getLogger("upstream.mass_poller")
 
 LOOKBACK = timedelta(hours=24)
 PAGE_LIMIT = 50
-
-Publish = Callable[[dict], None]
-
 
 def _of_date(dt: datetime) -> str:
     """OF's date bound for this call, `YYYY-MM-DD HH:MM:SS`, read as UTC."""
@@ -66,11 +64,10 @@ class MassPoller:
             self._warned = True
             log.warning("mass poller: OF listed %d broadcasts in 24 hours account=%s; some may arrive late or not "
                         "at all", len(items), self.account_id)
-        for entry in sorted(items, key=lambda e: events.int_or_none(e.get("id")) or 0):
-            queue_id, sent = events.int_or_none(entry.get("id")), events.int_or_none(entry.get("sentCount"))
-            date = events.parse_time(entry.get("date"))
-            if (queue_id is None or queue_id in self.emitted or (sent or 0) <= 0
-                    or (date is not None and date < self.floor)):
+        listed = [(qid, e) for e in items if (qid := events.int_or_none(e.get("id"))) is not None]
+        for queue_id, entry in sorted(listed, key=lambda pair: pair[0]):  # stable: a repeated id's first stays first
+            sent, date = events.int_or_none(entry.get("sentCount")), events.parse_time(entry.get("date"))
+            if queue_id in self.emitted or (sent or 0) <= 0 or (date is not None and date < self.floor):
                 continue
             self.emitted.add(queue_id)
             log.info("mass poller: chat_queue.finished account=%s queue=%s sentCount=%s",

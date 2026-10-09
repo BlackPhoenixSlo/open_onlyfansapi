@@ -1,11 +1,10 @@
 """sent_poller against OFFake: chat-list shapes as OF answers them (`order=recent`, `skip_users=all`)."""
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import OFFake
+from conftest import ids, poll
 
 from sent_poller import SentPoller
 
@@ -61,22 +60,8 @@ def messages(*items, more=False):
 
 
 @pytest.fixture
-def of():
-    return OFFake()
-
-
-@pytest.fixture
-def frames():
-    return []
-
-
-@pytest.fixture
 def poller(of, frames):
     return SentPoller(ACCT, of, frames.append, interval=INTERVAL, now=lambda: T0)
-
-
-def poll(p):
-    asyncio.run(p.poll())
 
 
 def paths(of):
@@ -85,10 +70,6 @@ def paths(of):
 
 def query(of, i):
     return {k: v[0] for k, v in parse_qs(urlsplit(of.calls[i][1]).query).items()}
-
-
-def ids(frames):
-    return [f["id"] for f in frames]
 
 
 def test_start_reads_from_two_intervals_back_and_emits_a_dm_once(poller, of, frames):
