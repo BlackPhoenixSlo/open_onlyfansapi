@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 
 import pytest
-from conftest import frame, key_paths, payload_fixture
+from conftest import frame, key_paths, mass_entry, payload_fixture
 
-from events import classify
+from events import chat_queue_finished, classify
 
 ACCOUNT = 100001
 NOW = datetime(2026, 10, 2, 12, 30, 0, 123000, tzinfo=UTC)
@@ -75,6 +75,9 @@ KNOWN_GAPS = {
     "messages.received": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.replyToMessage",
                           *(f"$.fromUser.{k}" for k in _FROM_USER)},
     "messages.sent": {"$.canPurchaseReason", "$.isMarkdownDisabled", "$.releaseForms", "$.toUser", "$.media[]"},
+    # The payload is OF's mass-message history entry, which per the 2026-10-09 live read has no queue state
+    # (`pending`, `total`, `isDone`) and no `hasError`, `isReady` or `isCouplePeopleMedia`.
+    "chat_queue.finished": {"$.pending", "$.total", "$.isDone", "$.hasError", "$.isReady", "$.isCouplePeopleMedia"},
 }
 
 
@@ -86,6 +89,13 @@ def test_message_payloads_against_the_fixture(event, of_frame, frame_id):
     [ev] = classify(ACCOUNT, frame(of_frame), now=NOW)
     assert (ev["type"], ev["id"]) == (event, frame_id)
     assert _gaps(payload_fixture(event)["payload"], ev["payload"]) == KNOWN_GAPS[event]
+
+
+def test_chat_queue_finished_against_the_fixture():
+    fx = payload_fixture("chat_queue.finished")
+    ev = chat_queue_finished(1001, mass_entry(1013, "2026-10-02T12:29:00+00:00", 2), NOW)
+    assert (ev["type"], ev["id"]) == (fx["event"], "chat_queue.finished:1001:1013")
+    assert _gaps(fx["payload"], ev["payload"]) == KNOWN_GAPS["chat_queue.finished"]
 
 
 def test_messages_deleted_matches_the_fixture():

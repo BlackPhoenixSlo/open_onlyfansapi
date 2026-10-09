@@ -258,39 +258,44 @@ def test_an_expiry_is_announced_once_per_session(evicted):
     asyncio.run(main())
 
 
-def test_the_sent_poller_runs_with_the_pump(evicted):
+@pytest.mark.parametrize("refused_by", ["sent", "mass"])
+def test_the_pollers_run_with_the_pump_and_either_one_expires_the_session(evicted, refused_by):
     async def main():
         hub = FakeHub()
-        started, cancelled = [], []
+        started, cancelled = {}, []
 
-        async def poller(account_id, client, publish, on_expired):
-            started.append((account_id, client.aid, on_expired))
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled.append(account_id)
-                raise
+        def poller(name):
+            async def run(account_id, client, publish, on_expired):
+                started[name] = (account_id, client.aid, on_expired)
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.append(name)
+                    raise
+            return run
 
-        sup, src = supervisor(hub, poller=poller)
+        sup, src = supervisor(hub, pollers={"sent": poller("sent"), "mass": poller("mass")})
         make_account("100001")
         await sup.reconcile()
         await settle()
-        assert [s[:2] for s in started] == [(100001, "100001")] and src.starts == ["100001"]
-        started[0][2]()  # the poller saw a refused session
+        assert {n: s[:2] for n, s in started.items()} == {
+            "sent": (100001, "100001"), "mass": (100001, "100001")}
+        assert src.starts == ["100001"]
+        started[refused_by][2]()  # the poller saw a refused session
         assert sup.status("100001") == "session_expired"
         assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
         await sup.stop()
-        assert cancelled == [100001] and src.closed == 1
+        assert sorted(cancelled) == ["mass", "sent"] and src.closed == 1
 
     asyncio.run(main())
 
 
-def test_a_sent_poller_that_dies_is_logged(evicted, caplog):
+def test_a_poller_that_dies_is_logged(evicted, caplog):
     async def main():
         async def poller(*args):
             raise OverflowError("boom")
 
-        sup, src = supervisor(poller=poller)
+        sup, src = supervisor(pollers={"sent": poller})
         make_account("100001")
         with caplog.at_level(logging.ERROR, logger="upstream.pump"):
             await sup.reconcile()
@@ -298,7 +303,7 @@ def test_a_sent_poller_that_dies_is_logged(evicted, caplog):
             await settle()  # the poller's task, then its done callback
         assert src.starts == ["100001"]
         [rec] = [r for r in caplog.records if "sent poller" in r.getMessage()]
-        assert rec.getMessage().startswith("sent poller failed account=100001")
+        assert rec.getMessage().startswith("sent poller died account=100001")
         assert isinstance(rec.exc_info[1], OverflowError)
         await sup.stop()
 

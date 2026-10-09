@@ -19,12 +19,12 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import events
-from of_client import session_refused
+import poll_loop
 
 log = logging.getLogger("upstream.sent_poller")
 
@@ -35,7 +35,6 @@ MESSAGES_LIMIT = 10
 CHAT_PAGES = 3        # message pages per chat per poll
 PENDING_MAX = 200     # changed chats waiting for a fetch
 EMITTED_MAX = 2000
-BACKOFF_MAX_S = 30 * 60
 
 Publish = Callable[[dict], None]
 Changed = dict[int, tuple[int, Any]]   # chat id -> (lastMessage.id, withUser)
@@ -49,17 +48,10 @@ def _page(resp: Any) -> tuple[list[dict], bool]:
     return [i for i in resp["list"] if isinstance(i, dict)], bool(resp.get("hasMore"))
 
 
-def _retry_after(resp: Any) -> float | None:
-    """`Retry-After` in seconds, or None when absent or not a number (an HTTP date counts as absent)."""
-    headers = getattr(resp, "headers", None) or {}
-    try:
-        seconds = float(headers.get("retry-after"))
-    except (TypeError, ValueError):
-        return None
-    return min(max(seconds, 0.0), BACKOFF_MAX_S)
-
-
 class SentPoller:
+    name = "sent"
+    log = log
+
     def __init__(self, account_id: int, client: Any, publish: Publish, *, interval: float,
                  now: Callable[[], datetime] | None = None) -> None:
         self.account_id = account_id
@@ -170,40 +162,8 @@ class SentPoller:
             self._warned.add(key)
             log.warning(msg, *args)
 
-    async def run(self, on_expired: Callable[[], None],
-                  sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep) -> None:
-        """Poll until cancelled; a dead session calls `on_expired` and ends the task."""
-        backoff = self.interval
-        failing = False
-        while True:
-            delay = self.interval
-            try:
-                await self.poll()
-            except Exception as e:  # never let the task die
-                resp = getattr(e, "response", None)
-                if session_refused(resp):
-                    log.warning("sent poller: session refused account=%s", self.account_id)
-                    on_expired()
-                    return
-                status = getattr(resp, "status_code", None)
-                retry = _retry_after(resp) if status == 429 else None
-                if retry is None:
-                    backoff = min(backoff * 2, BACKOFF_MAX_S)
-                    delay = backoff
-                else:
-                    delay = max(retry, self.interval)
-                if not failing:
-                    log.warning("sent poller failed account=%s status=%s: retrying in %.0fs",
-                                self.account_id, status, delay, exc_info=resp is None)
-                failing = True
-            else:
-                if failing:
-                    log.info("sent poller recovered account=%s", self.account_id)
-                backoff, failing = self.interval, False
-            await sleep(delay)
-
 
 async def run(account_id: int, client: Any, publish: Publish, on_expired: Callable[[], None], *,
               interval: float) -> None:
     """The Supervisor's poller (app.py binds `interval`): one `SentPoller` per pump start."""
-    await SentPoller(account_id, client, publish, interval=interval).run(on_expired)
+    await poll_loop.run(SentPoller(account_id, client, publish, interval=interval), on_expired)

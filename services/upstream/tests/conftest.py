@@ -1,4 +1,5 @@
 """Test env: a throwaway state dir and a known token, set before `app` is imported."""
+import asyncio
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ os.environ["UPSTREAM_STATE_DIR"] = tempfile.mkdtemp(prefix="upstream-test-")
 os.environ["UPSTREAM_TOKEN"] = TOKEN = "test-token-0123456789"
 os.environ["OF_REQUIRE_PROXY"] = "true"
 os.environ["SENT_POLL_INTERVAL_S"] = "0"  # app's pumps poll no chat list (OFFake would see the calls)
+os.environ["MASS_POLL_INTERVAL_S"] = "0"  # nor the mass-message history
 
 from curl_cffi.requests import Response
 from curl_cffi.requests.headers import Headers
@@ -22,6 +24,7 @@ from curl_cffi.requests.headers import Headers
 import accounts
 import client_pool
 import config
+import poll_loop
 import proxies
 from of_client import OFClient
 
@@ -91,6 +94,33 @@ def key_paths(value, path: str = "$") -> set[str]:
         for v in value:
             out |= key_paths(v, f"{path}[]")
     return out
+
+
+def mass_entry(qid, date, sent, /, **extra) -> dict:
+    """A mass-message history entry with the 19 keys of a real one (the 2026-10-09 live read)."""
+    return {
+        "id": qid, "date": date, "text": "<p>text</p>", "rawText": "<p>text</p>", "giphyId": None, "media": [],
+        "mediaCount": 0, "previews": [], "sentCount": sent, "viewedCount": 0, "isCanceled": False, "isFree": True,
+        "isMediaReady": True, "isReportedByMe": False, "isTip": False, "canUnsend": True, "unsendSeconds": 1000000,
+        "responseType": "message", "template": "group", **extra,
+    }
+
+
+class Done(Exception):
+    pass
+
+
+def run_loop(poller, sleeps, n, on_expired=lambda: None):
+    """Run the poll loop until its `n`th sleep; the slept seconds land in `sleeps`."""
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == n:
+            raise Done
+
+    async def main():
+        await poll_loop.run(poller, on_expired, sleep=sleep)
+
+    asyncio.run(main())
 
 
 # ─── of_fake: OF at the wire ───────────────────────────────────────

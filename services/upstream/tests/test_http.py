@@ -61,23 +61,28 @@ def test_refuses_to_boot_with_a_short_token():
     assert "UPSTREAM_TOKEN" in r.stderr
 
 
+INTERVALS = ["SENT_POLL_INTERVAL_S", "MASS_POLL_INTERVAL_S"]
+
+
+@pytest.mark.parametrize("name", INTERVALS)
 @pytest.mark.parametrize(("value", "seconds"), [("0", 0), ("10", 10), ("86400", 86400), ("9", None),
                                                 ("-1", None), ("nan", None), ("inf", None), ("2m", None)])
-def test_sent_poll_interval_is_0_or_10_to_86400_seconds(value, seconds):
+def test_poll_interval_is_0_or_10_to_86400_seconds(name, value, seconds):
     if seconds is not None:
-        assert upstream._sent_poll_interval(value) == seconds
+        assert upstream._poll_interval(name, value) == seconds
         return
     with pytest.raises(SystemExit) as e:
-        upstream._sent_poll_interval(value)
-    assert str(e.value) == f"SENT_POLL_INTERVAL_S must be 0 (off) or 10 to 86400 seconds, got {value!r}"
+        upstream._poll_interval(name, value)
+    assert str(e.value) == f"{name} must be 0 (off) or 10 to 86400 seconds, got {value!r}"
 
 
-def test_refuses_to_boot_with_a_bad_sent_poll_interval():
-    env = {**os.environ, "SENT_POLL_INTERVAL_S": "2m"}
+@pytest.mark.parametrize("name", INTERVALS)
+def test_refuses_to_boot_with_a_bad_poll_interval(name):
+    env = {**os.environ, name: "2m"}
     r = subprocess.run([sys.executable, "-c", "import app"], cwd=Path(__file__).parent.parent,
                        env=env, capture_output=True, text=True, check=False)
     assert r.returncode != 0
-    assert "SENT_POLL_INTERVAL_S must be 0 (off) or 10 to 86400 seconds, got '2m'" in r.stderr
+    assert f"{name} must be 0 (off) or 10 to 86400 seconds, got '2m'" in r.stderr
     assert "Traceback" not in r.stderr
 
 

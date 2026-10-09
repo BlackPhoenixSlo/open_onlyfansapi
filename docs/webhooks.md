@@ -51,13 +51,13 @@ it validates. **Status** says whether this gateway sends the event:
 | Type | Status | Sent when | `payload` |
 |---|---|---|---|
 | `messages.received` | emitted | A connected account received a message | The OnlyFans message object, with `fromUser` |
-| `messages.sent` | emitted | A connected account sent a direct message (polled, see below; mass and other queued messages are not sent) | The OnlyFans message object, with `toUser` |
+| `messages.sent` | emitted | A connected account sent a direct message (polled, see below; mass and other queued messages are not sent; a broadcast arrives as `chat_queue.finished`) | The OnlyFans message object, with `toUser` |
 | `messages.ppv.unlocked` | TBC | A fan unlocked a paid message (post unlocks arrive as `transactions.new`) | The OnlyFans notification, with `user` |
 | `messages.deleted` | emitted | A message in one of the account's chats was deleted | `{ id }` (the message id, as a string) |
 | `messages.liked` | TBC | A fan liked a message | `{ id }` |
 | `messages.unliked` | TBC | A fan unliked a message | `{ id }` |
 | `chat_queue.updated` | TBC | A mass-message queue made progress | The queue's state (`pending`, `total`, `isDone`, ...) |
-| `chat_queue.finished` | TBC | A mass-message queue finished | Same as `chat_queue.updated` |
+| `chat_queue.finished` | emitted | A broadcast (mass message) of a connected account finished sending (polled, see below) | OnlyFans's mass-message history entry: id (the queue id), date, text, sentCount, viewedCount, isCanceled, mediaCount, ... |
 | `subscriptions.new` | TBC | A fan subscribed | The OnlyFans notification, with `user` |
 | `subscriptions.renewed` | TBC | A fan renewed | The OnlyFans notification, with `user` |
 | `subscriptions.expired` | TBC | A fan's subscription expired | The subscription, with `user` and `expiredAt` |
@@ -103,19 +103,34 @@ of them:
   them every `SENT_POLL_INTERVAL_S` seconds (120 by default, 10 to 86400; `0` turns the event off). An event arrives
   within one poll interval of the send unless the chats that changed in that interval hold more than 8 pages of about
   10 messages (a busy chat can take 2 or 3); then the rest follow on later polls in order. Direct messages only: mass
-  messages and other queued sends (`isFromQueue` true) are not sent; use the analytics backfill for them. The payload
-  is the OnlyFans message object with `toUser`, the chat's fan as `{ id, _view }`. Sends are missed while the upstream
-  is down, in read chats while the account has more than about 50 unread chats (keep the inbox answered), past about
-  30 messages in one chat between two polls, and, when more than 200 changed chats wait for a later poll, in the chats
-  that have waited longest (among chats that changed in the same interval, the most recently active ones). Each poll
-  makes at most 13 OnlyFans requests per account (about 390 an hour at the 120 s default).
+  messages and other queued sends (`isFromQueue` true) are not sent; a broadcast arrives as one `chat_queue.finished`;
+  its per-fan copies only through the analytics backfill. The payload is the OnlyFans message object with `toUser`,
+  the chat's fan as `{ id, _view }`. Sends are missed while the upstream is down, in read chats while the account has
+  more than about 50 unread chats (keep the inbox answered), past about 30 messages in one chat between two polls,
+  and, when more than 200 changed chats wait for a later poll, in the chats that have waited longest (among chats
+  that changed in the same interval, the most recently active ones). Each poll makes at most 13 OnlyFans requests per
+  account (about 390 an hour at the 120 s default).
+- `chat_queue.finished`: OnlyFans's socket says nothing about mass messages, so the upstream reads each account's
+  mass-message history (its broadcasts of the last 24 hours) every `MASS_POLL_INTERVAL_S` seconds (120 by default,
+  10 to 86400; `0` turns the event off), one OnlyFans request per poll. OnlyFans lists a broadcast there once its
+  last copy has gone out, with its final number of recipients (`sentCount`). A broadcast is sent once, the first
+  time a poll lists it with `sentCount` above 0: within one poll interval of the send (2 minutes at the default).
+  The payload is the history entry as OnlyFans returned it then (`id` is the queue id, the `queueId` of each copy;
+  no `pending`, `total` or `isDone`); `ts` is its `date`. Nothing is sent when it changes later (views, a cancel or
+  an unsend). A queued send to a single fan is sent too, though the analytics count a one-recipient queue as a
+  direct message, not a mass message. Missed: broadcasts that reached nobody; broadcasts that finished more than two
+  poll intervals before the upstream started or the account's connection was last restarted (a re-connect, a proxy
+  change, a crash); broadcasts OnlyFans could not be read for during the whole 24 hours after them; and, past 50
+  broadcasts in 24 hours, the ones OnlyFans leaves off its page. `chat_queue.updated` is not sent: a broadcast
+  reaches its fans in under a minute, faster than a poll can see progress.
 - `fanData.available` is `false` and the `spending` figures are zero, because the gateway does not compute fan
   spending. `fanData.last_updated_at` is the message's time. Branch on `available` before using `spending`.
 
 Every event goes to every workspace linked to the upstream (`link-team`). `messages.received` and `messages.sent`
-carry the fan's message text and profile, and `upstream.*` events carry the upstream's raw payload, which reaches every endpoint
-whose `events` filter is empty. So anyone with an endpoint in a linked workspace receives that text. The gateway's
-own event ledger (used for `/v1/stats`) stores no payloads.
+carry the fan's message text and profile, `chat_queue.finished` carries the broadcast's text and media, and
+`upstream.*` events carry the upstream's raw payload, which reaches every endpoint whose `events` filter is empty.
+So anyone with an endpoint in a linked workspace receives that text. The gateway's own event ledger (used for
+`/v1/stats`) stores no payloads.
 
 Delivery from the upstream is **at-most-once**: there is no replay. Events are not sent when they happen while the
 gateway is down or reconnecting to the upstream, or while the gateway is more than 1000 events behind, or when the

@@ -26,6 +26,7 @@ import accounts
 import client_pool
 import config
 import events
+import mass_poller
 import proxies
 import sent_poller
 import session_bootstrap
@@ -53,9 +54,9 @@ _BEARER = f"Bearer {TOKEN}".encode()
 _WS_PROTOCOL = f"bearer.{TOKEN}".encode()
 
 
-def _sent_poll_interval(raw: str | None) -> float:
-    """SENT_POLL_INTERVAL_S: 120 when unset, 0 (off) or 10 to 86400 seconds, else SystemExit."""
-    error = SystemExit(f"SENT_POLL_INTERVAL_S must be 0 (off) or 10 to 86400 seconds, got {raw!r}")
+def _poll_interval(name: str, raw: str | None) -> float:
+    """A poller's interval variable `name`: 120 when unset, 0 (off) or 10 to 86400 seconds, else SystemExit."""
+    error = SystemExit(f"{name} must be 0 (off) or 10 to 86400 seconds, got {raw!r}")
     try:
         seconds = float(raw or 120)
     except ValueError:
@@ -65,14 +66,16 @@ def _sent_poll_interval(raw: str | None) -> float:
     return seconds
 
 
-SENT_POLL_INTERVAL_S = _sent_poll_interval(os.environ.get("SENT_POLL_INTERVAL_S"))
+SENT_POLL_INTERVAL_S = _poll_interval("SENT_POLL_INTERVAL_S", os.environ.get("SENT_POLL_INTERVAL_S"))
+MASS_POLL_INTERVAL_S = _poll_interval("MASS_POLL_INTERVAL_S", os.environ.get("MASS_POLL_INTERVAL_S"))
 
 hub = Hub()
 # `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
 supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "false").strip().lower()
                         not in {"0", "false", "no", "off"},
-                        poller=functools.partial(sent_poller.run, interval=SENT_POLL_INTERVAL_S)
-                        if SENT_POLL_INTERVAL_S else None)
+                        pollers={name: functools.partial(run, interval=seconds) for name, run, seconds in (
+                            ("sent", sent_poller.run, SENT_POLL_INTERVAL_S),
+                            ("mass", mass_poller.run, MASS_POLL_INTERVAL_S)) if seconds})
 
 
 @asynccontextmanager

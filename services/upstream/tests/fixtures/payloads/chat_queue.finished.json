@@ -1,0 +1,17 @@
+{
+  "event": "chat_queue.finished",
+  "account_id": "1001",
+  "payload": {
+    "id": 1013,
+    "date": "2026-10-02T12:00:00+00:00",
+    "canUnsend": true,
+    "hasError": false,
+    "isCanceled": false,
+    "isCouplePeopleMedia": false,
+    "isDone": true,
+    "isReady": true,
+    "pending": 0,
+    "total": 2,
+    "unsendSeconds": 1000000
+  }
+}

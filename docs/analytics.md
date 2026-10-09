@@ -155,7 +155,7 @@ accounts selected it is left out of Fan CVR. `dmMessages`, `dmPpvs` and `ppv` co
 
 Between backfills, the upstream's `messages.received` and `messages.sent` events for a claimed account (one with an
 `account_workspace` row) add the message's `message_fact` row, derived with the backfill's own mapper, and
-`messages.deleted` marks it deleted ([unsent messages](#stored-messages-and-export)). Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
+`messages.deleted` marks it deleted ([unsent messages](#stored-messages-and-export)). Events for unclaimed accounts are ignored, and `chat_queue.finished` (a finished broadcast, [webhooks](webhooks.md)) changes no analytics (`message_fact`); it is only counted in the event ledger's `GET /v1/stats`. The latency is the upstream's delivery over
 its event socket (OF's own socket, then one hop to the gateway, usually seconds; `messages.sent` is polled
 ([webhooks](webhooks.md))); events missed while the gateway is
 down or reconnecting are not replayed, so a backfill is still the complete view of the messages that exist. It

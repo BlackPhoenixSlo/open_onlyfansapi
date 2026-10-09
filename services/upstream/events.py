@@ -51,7 +51,7 @@ def _ts(value: Any, now: datetime) -> str:
 def int_or_none(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -144,6 +144,13 @@ def sent_message(account_id: int, msg: Any, with_user: Any) -> dict | None:
         return None
     ev["payload"] = {**ev["payload"], "toUser": with_user}
     return ev
+
+
+def chat_queue_finished(account_id: int, entry: dict, now: datetime) -> dict:
+    """`chat_queue.finished` for one of the account's mass-message history entries (mass_poller): the
+    entry as OF returned it, `id` the queue id, `ts` its `date` (or `now` when unreadable)."""
+    return event("chat_queue.finished", account_id, int_or_none(entry.get("id")),
+                 iso(parse_time(entry.get("date")) or now), entry)
 
 
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire", "chat_message_delete"})
