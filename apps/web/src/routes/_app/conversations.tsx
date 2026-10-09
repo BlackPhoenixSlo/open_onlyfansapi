@@ -23,7 +23,6 @@ export const Route = createFileRoute('/_app/conversations')({
 
 function Conversations() {
   const search = Route.useSearch();
-  const navigate = Route.useNavigate();
   const stats = useStatsRange(search);
   const { config, range } = stats;
   // The fan list's search, as sent to the API; the previous list stays up while a new search loads.
@@ -48,7 +47,6 @@ function Conversations() {
         search={search}
         stats={stats}
         served={fans.data}
-        onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
       />
 
       {config.isError && <ErrorCard message={config.error.message} />}

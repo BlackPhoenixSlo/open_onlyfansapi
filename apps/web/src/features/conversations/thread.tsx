@@ -21,20 +21,14 @@ export function Thread({ params }: { params: ConversationParams }) {
   const csv = useCsvDownload();
   const [hideMass, setHideMass] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
-  const scrolled = useRef(false);
   const data = thread.data;
+  const loaded = data !== undefined;
 
+  // Open at the newest messages once they load, and keep them in view when the mass toggle changes the height above.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!data || !el || scrolled.current) return;
-    el.scrollTop = el.scrollHeight;
-    scrolled.current = true;
-  }, [data]);
-  // Toggling mass messages changes the height above the reader; keep the newest messages in view.
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [hideMass]);
+    if (loaded && el) el.scrollTop = el.scrollHeight;
+  }, [loaded, hideMass]);
 
   const shown = useMemo(() => {
     const items = data?.items ?? [];

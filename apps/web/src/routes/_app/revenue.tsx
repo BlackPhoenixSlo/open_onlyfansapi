@@ -18,7 +18,6 @@ export const Route = createFileRoute('/_app/revenue')({
 
 function Revenue() {
   const search = Route.useSearch();
-  const navigate = Route.useNavigate();
   const stats = useStatsRange(search);
   const { config, tz, range } = stats;
   const revenue = useQuery({ ...statsRevenueQuery(range ?? {}), enabled: range !== undefined });
@@ -32,7 +31,6 @@ function Revenue() {
         search={search}
         stats={stats}
         served={revenue.data}
-        onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
       />
 
       {config.isError && <ErrorCard message={config.error.message} />}

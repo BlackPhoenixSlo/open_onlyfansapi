@@ -4,8 +4,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
+import { DataCard, ErrorCard, Kpi, NoData, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
 import { BackfillNotice } from '@/features/stats/BackfillNotice';
 import { HowToRead, HowToReadDetails } from '@/features/stats/explainers';
@@ -91,7 +90,6 @@ function Stats() {
         search={search}
         stats={stats}
         served={replyDay.data}
-        onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
       >
         {search.accountId !== undefined && <BackfillNotice accountId={search.accountId} />}
       </RangeControls>
@@ -230,32 +228,20 @@ function Stats() {
         </DataCard>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Scripts</CardTitle>
-          <CardDescription>
-            DM texts sent 5+ times in 3+ chats, most sent in this range first. Muted numbers are all-time.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {scripts.isPending ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              <Skeleton className="h-36" />
-              <Skeleton className="h-36" />
-            </div>
-          ) : scripts.isError ? (
-            <p className="text-destructive">{scripts.error.message}</p>
-          ) : scripts.data.items.length === 0 ? (
-            <NoData />
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {scripts.data.items.map((s) => (
-                <ScriptCard key={s.hash} script={s} />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <DataCard
+        title="Scripts"
+        description="DM texts sent 5+ times in 3+ chats, most sent in this range first. Muted numbers are all-time."
+        state={scripts}
+        empty={scriptCount === 0}
+        skeletonClassName="h-36"
+        emptyContent={<NoData />}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          {scripts.data?.items.map((s) => (
+            <ScriptCard key={s.hash} script={s} />
+          ))}
+        </div>
+      </DataCard>
 
       <FansCard range={range} />
 

@@ -44,7 +44,7 @@ export function RunAnalytics({ accountId }: { accountId: number }) {
   return (
     <div className="space-y-1 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={String(days)} onValueChange={(v) => setDays(Number(v) as Days)} disabled={start.isPending}>
+        <Select value={String(days)} onValueChange={(v) => setDays(DAYS.find((d) => String(d) === v) ?? DAYS[0])} disabled={start.isPending}>
           <SelectTrigger size="sm" className="w-28" aria-label="Days to backfill">
             <SelectValue />
           </SelectTrigger>

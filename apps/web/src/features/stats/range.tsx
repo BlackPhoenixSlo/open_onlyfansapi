@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { type FormEvent, type ReactNode, useMemo } from 'react';
 import { FilterSelect } from '@/components/filter-select';
 import { Button } from '@/components/ui/button';
@@ -84,24 +85,24 @@ export function CustomRange({ from, to, onApply }: { from?: string; to?: string;
 /**
  * A stats page's title row with the account filter and range presets, the day inputs for a custom range, the days
  * `served` (the API's answer) with the config and the live-event line, then `children`. `stats` is the page's
- * `useStatsRange`. `onChange` gets the search params to change; choosing custom seeds the days shown (`range`, else
- * `served`).
+ * `useStatsRange`. A change merges into the current page's search params; choosing custom seeds the days shown
+ * (`range`, else `served`).
  */
 export function RangeControls({
   title,
   search,
   stats: { config, preset, range },
   served,
-  onChange,
   children,
 }: {
   title: string;
   search: RangeSearch;
   stats: Pick<StatsRangeState, 'config' | 'preset' | 'range'>;
   served: { from: string; to: string; asOf: string } | undefined;
-  onChange: (next: RangeSearch) => void;
   children?: ReactNode;
 }) {
+  const navigate = useNavigate();
+  const onChange = (next: RangeSearch) => navigate({ to: '.', search: (prev) => ({ ...prev, ...next }) });
   const accounts = useQuery(accountsQuery);
   const cfg = config.data?.config;
   return (
