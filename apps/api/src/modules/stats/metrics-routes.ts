@@ -63,7 +63,11 @@ function metricId(id: string): MetricId {
 
 const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]));
 
-const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
+type Span = { fromDay: string; toDay: string };
+/** The fields of a stats response over `span` (`statsWindow`). */
+const windowMeta = (cfg: StatsConfig, span: Span, asOf: Date) => ({ timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay });
+/** A metric's; the samples schema drops `from` and `to`. */
+const meta = (metric: string, cfg: StatsConfig, span: Span, asOf: Date) => ({ metric, ...windowMeta(cfg, span, asOf) });
 
 /**
  * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6), `/v1/stats/fans`, `/v1/stats/messages`,
@@ -104,7 +108,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
           .header('content-disposition', `attachment; filename="${id}_${span.fromDay}_${span.toDay}.csv"`)
           .send(csv);
       }
-      return { ...meta(id, cfg, asOf), groupBy: query.groupBy, from: span.fromDay, to: span.toDay, rows };
+      return { ...meta(id, cfg, span, asOf), groupBy: query.groupBy, rows };
     },
   );
 
@@ -122,7 +126,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const items = isOpenerMetric(id)
         ? openerSamples(id, (await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), query.limit)
         : metricSamples(id, (await scopedTurns(actor.teamId, accounts, id, cfg, { ...span, asOf })).filter(inGroup), cfg, query.limit);
-      return { ...meta(id, cfg, asOf), items };
+      return { ...meta(id, cfg, span, asOf), items };
     },
   );
 
@@ -132,15 +136,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const span = range(query, cfg.timezone);
     const asOf = new Date();
     const items = await scopedScripts(actor.teamId, scopedAccounts(actor, query.accountId), cfg, { ...span, asOf });
-    return {
-      timezone: cfg.timezone,
-      configVersion: cfg.version,
-      normaliserVersion: NORMALISER_VERSION,
-      asOf: asOf.toISOString(),
-      from: span.fromDay,
-      to: span.toDay,
-      items: items.slice(0, query.limit),
-    };
+    return { ...windowMeta(cfg, span, asOf), normaliserVersion: NORMALISER_VERSION, items: items.slice(0, query.limit) };
   });
 
   r.get('/stats/fans', { schema: { tags, querystring: statsFansQuery, response: { 200: statsFans } } }, async (request) => {
@@ -149,7 +145,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const span = range(query, cfg.timezone);
     const asOf = new Date();
     const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit, query.search);
-    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...fans };
+    return { ...windowMeta(cfg, span, asOf), ...fans };
   });
 
   r.get('/stats/revenue', { schema: { tags, querystring: statsRevenueQuery, response: { 200: statsRevenue } } }, async (request) => {
@@ -159,7 +155,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const asOf = new Date();
     const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span };
     const revenue = await scopedRevenue(scope, daysBetween(span.fromDay, span.toDay), cfg.timezone);
-    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...revenue };
+    return { ...windowMeta(cfg, span, asOf), ...revenue };
   });
 
   /** `format=csv` streams every message in the range (no `limit`), queried in keyset batches, as plain UTF-8 with LF. */
@@ -188,7 +184,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
           .send(Readable.from(lines()) as unknown as string);
       }
       const page = await scopedMessages(scope, query.limit, query.cursor);
-      return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...page };
+      return { ...windowMeta(cfg, span, asOf), ...page };
     },
   );
 

@@ -629,6 +629,9 @@ export const statsScripts = z.object({
 });
 export type StatsScripts = z.infer<typeof statsScripts>;
 
+/** A stats response over a range of days: the config timezone and version it used, when, and its `from`/`to` days. */
+const statsWindow = { timezone: z.string(), configVersion: z.number().int(), asOf: z.string(), from: z.string(), to: z.string() };
+
 /** `GET /v1/stats/fans`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
 export const statsFansQuery = z.object({
   from: isoDay.optional(),
@@ -684,11 +687,7 @@ export const statsFan = z.object({
 export type StatsFan = z.infer<typeof statsFan>;
 
 export const statsFans = z.object({
-  timezone: z.string(),
-  configVersion: z.number().int(),
-  asOf: z.string(),
-  from: z.string(),
-  to: z.string(),
+  ...statsWindow,
   /** Fans in scope before `limit`; more than `items` when the list is cut. */
   total: z.number().int(),
   /** Most gross in the range first, then latest fan message (fans who wrote nothing last), then latest message. */
@@ -753,11 +752,7 @@ export const statsMessage = z.object({
 export type StatsMessage = z.infer<typeof statsMessage>;
 
 export const statsMessages = z.object({
-  timezone: z.string(),
-  configVersion: z.number().int(),
-  asOf: z.string(),
-  from: z.string(),
-  to: z.string(),
+  ...statsWindow,
   /** `limit` cut the list: more messages match. */
   truncated: z.boolean(),
   /** Pass as `cursor` for the next page; null when nothing is cut. */
@@ -784,11 +779,7 @@ const revenueSums = { gross: z.number().int(), net: z.number().int(), transactio
  * nothing to divide by.
  */
 export const statsRevenue = z.object({
-  timezone: z.string(),
-  configVersion: z.number().int(),
-  asOf: z.string(),
-  from: z.string(),
-  to: z.string(),
+  ...statsWindow,
   totals: z.object({
     ...revenueSums,
     /** The part of `gross` OF has settled (status `done`). */
