@@ -1,8 +1,7 @@
 import type { StatsBackfillRun } from '../../contracts.js';
-import { AppError } from '../../lib/errors.js';
 import { newId } from '../../lib/ids.js';
 import type { Upstream } from '../../lib/upstream.js';
-import { backfill, dbStore, SessionExpiredError, type BackfillResult } from './backfill.js';
+import { backfill, BackfillRunningError, dbStore, SessionExpiredError, type BackfillResult } from './backfill.js';
 
 /**
  * Dashboard backfill runs (`POST /v1/stats/backfill`), the last one per account. In memory only: an API restart
@@ -52,7 +51,7 @@ export function backfillRun(teamId: string, accountId: number): StatsBackfillRun
 export function assertBackfillIdle(accountId: number): void {
   const status = runs.get(accountId)?.status;
   if (status === 'queued' || status === 'running') {
-    throw new AppError(409, 'backfill_running', `A backfill of account ${accountId} is already running`);
+    throw new BackfillRunningError(accountId);
   }
 }
 

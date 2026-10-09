@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import type { PoolClient } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
@@ -752,6 +753,40 @@ describe('analytics backfill lock', () => {
       await otherDb.pool.end();
     }
     expect((await first).chats).toBe(3);
+    expect(await accountLocks()).toBe(0);
+  });
+
+  it('fails the run at its next request when the lock connection ends mid-run, without moving refreshed_at', async () => {
+    const before = new Date('2026-08-01T00:00:00.000Z');
+    await db.update(accountWorkspace).set({ refreshedAt: before }).where(eq(accountWorkspace.accountId, ACCOUNT));
+    // The lock's connection is the run's only bare pool.connect() (queries pass a callback).
+    const connect = pool.connect.bind(pool);
+    let lockClient: PoolClient | undefined;
+    const spy = vi.spyOn(pool, 'connect').mockImplementation(((...args: Parameters<typeof pool.connect>) => {
+      if (args.length) return connect(...args);
+      return connect().then((client) => (lockClient ??= client));
+    }) as typeof pool.connect);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let requests = 0;
+    const slow: Upstream = {
+      ...upstream,
+      forward: async (req) => {
+        if (++requests === 1) await gate;
+        return upstream.forward(req);
+      },
+    };
+    try {
+      const run = backfill(opts({ upstream: slow }));
+      await until(() => requests === 1);
+      lockClient!.emit('end'); // as when Postgres drops the connection: the lock is gone with it
+      open();
+      await expect(run).rejects.toThrow('backfill lock lost (Postgres connection dropped): run again');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(requests).toBe(1); // the request in flight finished; no new one started
+    expect((await db.select({ at: accountWorkspace.refreshedAt }).from(accountWorkspace).where(eq(accountWorkspace.accountId, ACCOUNT)))[0]!.at).toEqual(before);
     expect(await accountLocks()).toBe(0);
   });
 

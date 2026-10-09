@@ -149,7 +149,9 @@ again: there is no resume. A chat's coverage never moves back: a narrower re-run
 
 **One run per account across processes.** A run (CLI, dry run included, or the API's) holds a Postgres advisory lock
 on the account id, `pg_try_advisory_lock(<account id>)`, on a connection of its own from its start to its end, and
-releases it with `pg_advisory_unlock` on that connection (a lost connection drops it). A second run of the same
+releases it with `pg_advisory_unlock` on that connection. A lost connection drops the lock, so the run fails at its
+next request with "backfill lock lost (Postgres connection dropped): run again" (the rows stored stay;
+`refreshed_at` does not move). A second run of the same
 account on the same database, from any process, fails at once with "A backfill of account <id> is already running
 (…): wait for it to end, then run again" (`409 backfill_running` from the dashboard), and the CLI exits 1. Runs of
 different accounts in different processes still run side by side. To see who holds it: `SELECT pid, objid FROM

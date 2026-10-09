@@ -170,44 +170,47 @@ export class BackfillRunningError extends AppError {
 }
 
 /**
- * The account's backfill lock, `pg_try_advisory_lock(accountId)`, on a connection of its own held until `release`;
- * null when another session holds it. Session-level, so it holds across processes (CLI, API) on one database, and ends
- * with its connection: a connection lost mid-run drops the lock (and is logged, not thrown, so it cannot crash the
- * process).
+ * Takes the account's backfill lock, `pg_try_advisory_lock(accountId)`, on a connection of its own held until
+ * `release`; `BackfillRunningError` when another session holds it. Session-level, so it holds across processes (CLI,
+ * API) on one database, and ends with its connection: `lost` aborts when the connection errors or ends (logged, not
+ * thrown, so it cannot crash the process), since Postgres released the lock with it.
  */
-async function lockAccount(accountId: number): Promise<{ release(): Promise<void> } | null> {
+async function lockAccount(accountId: number): Promise<{ lost: AbortSignal; release(): Promise<void> }> {
   const client = await pool.connect();
-  const onError = (err: Error) => console.error(`backfill: the lock connection of account ${accountId} failed:`, err.message);
-  client.on('error', onError);
-  let locked = false;
-  try {
-    const { rows } = await client.query<{ locked: boolean }>('select pg_try_advisory_lock($1) as locked', [accountId]);
-    locked = rows[0]?.locked === true;
-  } finally {
-    if (!locked) {
-      client.off('error', onError);
-      client.release();
-    }
+  const lost = new AbortController();
+  const onLost = (err?: Error) => {
+    console.error(`backfill: the lock connection of account ${accountId} ${err ? `failed: ${err.message}` : 'ended'}`);
+    lost.abort(new Error('backfill lock lost (Postgres connection dropped): run again'));
+  };
+  /** Back to the pool, or closed (`destroy`), which drops any lock it holds. */
+  const detach = (destroy: boolean) => {
+    client.off('error', onLost).off('end', onLost);
+    client.release(destroy);
+  };
+  client.on('error', onLost).on('end', onLost);
+  const locked = await client.query<{ locked: boolean }>('select pg_try_advisory_lock($1) as locked', [accountId]).catch((err: unknown) => {
+    detach(true);
+    throw err;
+  });
+  if (locked.rows[0]?.locked !== true) {
+    detach(false);
+    throw new BackfillRunningError(accountId);
   }
-  if (!locked) return null;
   return {
+    lost: lost.signal,
     async release() {
-      // A connection that could not unlock is closed instead of pooled, which drops the lock.
       const unlocked = await client.query('select pg_advisory_unlock($1)', [accountId]).then(
         () => true,
         () => false,
       );
-      client.off('error', onError);
-      client.release(!unlocked);
+      detach(!unlocked);
     },
   };
 }
 
 /** 409 `backfill_running` when a backfill of the account holds its lock now (`POST /v1/stats/backfill`, before starting a run). */
 export async function assertBackfillUnlocked(accountId: number): Promise<void> {
-  const lock = await lockAccount(accountId);
-  if (!lock) throw new BackfillRunningError(accountId);
-  await lock.release();
+  await (await lockAccount(accountId)).release();
 }
 
 /** `YYYY-MM-DD HH:MM:SS` in UTC, the date format OF's stats and transaction calls take. */
@@ -361,22 +364,24 @@ export function memoryStore(rows: BackfillRows): BackfillStore {
  * `transientDelaysMs.length` times, and stops when `signal` aborts. Ends with
  * `store.finish()`, stopped or not. Throws `SessionExpiredError` when OF answers 401 or refuses DEAD_SESSION_CHATS chats
  * in a row with its 400 or 403 (a walked chat resets the count). Holds the account's lock (`lockAccount`) for the run,
- * across processes: `BackfillRunningError` (409 `backfill_running`) when another run of the account holds it.
+ * across processes: `BackfillRunningError` (409 `backfill_running`) when another run of the account holds it; a lock
+ * lost mid-run (its Postgres connection dropped) fails the run at its next request, before `store.finish`.
  */
 export function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   return oneAtATime(async () => {
     const lock = await lockAccount(opts.accountId);
-    if (!lock) throw new BackfillRunningError(opts.accountId);
     try {
-      return await run(opts);
+      return await run(opts, lock.lost);
     } finally {
       await lock.release();
     }
   });
 }
 
-async function run(opts: BackfillOptions): Promise<BackfillResult> {
-  const { upstream, accountId, signal, store } = opts;
+/** `lost`: the account's lock is gone, so the run fails rather than stops. */
+async function run(opts: BackfillOptions, lost: AbortSignal): Promise<BackfillResult> {
+  const { upstream, accountId, store } = opts;
+  const signal = opts.signal ? AbortSignal.any([opts.signal, lost]) : lost;
   const from = opts.from.getTime();
   const to = opts.to.getTime();
   if (!(from < to)) throw new Error('backfill: `from` must be before `to`');
@@ -426,7 +431,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     let limited = 0;
     let transient = 0;
     for (;;) {
-      signal?.throwIfAborted();
+      signal.throwIfAborted();
       await pace();
       const out = await upstream
         .forward({ accountId, path, method: 'GET', headers: { accept: 'application/json', 'x-request-id': newId('req') } })
@@ -524,7 +529,8 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       }
     }
   } catch (err) {
-    if (!signal?.aborted) throw err;
+    if (lost.aborted) throw lost.reason;
+    if (!opts.signal?.aborted) throw err;
     result.stopped = true;
   }
   await store.finish(result.stopped ? null : new Date(Math.min(startedAt, to)));
@@ -694,7 +700,7 @@ async function walkChat(
  * `onStored` gets each page's rows once they are stored, so a run stopped mid-way counts what it stored. One request
  * when the first page (100) reaches before `from`. Also the hourly transactions poll's (jobs/analytics-refresh.ts).
  */
-export async function readTransactions(get: Get, store: BackfillStore, from: number, to: number, onStored: (rows: DerivedPurchase[]) => void): Promise<void> {
+export async function readTransactions(get: Get, store: Pick<BackfillStore, 'transactions'>, from: number, to: number, onStored: (rows: DerivedPurchase[]) => void): Promise<void> {
   const seen = new Set<string>();
   for (let offset = 0; ; offset += PAGE) {
     const page = await get(`/payouts/transactions?limit=${PAGE}&offset=${offset}&startDate=${encodeURIComponent(ofDate(from))}`);
