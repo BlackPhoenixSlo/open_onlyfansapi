@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, lt, max, min, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
-import { chatCoverage, messageFact } from '../../db/schema.js';
+import { chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsFan, StatsMessage } from '../../contracts.js';
 import { cursorTime, keysetCursor } from '../../lib/cursor.js';
 import { messageDetail, plainText } from './derive.js';
@@ -36,15 +36,20 @@ export const MESSAGE_EXPORT_COLUMNS = [
   'deleted_at',
 ] as const;
 
-type Scope = { teamId: string; accountIds: number[] | null; from: Date; to: Date };
+/** A stats request's workspace, accounts (null = all of the workspace's) and instants `[from, to)`. */
+export type Scope = { teamId: string; accountIds: number[] | null; from: Date; to: Date };
 
-const inScope = (s: Scope) =>
+/** The rows of `table` (`message_fact` or `purchase_fact`) in `s`. */
+export const inScope = (table: typeof messageFact | typeof purchaseFact, s: Scope) =>
   and(
-    eq(messageFact.teamId, s.teamId),
-    s.accountIds ? inArray(messageFact.accountId, s.accountIds) : undefined,
-    gte(messageFact.createdAt, s.from),
-    lt(messageFact.createdAt, s.to),
+    eq(table.teamId, s.teamId),
+    s.accountIds ? inArray(table.accountId, s.accountIds) : undefined,
+    gte(table.createdAt, s.from),
+    lt(table.createdAt, s.to),
   );
+
+/** A PPV DM: outbound, not mass, priced. Unsent ones count. */
+export const ppvDm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
 
 const coverage = and(
   eq(chatCoverage.teamId, messageFact.teamId),
@@ -58,7 +63,6 @@ const coverage = and(
  */
 export async function scopedFans(scope: Scope, limit: number): Promise<{ total: number; items: StatsFan[] }> {
   const outbound = sql`${messageFact.direction} = 'outbound'`;
-  const ppv = sql`${outbound} and not ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
   const tip = sql`${messageFact.direction} = 'inbound' and ${messageFact.isTip}`;
   const lastAt = max(messageFact.createdAt);
   const lastFanAt = sql<Date | null>`max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound')`.mapWith(messageFact.createdAt);
@@ -71,8 +75,8 @@ export async function scopedFans(scope: Scope, limit: number): Promise<{ total: 
       dmMessages: sql<number>`(count(*) filter (where ${outbound} and not ${messageFact.isMass} and not ${messageFact.isAutomated}))::int`,
       massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
       automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
-      ppvSent: sql<number>`(count(*) filter (where ${ppv}))::int`,
-      ppvOpened: sql<number>`(count(*) filter (where ${ppv} and ${messageFact.isOpened}))::int`,
+      ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
+      ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
       tips: sql<number>`(count(*) filter (where ${tip}))::int`,
       tipCents: sql<number>`coalesce(sum(${messageFact.tipCents}) filter (where ${tip}), 0)::int`,
       firstAt: min(messageFact.createdAt),
@@ -82,7 +86,7 @@ export async function scopedFans(scope: Scope, limit: number): Promise<{ total: 
     })
     .from(messageFact)
     .leftJoin(chatCoverage, coverage)
-    .where(inScope(scope))
+    .where(inScope(messageFact, scope))
     .groupBy(messageFact.accountId, messageFact.chatId, chatCoverage.fanUsername)
     .orderBy(sql`${lastFanAt} desc nulls last`, desc(lastAt), asc(messageFact.accountId), asc(messageFact.chatId))
     .limit(limit);
@@ -129,7 +133,7 @@ async function messagePage(scope: MessageScope, after: Cursor | null, limit: num
     .leftJoin(chatCoverage, coverage)
     .where(
       and(
-        inScope(scope),
+        inScope(messageFact, scope),
         scope.chatId !== undefined ? eq(messageFact.chatId, scope.chatId) : undefined,
         direction,
         after

@@ -10,6 +10,9 @@ export const addDays = (day: string, n: number) =>
 export const todayIn = (tz: string, now = new Date()) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 
+/** `MM-DD` of a `YYYY-MM-DD` day, for chart axes. */
+export const shortDay = (d: string) => d.slice(5);
+
 /** Every day from `from` to `to`, both included. */
 export function daysBetween(from: string, to: string): string[] {
   const days: string[] = [];

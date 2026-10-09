@@ -65,17 +65,26 @@ export function Kpi({
   );
 }
 
-export function ChartCard({
+/** A card holding a chart or table, with the query's loading, error and empty states; the defaults fit a chart. */
+export function DataCard({
   title,
   description,
   state,
   empty,
+  skeletonClassName = 'h-[240px]',
+  emptyContent = (
+    <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+      No data in this range. Run the backfill for these days.
+    </div>
+  ),
   children,
 }: {
   title: string;
   description: string;
   state: { isPending: boolean; isError: boolean; error: Error | null };
   empty: boolean;
+  skeletonClassName?: string;
+  emptyContent?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -86,13 +95,11 @@ export function ChartCard({
       </CardHeader>
       <CardContent>
         {state.isPending ? (
-          <Skeleton className="h-[240px]" />
+          <Skeleton className={skeletonClassName} />
         ) : state.isError ? (
           <p className="text-destructive">{state.error?.message}</p>
         ) : empty ? (
-          <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No data in this range. Run the backfill for these days.
-          </div>
+          emptyContent
         ) : (
           children
         )}

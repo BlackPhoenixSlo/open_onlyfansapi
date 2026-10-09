@@ -11,6 +11,7 @@ import { api, statsBackfillQuery } from '@/lib/api';
 
 /** The ranges offered, in days back from now; the API takes 1 to 366. */
 const DAYS = [30, 90, 180] as const;
+type Days = (typeof DAYS)[number];
 type BusyRun = Exclude<StatsBackfillRun, { status: 'idle' }> & { status: 'queued' | 'running' };
 const busy = (run: StatsBackfillRun | undefined): run is BusyRun => run?.status === 'queued' || run?.status === 'running';
 const retries = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'retry' : 'retries'}` : '');
@@ -18,11 +19,11 @@ const retries = (n: number) => (n > 0 ? ` · ${n} ${n === 1 ? 'retry' : 'retries
 /** Claims the account for this workspace and backfills its last 30, 90 or 180 days in the background, polling every 3 s while it runs. */
 export function RunAnalytics({ accountId }: { accountId: number }) {
   const queryClient = useQueryClient();
-  const [days, setDays] = useState<number>(DAYS[0]);
+  const [days, setDays] = useState<Days>(DAYS[0]);
   const query = statsBackfillQuery(accountId);
   const run = useQuery({ ...query, refetchInterval: (q) => (busy(q.state.data) ? 3000 : false) });
   const start = useMutation({
-    mutationFn: (n: number) => api<{ runId: string }>('/v1/stats/backfill', { method: 'POST', body: { accountId, days: n } }),
+    mutationFn: (n: Days) => api<{ runId: string }>('/v1/stats/backfill', { method: 'POST', body: { accountId, days: n } }),
     onSuccess: () => {
       toast.success(`Analytics run started for account ${accountId}`);
       return queryClient.invalidateQueries({ queryKey: query.queryKey });
@@ -42,7 +43,7 @@ export function RunAnalytics({ accountId }: { accountId: number }) {
   return (
     <div className="space-y-1 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+        <Select value={String(days)} onValueChange={(v) => setDays(Number(v) as Days)} disabled={start.isPending}>
           <SelectTrigger size="sm" className="w-28" aria-label="Days to backfill">
             <SelectValue />
           </SelectTrigger>

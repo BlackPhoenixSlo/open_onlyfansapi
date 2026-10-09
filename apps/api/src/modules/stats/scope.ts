@@ -19,6 +19,13 @@ export function parseDay(value: string, name: string): number {
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
+/** Every day from `from` to `to` (`YYYY-MM-DD`), both included. */
+export function daysBetween(from: string, to: string): string[] {
+  const days: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) days.push(d);
+  return days;
+}
+
 /** `value`; 400 for a day that does not exist (e.g. 2026-02-30, 2026-13-01). */
 function checkDay(value: string, name: string): string {
   parseDay(value, name);

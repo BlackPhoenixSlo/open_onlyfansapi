@@ -1,14 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ChartCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
+import { DataCard, ErrorCard, Kpi, NoData, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
-import { RevenueTerms } from '@/features/stats/explainers';
+import { HowToReadDetails, RevenueTerms } from '@/features/stats/explainers';
 import { RangeControls, type RangeSearch, rangeSearch, useStatsRange } from '@/features/stats/range';
-import { formatPercent } from '@/features/stats/series';
+import { formatPercent, shortDay } from '@/features/stats/series';
 import { statsRevenueQuery } from '@/lib/api';
 import { formatMoney } from '@/lib/utils';
 
@@ -17,37 +14,8 @@ export const Route = createFileRoute('/_app/revenue')({
   component: Revenue,
 });
 
-const shortDay = (d: string) => d.slice(5);
-
-/** A 0..1 rate as a percent; `—` when null. */
-const ratePercent = (r: number | null | undefined) => formatPercent(r === null || r === undefined ? r : r * 100);
-
-/** A card holding a table, with the query's loading, error and empty states. */
-function TableCard({
-  title,
-  description,
-  state,
-  empty,
-  children,
-}: {
-  title: string;
-  description: string;
-  state: { isPending: boolean; isError: boolean; error: Error | null };
-  empty: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {state.isPending ? <Skeleton className="h-32" /> : state.isError ? <p className="text-destructive">{state.error?.message}</p> : empty ? <NoData /> : children}
-      </CardContent>
-    </Card>
-  );
-}
+/** A table card's loading and empty states. */
+const TABLE_CARD = { skeletonClassName: 'h-32', emptyContent: <NoData /> };
 
 function Revenue() {
   const search = Route.useSearch();
@@ -61,7 +29,7 @@ function Revenue() {
   const data = revenue.data;
   const totals = data?.totals;
   const dm = data?.ppv.find((p) => p.scope === 'dm');
-  const state = { loading: revenue.isPending, error: revenue.error?.message };
+  const kpiState = { loading: revenue.isPending, error: revenue.error?.message };
   const noSales = !totals?.transactions;
 
   return (
@@ -77,33 +45,33 @@ function Revenue() {
       {config.isError && <ErrorCard message={config.error.message} />}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Kpi title="Gross" {...state} empty={noSales} value={formatMoney(totals?.gross ?? 0)}>
+        <Kpi title="Gross" {...kpiState} empty={noSales} value={formatMoney(totals?.gross ?? 0)}>
           What fans paid, before OF's fee.
         </Kpi>
-        <Kpi title="Net" {...state} empty={noSales} value={formatMoney(totals?.net ?? 0)}>
+        <Kpi title="Net" {...kpiState} empty={noSales} value={formatMoney(totals?.net ?? 0)}>
           What the creator earns after OF's fee.
         </Kpi>
-        <Kpi title="Transactions" {...state} empty={noSales} value={(totals?.transactions ?? 0).toLocaleString()}>
+        <Kpi title="Transactions" {...kpiState} empty={noSales} value={(totals?.transactions ?? 0).toLocaleString()}>
           PPVs bought, tips, subscriptions and paid posts.
         </Kpi>
-        <Kpi title="Payers" {...state} empty={noSales} value={(totals?.payers ?? 0).toLocaleString()}>
+        <Kpi title="Payers" {...kpiState} empty={noSales} value={(totals?.payers ?? 0).toLocaleString()}>
           Fans who paid in this range.
         </Kpi>
         <Kpi
           title="Golden ratio"
-          {...state}
+          {...kpiState}
           empty={totals?.goldenRatio === null || totals?.goldenRatio === undefined}
-          value={ratePercent(totals?.goldenRatio)}
+          value={formatPercent(totals?.goldenRatio)}
           sub={`${totals?.payers ?? 0} payers / ${totals?.fansMessaged ?? 0} fans messaged`}
         >
           Payers divided by the fans with a message in this range.
         </Kpi>
-        <Kpi title="PPV unlock (DM)" {...state} empty={!dm?.sent} value={ratePercent(dm?.rate)} sub={`${dm?.opened ?? 0} opened / ${dm?.sent ?? 0} sent`}>
+        <Kpi title="PPV unlock (DM)" {...kpiState} empty={!dm?.sent} value={formatPercent(dm?.rate)} sub={`${dm?.opened ?? 0} opened / ${dm?.sent ?? 0} sent`}>
           Priced DMs opened over those sent. Upper bound: opened counts as bought.
         </Kpi>
       </div>
 
-      <ChartCard title="Gross by day" description={`What fans paid each day (${tz ?? 'stats timezone'}).`} state={revenue} empty={noSales}>
+      <DataCard title="Gross by day" description={`What fans paid each day (${tz ?? 'stats timezone'}).`} state={revenue} empty={noSales}>
         <Chart
           data={data?.byDay ?? []}
           x="day"
@@ -113,10 +81,10 @@ function Revenue() {
           format={formatMoney}
           series={[{ key: 'gross', label: 'Gross', color: COLORS.primary, type: 'bar' }]}
         />
-      </ChartCard>
+      </DataCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <TableCard title="By kind" description="OF's transaction type, most gross first." state={revenue} empty={noSales}>
+        <DataCard title="By kind" description="OF's transaction type, most gross first." state={revenue} empty={noSales} {...TABLE_CARD}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -137,13 +105,14 @@ function Revenue() {
               ))}
             </TableBody>
           </Table>
-        </TableCard>
+        </DataCard>
 
-        <TableCard
+        <DataCard
           title="PPV by scope"
-          description="Priced messages sent and not unsent; opened counts as bought."
+          description="Priced messages sent, unsent ones included; opened counts as bought."
           state={revenue}
           empty={!data?.ppv.some((p) => p.sent > 0)}
+          {...TABLE_CARD}
         >
           <Table>
             <TableHeader>
@@ -160,15 +129,15 @@ function Revenue() {
                   <TableCell className="font-medium">{p.scope === 'dm' ? 'DM' : 'Mass'}</TableCell>
                   <TableCell className="text-right">{p.sent.toLocaleString()}</TableCell>
                   <TableCell className="text-right">{p.opened.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">{ratePercent(p.rate)}</TableCell>
+                  <TableCell className="text-right">{formatPercent(p.rate)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </TableCard>
+        </DataCard>
       </div>
 
-      <TableCard title="Top payers" description="The 50 fans who paid the most in this range." state={revenue} empty={!data?.topPayers.length}>
+      <DataCard title="Top payers" description="The 50 fans who paid the most in this range." state={revenue} empty={!data?.topPayers.length} {...TABLE_CARD}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -208,17 +177,11 @@ function Revenue() {
             ))}
           </TableBody>
         </Table>
-      </TableCard>
+      </DataCard>
 
-      <details className="group rounded-xl border bg-card p-4">
-        <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
-          <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-          How to read this
-        </summary>
-        <div className="mt-4">
-          <RevenueTerms />
-        </div>
-      </details>
+      <HowToReadDetails>
+        <RevenueTerms />
+      </HowToReadDetails>
     </div>
   );
 }

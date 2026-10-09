@@ -1,9 +1,23 @@
 import type { StatsConfig } from '@api/contracts';
+import { ChevronDown } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { COLORS } from './chart';
 import { formatWindow } from './series';
 
 // "How to read this": short text with small SVG drawings, redrawn from the step 0 showcase.
+
+/** A stats page's collapsible "How to read this" block around its explainer. */
+export function HowToReadDetails({ children }: { children: ReactNode }) {
+  return (
+    <details className="group rounded-xl border bg-card p-4">
+      <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
+        <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+        How to read this
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
+  );
+}
 
 type Windows = Pick<StatsConfig, 'replyCapSeconds' | 'slaSeconds' | 'openGapSeconds' | 'openReplySeconds'>;
 
@@ -214,7 +228,7 @@ function VerifyFlow() {
 const REVENUE_TERMS: [string, string][] = [
   [
     'Gross and net',
-    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed. Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
+    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed, in USD. Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
   ],
   [
     'Kind',
@@ -227,7 +241,7 @@ const REVENUE_TERMS: [string, string][] = [
   ],
   [
     'PPV unlock',
-    "Priced messages sent in the range and not unsent: DM (not mass) or mass. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
+    "Priced messages sent in the range: DM (not mass) or mass. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
   ],
   [
     'Top payers',

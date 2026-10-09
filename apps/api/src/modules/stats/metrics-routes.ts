@@ -17,6 +17,8 @@ import {
   statsMetricList,
   statsMetricQuery,
   statsMetricSeries,
+  statsRevenue,
+  statsRevenueQuery,
   statsSamples,
   statsSamplesQuery,
   statsScripts,
@@ -47,10 +49,11 @@ import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
 import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } from '../analytics/messages.js';
+import { scopedRevenue } from '../analytics/revenue.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
-import { assertAccountAllowed, DAY_MS, range, scopedAccounts } from './scope.js';
+import { assertAccountAllowed, DAY_MS, daysBetween, range, scopedAccounts } from './scope.js';
 
 function metricId(id: string): MetricId {
   if (!isMetricId(id)) throw new AppError(404, 'metric_not_found', `No metric ${JSON.stringify(id)}`);
@@ -62,9 +65,10 @@ const snakeCase = (row: Record<string, unknown>) => Object.fromEntries(Object.en
 const meta = (metric: string, cfg: StatsConfig, asOf: Date) => ({ metric, timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString() });
 
 /**
- * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6), `/v1/stats/fans`, `/v1/stats/messages` and
- * `/v1/stats/backfill`: reply time, reply SLA, openers, script candidates and the stored messages per fan over the
- * workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's own rows. Mounted under /v1.
+ * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6), `/v1/stats/fans`, `/v1/stats/messages`,
+ * `/v1/stats/revenue` and `/v1/stats/backfill`: reply time, reply SLA, openers, script candidates, the stored messages
+ * per fan and revenue over the workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's
+ * own rows. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -145,6 +149,16 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const asOf = new Date();
     const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit);
     return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...fans };
+  });
+
+  r.get('/stats/revenue', { schema: { tags, querystring: statsRevenueQuery, response: { 200: statsRevenue } } }, async (request) => {
+    const { actor, query } = request;
+    const cfg = await getStatsConfig(actor.teamId);
+    const span = range(query, cfg.timezone);
+    const asOf = new Date();
+    const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span };
+    const revenue = await scopedRevenue(scope, daysBetween(span.fromDay, span.toDay), cfg.timezone);
+    return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...revenue };
   });
 
   /** `format=csv` streams every message in the range (no `limit`), queried in keyset batches, as plain UTF-8 with LF. */

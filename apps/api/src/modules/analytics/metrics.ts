@@ -225,9 +225,6 @@ export function zonedMidnight(day: string, tz: string): Date {
 /** Today in `tz`, as `YYYY-MM-DD`. */
 export const zonedToday = (tz: string, now = new Date()) => zoned(now, tz).day;
 
-/** The day (`YYYY-MM-DD`) in `tz` that the instant `t` falls on. */
-export const zonedDay = (t: Date, tz: string) => zoned(t, tz).day;
-
 /** A turn's group by its start, an opener's by its send time. */
 export function groupKey(t: AccountTurn | AccountOpener, groupBy: StatsGroupBy, tz: string): string {
   if (groupBy === 'account') return String(t.accountId);

@@ -5,10 +5,10 @@ import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChartCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
+import { DataCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
 import { BackfillNotice } from '@/features/stats/BackfillNotice';
-import { HowToRead } from '@/features/stats/explainers';
+import { HowToRead, HowToReadDetails } from '@/features/stats/explainers';
 import { FansCard } from '@/features/stats/fans';
 import { RangeControls, type RangeSearch, rangeSearch, useStatsRange } from '@/features/stats/range';
 import { RawData } from '@/features/stats/raw-data';
@@ -23,6 +23,7 @@ import {
   openerSeries,
   percent,
   replySeries,
+  shortDay,
   slaSeries,
   sum,
 } from '@/features/stats/series';
@@ -41,8 +42,6 @@ export const Route = createFileRoute('/_app/stats')({
 
 /** Scripts asked for; a full page shows "50+". */
 const SCRIPT_LIMIT = 50;
-
-const shortDay = (d: string) => d.slice(5);
 
 /** A metric over the page's range and account; idle until the range is known (it needs the config timezone). */
 function useMetric(id: string, groupBy: StatsGroupBy, range: StatsRange | undefined) {
@@ -157,7 +156,7 @@ function Stats() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard
+        <DataCard
           title="Reply time by day"
           description="Median and 90th percentile wait, replies within the cap only. Lower is better."
           state={replyDay}
@@ -175,8 +174,8 @@ function Stats() {
               { key: 'p90', label: '90th percentile', color: COLORS.soft, type: 'line' },
             ]}
           />
-        </ChartCard>
-        <ChartCard
+        </DataCard>
+        <DataCard
           title="Reply SLA by day"
           description={`Share of fan turns answered within ${cfg ? formatWindow(cfg.slaSeconds) : 'the SLA'}. Higher is better.`}
           state={slaDay}
@@ -192,8 +191,8 @@ function Stats() {
             format={(v) => `${Math.round(v)}%`}
             series={[{ key: 'sla', label: 'SLA met', color: COLORS.ok, type: 'bar' }]}
           />
-        </ChartCard>
-        <ChartCard
+        </DataCard>
+        <DataCard
           title="Openers per day"
           description={`Whether the fan answered within ${cfg ? formatWindow(cfg.openReplySeconds) : 'the window'}; pending means the window is still open.`}
           state={openersDay}
@@ -212,8 +211,8 @@ function Stats() {
               { key: 'pending', label: 'Pending', color: COLORS.wait, type: 'bar', stack: 'o' },
             ]}
           />
-        </ChartCard>
-        <ChartCard
+        </DataCard>
+        <DataCard
           title="Reply time by hour of day"
           description={`Median wait by the hour the fan wrote (${tz ?? 'stats timezone'}). Shows the slow shifts.`}
           state={replyHour}
@@ -228,7 +227,7 @@ function Stats() {
             format={formatWait}
             series={[{ key: 'median', label: 'Median', color: COLORS.primary, type: 'bar' }]}
           />
-        </ChartCard>
+        </DataCard>
       </div>
 
       <Card>
@@ -260,15 +259,9 @@ function Stats() {
 
       <FansCard range={range} />
 
-      <details className="group rounded-xl border bg-card p-4">
-        <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
-          <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
-          How to read this
-        </summary>
-        <div className="mt-4">
-          <HowToRead config={cfg} />
-        </div>
-      </details>
+      <HowToReadDetails>
+        <HowToRead config={cfg} />
+      </HowToReadDetails>
 
       <div className="space-y-4">
         <Button variant="ghost" onClick={() => setShowRaw((v) => !v)} aria-expanded={showRaw}>

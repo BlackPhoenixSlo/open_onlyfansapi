@@ -4,7 +4,8 @@ import { db, pool } from '../src/db/index.js';
 import { messageFact, purchaseFact } from '../src/db/schema.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
 
-// Revenue (`GET /v1/stats/revenue`) over transactions and messages stored by hand. The range is 2026-09-01..03 in UTC.
+// Revenue (`GET /v1/stats/revenue`) over transactions and messages stored by hand. The range is 2026-09-01..03 in UTC,
+// the default stats timezone.
 
 const A1 = 1001;
 const A2 = 1002;
@@ -89,7 +90,7 @@ beforeAll(async () => {
     message(A1, 4, 3003, '09-02T10:00', { priceCents: 500 }),
     message(A1, 5, 3003, '09-02T11:00', { isMass: true, priceCents: 900, isOpened: true }),
     message(A1, 6, 3004, '09-02T11:00', { isMass: true, priceCents: 900 }),
-    // Unsent: no fan messaged, no PPV.
+    // Unsent: not a fan messaged, but still a PPV sent.
     message(A1, 7, 3005, '09-02T11:00', { isMass: true, priceCents: 900, deletedAt: new Date('2026-09-02T12:00:00.000Z') }),
     // Before the range: not a fan messaged in it, but the payer 3002 has a chat.
     message(A1, 8, 3002, '08-20T10:00', { direction: 'inbound' }),
@@ -107,7 +108,7 @@ describe('stats revenue', () => {
     const body = await get(RANGE);
     expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-03' });
     // Payers (A1 3001, 3002, 3008; A2 4001) over fans messaged in the range (A1 3001, 3003, 3004; A2 4001, 4002).
-    expect(body.totals).toEqual({ gross: 4600, net: 3680, transactions: 6, payers: 4, fansMessaged: 5, goldenRatio: 0.8 });
+    expect(body.totals).toEqual({ gross: 4600, net: 3680, transactions: 6, payers: 4, fansMessaged: 5, goldenRatio: 80 });
     expect(body.byKind).toEqual([
       { kind: 'subscription', gross: 2000, net: 1600, transactions: 1 },
       { kind: 'message', gross: 1700, net: 1360, transactions: 2 },
@@ -122,10 +123,10 @@ describe('stats revenue', () => {
     ]);
   });
 
-  it('rates PPV unlocks by DM and mass, leaving unsent messages out', async () => {
+  it('rates PPV unlocks by DM and mass in percent, unsent PPVs included', async () => {
     expect((await get(RANGE)).ppv).toEqual([
-      { scope: 'dm', sent: 2, opened: 1, rate: 0.5 },
-      { scope: 'mass', sent: 3, opened: 1, rate: 1 / 3 },
+      { scope: 'dm', sent: 2, opened: 1, rate: 50 },
+      { scope: 'mass', sent: 4, opened: 1, rate: 25 },
     ]);
   });
 
@@ -145,7 +146,7 @@ describe('stats revenue', () => {
   });
 
   it("scopes to the key's accounts, `accountId` and the workspace's own rows", async () => {
-    const a2 = { gross: 700, net: 560, transactions: 1, payers: 1, fansMessaged: 2, goldenRatio: 0.5 };
+    const a2 = { gross: 700, net: 560, transactions: 1, payers: 1, fansMessaged: 2, goldenRatio: 50 };
     expect((await get(RANGE, bearer(limitedKeyA))).totals).toEqual(a2);
     expect((await get(`${RANGE}&accountId=${A2}`)).totals).toEqual(a2);
     const denied = await app.inject({ method: 'GET', url: `/v1/stats/revenue?${RANGE}&accountId=${A1}`, headers: bearer(limitedKeyA) });
@@ -157,5 +158,16 @@ describe('stats revenue', () => {
     const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
     expect(none.totals).toEqual({ gross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, goldenRatio: null });
     expect(none.topPayers).toEqual([]);
+  });
+
+  it('buckets the range and its days in the stats timezone', async () => {
+    // UTC+14: the range is 08-31T10:00Z..09-03T10:00Z, so t1 and t3 fall on 09-02, t7 on 09-03, and t2, t4, t5 after it.
+    const put = await app.inject({ method: 'PUT', url: '/v1/stats/config', headers: dashboard(cookieA), payload: { timezone: 'Pacific/Kiritimati' } });
+    expect(put.statusCode).toBe(200);
+    expect((await get(RANGE)).byDay).toEqual([
+      { day: '2026-09-01', gross: 0, net: 0, transactions: 0 },
+      { day: '2026-09-02', gross: 3000, net: 2400, transactions: 2 },
+      { day: '2026-09-03', gross: 700, net: 560, transactions: 1 },
+    ]);
   });
 });

@@ -755,7 +755,7 @@ export type StatsRevenueQuery = z.input<typeof statsRevenueQuery>;
 /** Money sums in cents: OF's `amount` (gross) and `net` per transaction, a missing one counted as 0. */
 const revenueSums = { gross: z.number().int(), net: z.number().int(), transactions: z.number().int() };
 
-/** Revenue from the stored transactions (`purchase_fact`) and PPV sends (`message_fact`). Rates are 0 to 1, null when nothing to divide by. */
+/** Revenue from the stored transactions (`purchase_fact`, all USD) and PPV sends (`message_fact`). Rates are percent; null when nothing to divide by. */
 export const statsRevenue = z.object({
   timezone: z.string(),
   configVersion: z.number().int(),
@@ -768,14 +768,14 @@ export const statsRevenue = z.object({
     payers: z.number().int(),
     /** Fans (chats) with a message in the range that is not unsent, either direction; per account. */
     fansMessaged: z.number().int(),
-    /** `payers / fansMessaged`. */
+    /** `payers / fansMessaged`, in percent (can pass 100: a payer need not have been messaged). */
     goldenRatio: z.number().nullable(),
   }),
   /** OF's transaction type (`message`, `tips`, `subscription`, `subscription_prolong`, `post`, ...; `unknown` when absent), most gross first. */
   byKind: z.array(z.object({ kind: z.string(), ...revenueSums })),
   /** Every day of the range in the config timezone, zeros included. */
   byDay: z.array(z.object({ day: z.string(), ...revenueSums })),
-  /** Priced outbound messages not unsent: `dm` not mass, `mass` mass; `opened` = OF's `isOpened` (bought). */
+  /** Priced outbound messages, unsent ones included: `dm` not mass, `mass` mass; `opened` = OF's `isOpened` (bought); `rate` = opened / sent in percent. */
   ppv: z.array(z.object({ scope: z.enum(['dm', 'mass']), sent: z.number().int(), opened: z.number().int(), rate: z.number().nullable() })),
   /** Up to 50 (account, fan) pairs, most gross first. */
   topPayers: z.array(

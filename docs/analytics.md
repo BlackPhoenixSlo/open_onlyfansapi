@@ -118,18 +118,19 @@ a PPV bought or a tip sent outside the stored messages is not in them.
 
 `GET /v1/stats/revenue` (and the dashboard's Revenue page) sums the transactions the backfill stored in
 `purchase_fact` (OF's `/payouts/transactions`; live events add none, so a range never backfilled shows nothing) and
-counts PPV sends in `message_fact`. Money is in cents, integers: `gross` is OF's `amount`, `net` its `net` (a missing
-one counts as 0). Rates are fractions from 0 to 1, null when the denominator is 0.
+counts PPV sends in `message_fact`. Money is in cents, integers, USD (every stored transaction is): `gross` is OF's
+`amount`, `net` its `net` (a missing one counts as 0). Rates are percent, null when the denominator is 0.
 
 - `totals`: `gross`, `net`, `transactions`; `payers`, the fans with a transaction in the range whose fan is known;
   `fansMessaged`, the fans (chats) with a message in the range that is not unsent, from either side; `goldenRatio`,
-  `payers / fansMessaged` (a payer need not have been messaged, so it can pass 1). Payers and fans count per account:
+  `payers / fansMessaged` (a payer need not have been messaged, so it can pass 100). Payers and fans count per account:
   a fan on two accounts counts twice.
 - `byKind`: per OF transaction type (`descriptionDetails.type`: `message`, `tips`, `subscription`,
   `subscription_prolong`, `post`; `unknown` when absent), `transactions`, `gross`, `net`, most gross first.
 - `byDay`: every day of the range in the config timezone, zeros included.
-- `ppv`: `dm` (not mass) and `mass`, over outbound priced messages not unsent: `sent`, `opened` (`isOpened`) and
-  `rate`. `isOpened` is OF's flag as of the last read, so the rate is an upper bound: opened counts as bought.
+- `ppv`: `dm` (not mass) and `mass`, over outbound priced messages: `sent`, `opened` (`isOpened`) and `rate`. Unsent
+  PPVs still count as sent, as in `GET /v1/stats/fans`; a fan who bought before the unsend keeps it. `isOpened` is
+  OF's flag as of the last read, so the rate is an upper bound: opened counts as bought.
 - `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `fanId`, `name` (OF's display name,
   else username, on the fan's newest transaction that has one; null when none does), `gross`, `net`,
   `transactions`, `lastAt` and `hasChat` (a message of the fan's chat on that account is stored, at any time).
