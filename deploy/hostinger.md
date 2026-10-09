@@ -339,6 +339,27 @@ Use this if you would rather expose nothing at all. Cloudflare terminates TLS an
 `TRUST_PROXY=1` stays correct: there is still exactly one proxy hop in front of the gateway, cloudflared instead
 of Caddy.
 
+## 11b. Optional: behind a reverse proxy that is already on the box
+
+Use this when Traefik, nginx or another stack already owns 80/443 on the VPS. The gateway is published on a
+host port of your choice and the existing proxy terminates TLS for the domain.
+
+1. In `deploy/.env` set `COMPOSE_PROFILES=upstream` (no caddy), `GATEWAY_PORT=5454` (any free port), and keep
+   `PUBLIC_URL=https://gw.example.com`: a plain-http origin is refused in production.
+2. Start with the override file every time; plain `docker compose up -d` would not publish the port:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.direct.yml up -d
+   curl -fsS http://127.0.0.1:5454/healthz
+   ```
+
+3. Route the domain to `http://<vps-ip>:5454` in the existing proxy with TLS on. Until then, bearer-key API
+   calls work over the raw port, but the dashboard sign-in does not (its cookies are Secure-only).
+4. If the port must be reachable from outside, add it in the hPanel firewall; if only the proxy on the box
+   needs it, bind it locally instead: `GATEWAY_PORT=127.0.0.1:5454`.
+
+`TRUST_PROXY=1` stays correct for one proxy hop in front.
+
 ## 12. Troubleshooting
 
 **No certificate / `curl` fails over HTTPS (ACME).** Check Caddy's log: `docker compose logs caddy`.

@@ -1,0 +1,10 @@
+# Direct mode: no caddy or tunnel profile. The gateway's port is published on the host, for a reverse proxy
+# that already owns 80/443 on the box (Traefik, nginx) or for a raw port while DNS is still pending. See §11b.
+#   COMPOSE_PROFILES=upstream and GATEWAY_PORT=<host port> in .env, then
+#   docker compose -f docker-compose.yml -f docker-compose.direct.yml up -d
+# PUBLIC_URL stays https://<domain>: the gateway refuses a plain-http origin in production. Until the proxy in
+# front terminates TLS for that domain, only bearer-key API calls work over the raw port; the dashboard does not.
+services:
+  gateway:
+    ports:
+      - "${GATEWAY_PORT:?}:4000"
