@@ -1,5 +1,16 @@
 import type { StatsMessage } from '@api/contracts';
-import { formatMoney } from '@/lib/utils';
+
+/** OF amounts are US dollars. */
+export const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/** A fan as a row names it; revenue rows have no username (and call the chat id `fanId`). */
+export type FanNamed = { fanUsername?: string | null; name?: string | null; chatId: number };
+
+/** `@username`, else the fan's name when known, else `chat <id>`. */
+export const fanName = (f: FanNamed) => (f.fanUsername ? `@${f.fanUsername}` : (f.name ?? `chat ${f.chatId}`));
+
+/** The fan in a file name: `username`, else `chat-<id>`. */
+export const fanFileName = (f: FanNamed) => f.fanUsername ?? `chat-${f.chatId}`;
 
 const hasMedia = (m: StatsMessage) => m.mediaCount > 0 || m.gifs > 0;
 

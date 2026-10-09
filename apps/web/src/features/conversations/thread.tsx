@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { byDay, isHiddenMass, messageBadges, noTextLabel } from '@/features/conversations/format';
+import { byDay, fanFileName, fanName, isHiddenMass, messageBadges, noTextLabel } from '@/features/conversations/format';
 import { Skeleton } from '@/features/stats/cards';
 import { type ConversationParams, statsConversationQuery, statsMessagesCsvPath } from '@/lib/api';
 import { useCsvDownload } from '@/lib/download';
-import { cn, fanFileName, fanName } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 const HIDE_MASS_TITLE = 'Mass messages the fan had not bought when they were last read: by the backfill, or by the live event that stored them';
 

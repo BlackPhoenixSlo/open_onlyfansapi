@@ -1,6 +1,6 @@
 import type { StatsMessage } from '@api/contracts';
 import { describe, expect, it } from 'vitest';
-import { byDay, isHiddenMass, messageBadges, noTextLabel } from './format';
+import { byDay, fanFileName, fanName, isHiddenMass, messageBadges, noTextLabel } from './format';
 
 const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   accountId: 1,
@@ -31,6 +31,15 @@ const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
 });
 
 describe('conversation format', () => {
+  it('names a fan by username, else name, else chat id, for display and for file names', () => {
+    expect([fanName({ fanUsername: 'Ann', chatId: 7 }), fanName({ fanUsername: null, chatId: 7 }), fanName({ name: 'Ann B', chatId: 7 })]).toEqual([
+      '@Ann',
+      'chat 7',
+      'Ann B',
+    ]);
+    expect([fanFileName({ fanUsername: 'Ann', chatId: 7 }), fanFileName({ fanUsername: null, chatId: 7 })]).toEqual(['Ann', 'chat-7']);
+  });
+
   it('labels a message without text by why', () => {
     expect(noTextLabel(msg({ text: '', mediaCount: 1, photos: 1 }))).toBe('No text: media only');
     expect(noTextLabel(msg({ text: '', gifs: 1 }))).toBe('No text: media only');

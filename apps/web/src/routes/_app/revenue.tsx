@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, createFileRoute } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ConversationLink, FanLabel } from '@/features/conversations/fan';
+import { formatMoney } from '@/features/conversations/format';
 import { DataCard, ErrorCard, Kpi, NoData, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
 import { HowToReadDetails, RevenueTerms } from '@/features/stats/explainers';
 import { RangeControls, type RangeSearch, rangeSearch, useStatsRange } from '@/features/stats/range';
 import { formatPercent, shortDay } from '@/features/stats/series';
 import { statsRevenueQuery } from '@/lib/api';
-import { formatMoney } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/revenue')({
   validateSearch: (s: Record<string, unknown>): RangeSearch => rangeSearch(s),
@@ -139,11 +140,10 @@ function Revenue() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data?.topPayers.map((p) => (
-              <TableRow key={`${p.accountId}:${p.fanId}`}>
-                <TableCell className="font-medium" title={`Fan ${p.fanId}`}>
-                  {p.name ?? `fan ${p.fanId}`}
-                  {p.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
+            {data?.topPayers.map((payer) => ({ ...payer, chatId: payer.fanId })).map((p) => (
+              <TableRow key={`${p.accountId}:${p.chatId}`}>
+                <TableCell className="font-medium" title={`Fan ${p.chatId}`}>
+                  <FanLabel fan={p} />
                 </TableCell>
                 <TableCell className="text-right">{formatMoney(p.gross)}</TableCell>
                 <TableCell className="text-right">{formatMoney(p.net)}</TableCell>
@@ -151,14 +151,9 @@ function Revenue() {
                 <TableCell>{new Date(p.lastAt).toLocaleString()}</TableCell>
                 <TableCell>
                   {p.hasChat ? (
-                    <Link
-                      to="/conversations"
-                      search={{ range: 'custom', from: data.from, to: data.to, chatAccountId: p.accountId, chatId: p.fanId }}
-                      className="underline-offset-4 hover:underline"
-                      title="Read the conversation"
-                    >
+                    <ConversationLink fan={p} range={data}>
                       yes
-                    </Link>
+                    </ConversationLink>
                   ) : (
                     <span className="text-muted-foreground">no</span>
                   )}

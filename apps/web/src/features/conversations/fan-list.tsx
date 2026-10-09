@@ -3,9 +3,11 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { FanLabel } from '@/features/conversations/fan';
+import { formatMoney } from '@/features/conversations/format';
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { formatAgo } from '@/features/stats/series';
-import { cn, fanName, formatMoney } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 /** How long the search box waits after the last keystroke before searching. */
 const SEARCH_DELAY_MS = 300;
@@ -71,8 +73,7 @@ export function FanList({
               <>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate font-medium">
-                    {fanName(f)}
-                    {f.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
+                    <FanLabel fan={f} />
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground" title={f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : undefined}>
                     {!f.hasChat ? 'no stored chat' : f.lastAt === null ? 'no message in range' : f.lastFanAt ? formatAgo(f.lastFanAt) : 'fan silent'}

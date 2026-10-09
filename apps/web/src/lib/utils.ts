@@ -14,13 +14,3 @@ export function prettyJson(body: string) {
     return body;
   }
 }
-
-/** OF amounts are US dollars. */
-export const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-
-/** `@username`, else the fan's name when known, else `chat <id>`. */
-export const fanName = (f: { fanUsername: string | null; name?: string | null; chatId: number }) =>
-  f.fanUsername ? `@${f.fanUsername}` : (f.name ?? `chat ${f.chatId}`);
-
-/** The fan in a file name: `username`, else `chat-<id>`. */
-export const fanFileName = (f: { fanUsername: string | null; chatId: number }) => f.fanUsername ?? `chat-${f.chatId}`;

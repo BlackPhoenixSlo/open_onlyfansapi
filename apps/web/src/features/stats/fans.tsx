@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ConversationLink, FanLabel } from '@/features/conversations/fan';
+import { fanFileName, fanName, formatMoney } from '@/features/conversations/format';
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { type StatsRange, statsFansQuery, statsMessagesCsvPath } from '@/lib/api';
 import { useCsvDownload } from '@/lib/download';
-import { fanFileName, fanName, formatMoney } from '@/lib/utils';
 
 /** The fans with messages in the range and the payers without a stored chat, most spend first, and their stored messages as CSV. */
 export function FansCard({ range }: { range?: StatsRange }) {
@@ -64,19 +64,13 @@ export function FansCard({ range }: { range?: StatsRange }) {
                 {fans.data.items.map((f) => (
                   <TableRow key={`${f.accountId}:${f.chatId}`}>
                     <TableCell className="font-medium">
-                      {f.hasChat ? (
-                        <Link
-                          to="/conversations"
-                          search={{ range: 'custom', from: fans.data.from, to: fans.data.to, chatAccountId: f.accountId, chatId: f.chatId }}
-                          className="underline-offset-4 hover:underline"
-                          title="Read the conversation"
-                        >
-                          {fanName(f)}
-                        </Link>
-                      ) : (
-                        <span title="A payer of the range with no stored messages">{fanName(f)}</span>
-                      )}
-                      {f.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
+                      <FanLabel fan={f}>
+                        {f.hasChat ? (
+                          <ConversationLink fan={f} range={fans.data} />
+                        ) : (
+                          <span title="A payer of the range with no stored messages">{fanName(f)}</span>
+                        )}
+                      </FanLabel>
                     </TableCell>
                     <TableCell className="text-right">{f.gross ? formatMoney(f.gross) : '—'}</TableCell>
                     <TableCell className="text-right">{f.fanMessages}</TableCell>
