@@ -19,8 +19,9 @@ export default defineConfig({
       UPSTREAM_TOKEN: 'test-only-upstream-token',
       UPSTREAM_TIMEOUT_MS: '2000',
       RUN_JOBS: 'false',
-      // A request every millisecond: the default 600 an hour spaces backfill requests 6 s apart.
-      ANALYTICS_REQUESTS_PER_HOUR: '3600000',
+      // No backfill request spacing (under 1 ms): the default 600 an hour spaces requests 6 s apart, and a test with a
+      // frozen clock (vi.setSystemTime) would wait for ever.
+      ANALYTICS_REQUESTS_PER_HOUR: '1000000000',
     },
   },
 });

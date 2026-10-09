@@ -321,7 +321,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
    * The hourly cap as an even spacing between request starts (6 s at 600), not a burst then a wait for the hour to
    * roll over; per run, not shared across runs.
    */
-  const spacingMs = Math.ceil(HOUR_MS / cfg.requestsPerHourPerAccount);
+  const spacingMs = Math.floor(HOUR_MS / cfg.requestsPerHourPerAccount);
   /** When the previous request started: the spacing runs from there. */
   let lastStart: number | null = null;
   /** When the previous response ended: the page delay runs from there. */
