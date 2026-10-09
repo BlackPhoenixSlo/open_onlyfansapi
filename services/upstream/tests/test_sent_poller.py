@@ -330,7 +330,6 @@ def test_a_re_fetch_stops_at_the_last_read_message(inbox, frames):
     for i in range(12):
         inbox.say(5001, -100 + i, mine=True)
     assert fetched_by_poll(inbox) == [5001, 5001]
-    inbox.poller.emitted.clear()
     sent = inbox.say(5001, 0, mine=True)
     assert fetched_by_poll(inbox) == [5001]
     assert ids(frames)[12:] == [f"message.sent:{ACCT}:{sent}"]
@@ -348,8 +347,9 @@ def test_a_message_sent_between_scan_and_fetch_is_published_once(inbox, frames):
 
     inbox.get_messages = get_messages
     poll(inbox.poller)
-    assert fetched_by_poll(inbox) == [5001]   # its last message is not the scanned one
     assert ids(frames) == [f"message.sent:{ACCT}:{m}" for m in (first, *late)]
+    assert fetched_by_poll(inbox) == []   # the late message, read, was recorded as the chat's newest
+    assert len(frames) == 2
 
 
 def test_a_waiting_chat_that_changes_again_is_fetched_once(inbox, frames, monkeypatch):

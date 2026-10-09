@@ -34,7 +34,6 @@ MAX_FETCHES = 8       # message pages per poll, over all chats
 MESSAGES_LIMIT = 10
 CHAT_PAGES = 3        # message pages per chat per poll
 PENDING_MAX = 200     # changed chats waiting for a fetch
-EMITTED_MAX = 2000
 
 Publish = Callable[[dict], None]
 Changed = dict[int, tuple[int, Any]]   # chat id -> (lastMessage.id, withUser)
@@ -58,9 +57,8 @@ class SentPoller:
         self.client = client
         self.publish = publish
         self.interval = interval
-        self.last_seen: dict[int, int] = {}   # chat id -> the lastMessage.id its messages were read up to
+        self.last_seen: dict[int, int] = {}   # chat id -> the newest message id its messages were read up to
         self.pending: Changed = {}            # changed chats not yet read, first queued first
-        self.emitted: dict[int, None] = {}    # own message ids already published, oldest first
         # A chat not read before is read back to here, so the first poll covers two intervals.
         self.floor = (now or (lambda: datetime.now(UTC)))() - timedelta(seconds=2 * interval)
         self._warned: set[str] = set()
@@ -114,6 +112,7 @@ class SentPoller:
         for chat_id, (lm_id, with_user) in list(self.pending.items()):
             seen = self.last_seen.get(chat_id)
             found: list[dict] = []   # newest first
+            newest = lm_id           # the newest message read; the scanned one when the chat lists none
             before_id = None
             for _ in range(CHAT_PAGES):
                 if fetches >= MAX_FETCHES:
@@ -122,6 +121,8 @@ class SentPoller:
                 page = await asyncio.to_thread(
                     self.client.get_messages, chat_id, limit=MESSAGES_LIMIT, before_id=before_id)
                 msgs, more = _page(page)
+                if before_id is None and msgs:   # the first page: a message sent since the scan is on it
+                    newest = events.int_or_none(msgs[0].get("id")) or lm_id
                 new = list(itertools.takewhile(lambda m, seen=seen: self._new(m, seen), msgs))
                 found += new
                 before_id = events.int_or_none(msgs[-1].get("id")) if msgs else None
@@ -133,7 +134,7 @@ class SentPoller:
                                 CHAT_PAGES, self.account_id, chat_id)
             for msg in reversed(found):  # oldest first
                 self._emit(msg, with_user)
-            self.last_seen[chat_id] = lm_id
+            self.last_seen[chat_id] = newest
             del self.pending[chat_id]
 
     def _new(self, msg: dict, seen: int | None) -> bool:
@@ -147,15 +148,8 @@ class SentPoller:
 
     def _emit(self, msg: dict, with_user: Any) -> None:
         ev = events.sent_message(self.account_id, msg, with_user)
-        if ev is None:
-            return
-        message_id = events.int_or_none(msg.get("id"))
-        if message_id in self.emitted:   # a message newer than the scan read twice
-            return
-        self.emitted[message_id] = None
-        while len(self.emitted) > EMITTED_MAX:
-            del self.emitted[next(iter(self.emitted))]
-        self.publish(ev)
+        if ev is not None:
+            self.publish(ev)
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key not in self._warned:
