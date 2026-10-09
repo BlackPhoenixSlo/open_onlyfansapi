@@ -26,7 +26,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
 | `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, the latest fan message first (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), and `ppvSent`, `ppvOpened`, `tips`, `tipCents` ([below](#stored-messages-and-export)). `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
 | `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list, and then `nextCursor`, passed as `cursor`, returns the next page (`400 invalid_cursor` for a malformed one). `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
-| `GET /v1/stats/revenue` | Gross and net by kind and by day, payers, the golden ratio, PPV unlocks by DM and mass, and the top 50 payers, from the stored transactions and messages ([Revenue](#revenue)) |
+| `GET /v1/stats/revenue` | Gross and net by kind and by day, payers, fan CVR, the golden ratio, DM PPV unlocks, and the top 50 payers, from the stored transactions and messages ([Revenue](#revenue)) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
 | `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `error`, `errorCode` (`session_expired` when OF refused the account's session, else null); or `{ "status": "idle" }` |
 
@@ -125,13 +125,16 @@ Rates are percent, null when the denominator is 0.
 
 - `totals`: `gross`, `net`, `transactions`; `settledGross`, the gross of status `done`, and `pendingGross`, of status
   `loading` (OF still holds it; the dashboard shows both under Gross); `payers`, the fans with a transaction in the range whose fan is known;
-  `fansMessaged`, the fans (chats) with a message in the range that is not unsent, from either side; `goldenRatio`,
+  `fansMessaged`, the fans (chats) with a message in the range that is not unsent, from either side; `fanCvr`,
   `payers / fansMessaged` (a payer need not have been messaged, so it can pass 100). Payers and fans count per account:
-  a fan on two accounts counts twice.
+  a fan on two accounts counts twice. `dmMessages`, the DMs sent (outbound, not mass, not automated; unsent ones
+  count), `dmPpvs`, the priced ones of them, and `goldenRatio`, `dmPpvs / dmMessages` (Infloww's golden ratio: Direct
+  PPVs sent ÷ Direct messages sent, [infloww-definitions](spec/infloww-definitions.md)).
 - `byKind`: per OF transaction type (`descriptionDetails.type`: `message`, `tips`, `subscription`,
   `subscription_prolong`, `post`; `unknown` when absent), `transactions`, `gross`, `net`, most gross first.
 - `byDay`: every day of the range in the config timezone, zeros included.
-- `ppv`: `dm` (not mass) and `mass`, over outbound priced messages: `sent`, `opened` (`isOpened`) and `rate`. Unsent
+- `ppv`: over PPV DMs (outbound priced messages, not mass; automated ones count): `sent`, `opened` (`isOpened`) and
+  `rate`. Mass PPVs are not rated: OF's history keeps only the mass copies a fan bought, so their rate is always 100. Unsent
   PPVs still count as sent, as in `GET /v1/stats/fans`; a fan who bought before the unsend keeps it. `isOpened` is
   OF's flag as of the last read, so the rate is an upper bound: opened counts as bought.
 - `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `fanId`, `name` (OF's display name,

@@ -110,6 +110,9 @@ beforeAll(async () => {
     message(A1, 8, 3002, '08-20T10:00', { direction: 'inbound' }),
     message(A2, 9, 4001, '09-02T10:00', { direction: 'inbound' }),
     message(A2, 10, 4002, '09-02T11:00', { isMass: true, priceCents: 500 }),
+    // Automated: a PPV sent, but not a DM for the golden ratio.
+    message(A1, 11, 3003, '09-02T12:00', { isAutomated: true, priceCents: 300, isOpened: true }),
+    message(A1, 12, 3001, '09-02T09:30'),
   ]);
 });
 afterAll(async () => {
@@ -118,12 +121,25 @@ afterAll(async () => {
 });
 
 describe('stats revenue', () => {
-  it('sums the booked range by kind and by day (every day, zeros included) and counts payers over fans messaged', async () => {
+  it('sums the booked range by kind and by day (every day, zeros included) and rates payers and DM PPVs', async () => {
     const body = await get(RANGE);
     expect(body).toMatchObject({ timezone: 'UTC', configVersion: 1, from: '2026-09-01', to: '2026-09-03' });
-    // Payers (A1 3001, 3002, 3008; A2 4001) over fans messaged in the range (A1 3001, 3003, 3004; A2 4001, 4002).
+    // Fan CVR: payers (A1 3001, 3002, 3008; A2 4001) over fans messaged in the range (A1 3001, 3003, 3004; A2 4001, 4002).
+    // Golden ratio: DM PPVs (2, 4) over DMs (2, 3, 4, 12); mass and automated messages are not DMs.
     // Settled: t1 and t3 (`done`); pending: t2 (`loading`); t4, t5 and t7 have no status, so gross only.
-    expect(body.totals).toEqual({ gross: 4600, settledGross: 3000, pendingGross: 500, net: 3680, transactions: 6, payers: 4, fansMessaged: 5, goldenRatio: 80 });
+    expect(body.totals).toEqual({
+      gross: 4600,
+      settledGross: 3000,
+      pendingGross: 500,
+      net: 3680,
+      transactions: 6,
+      payers: 4,
+      fansMessaged: 5,
+      fanCvr: 80,
+      dmMessages: 4,
+      dmPpvs: 2,
+      goldenRatio: 50,
+    });
     expect(body.byKind).toEqual([
       { kind: 'subscription', gross: 2000, net: 1600, transactions: 1 },
       { kind: 'message', gross: 1700, net: 1360, transactions: 2 },
@@ -138,11 +154,8 @@ describe('stats revenue', () => {
     ]);
   });
 
-  it('rates PPV unlocks by DM and mass in percent, unsent PPVs included', async () => {
-    expect((await get(RANGE)).ppv).toEqual([
-      { scope: 'dm', sent: 2, opened: 1, rate: 50 },
-      { scope: 'mass', sent: 4, opened: 1, rate: 25 },
-    ]);
+  it('rates DM PPV unlocks in percent, automated ones included, mass ones not', async () => {
+    expect((await get(RANGE)).ppv).toEqual({ sent: 3, opened: 2, rate: (2 / 3) * 100 });
   });
 
   it('lists the top payers by gross with the newest name and whether their chat is stored', async () => {
@@ -154,14 +167,14 @@ describe('stats revenue', () => {
     ]);
   });
 
-  it('has no golden ratio and no PPV rate when nothing was sent', async () => {
+  it('has no fan CVR, golden ratio or PPV rate when nothing was sent', async () => {
     const body = await get('from=2026-09-05&to=2026-09-05');
-    expect(body.totals).toEqual({ gross: 999, settledGross: 0, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, goldenRatio: null });
-    expect(body.ppv.map((p: { rate: number | null }) => p.rate)).toEqual([null, null]);
+    expect(body.totals).toEqual({ gross: 999, settledGross: 0, pendingGross: 0, net: 799, transactions: 1, payers: 1, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
+    expect(body.ppv).toEqual({ sent: 0, opened: 0, rate: null });
   });
 
   it("scopes to the key's accounts, `accountId` and the workspace's own rows", async () => {
-    const a2 = { gross: 700, settledGross: 0, pendingGross: 0, net: 560, transactions: 1, payers: 1, fansMessaged: 2, goldenRatio: 50 };
+    const a2 = { gross: 700, settledGross: 0, pendingGross: 0, net: 560, transactions: 1, payers: 1, fansMessaged: 2, fanCvr: 50, dmMessages: 0, dmPpvs: 0, goldenRatio: null };
     expect((await get(RANGE, bearer(limitedKeyA))).totals).toEqual(a2);
     expect((await get(`${RANGE}&accountId=${A2}`)).totals).toEqual(a2);
     const denied = await app.inject({ method: 'GET', url: `/v1/stats/revenue?${RANGE}&accountId=${A1}`, headers: bearer(limitedKeyA) });
@@ -171,7 +184,7 @@ describe('stats revenue', () => {
     expect(other.totals).toMatchObject({ gross: 4000, payers: 1, fansMessaged: 0 });
     expect(other.topPayers.map((p: { fanId: number }) => p.fanId)).toEqual([5001]);
     const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
-    expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, goldenRatio: null });
+    expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
     expect(none.topPayers).toEqual([]);
   });
 

@@ -775,15 +775,21 @@ export const statsRevenue = z.object({
     payers: z.number().int(),
     /** Fans (chats) with a message in the range that is not unsent, either direction; per account. */
     fansMessaged: z.number().int(),
-    /** `payers / fansMessaged`, in percent (can pass 100: a payer need not have been messaged). */
+    /** Fan CVR, `payers / fansMessaged`, in percent (can pass 100: a payer need not have been messaged). */
+    fanCvr: z.number().nullable(),
+    /** DMs sent: outbound, not mass, not automated (welcome message or automation); unsent ones included. */
+    dmMessages: z.number().int(),
+    /** The priced ones of `dmMessages`. */
+    dmPpvs: z.number().int(),
+    /** Infloww's golden ratio, `dmPpvs / dmMessages`, in percent. */
     goldenRatio: z.number().nullable(),
   }),
   /** OF's transaction type (`message`, `tips`, `subscription`, `subscription_prolong`, `post`, ...; `unknown` when absent), most gross first. */
   byKind: z.array(z.object({ kind: z.string(), ...revenueSums })),
   /** Every day of the range in the config timezone, zeros included. */
   byDay: z.array(z.object({ day: z.string(), ...revenueSums })),
-  /** Priced outbound messages, unsent ones included: `dm` not mass, `mass` mass; `opened` = OF's `isOpened` (bought); `rate` = opened / sent in percent. */
-  ppv: z.array(z.object({ scope: z.enum(['dm', 'mass']), sent: z.number().int(), opened: z.number().int(), rate: z.number().nullable() })),
+  /** PPV DMs: priced outbound messages, not mass, unsent and automated ones included; `opened` = OF's `isOpened` (bought); `rate` = opened / sent in percent. */
+  ppv: z.object({ sent: z.number().int(), opened: z.number().int(), rate: z.number().nullable() }),
   /** Up to 50 (account, fan) pairs, most gross first. */
   topPayers: z.array(
     z.object({

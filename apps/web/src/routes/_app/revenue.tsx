@@ -28,7 +28,7 @@ function Revenue() {
 
   const data = revenue.data;
   const totals = data?.totals;
-  const dm = data?.ppv.find((p) => p.scope === 'dm');
+  const dm = data?.ppv;
   const kpiState = { loading: revenue.isPending, error: revenue.error?.message };
   const noSales = !totals?.transactions;
 
@@ -44,7 +44,7 @@ function Revenue() {
 
       {config.isError && <ErrorCard message={config.error.message} />}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           title="Gross"
           {...kpiState}
@@ -64,13 +64,22 @@ function Revenue() {
           Fans who paid in this range.
         </Kpi>
         <Kpi
+          title="Fan CVR"
+          {...kpiState}
+          empty={totals?.fanCvr === null || totals?.fanCvr === undefined}
+          value={formatPercent(totals?.fanCvr)}
+          sub={`${totals?.payers ?? 0} payers / ${totals?.fansMessaged ?? 0} fans messaged`}
+        >
+          Payers divided by the fans with a message in this range.
+        </Kpi>
+        <Kpi
           title="Golden ratio"
           {...kpiState}
           empty={totals?.goldenRatio === null || totals?.goldenRatio === undefined}
           value={formatPercent(totals?.goldenRatio)}
-          sub={`${totals?.payers ?? 0} payers / ${totals?.fansMessaged ?? 0} fans messaged`}
+          sub={`${totals?.dmPpvs ?? 0} PPVs / ${totals?.dmMessages ?? 0} DMs`}
         >
-          Payers divided by the fans with a message in this range.
+          PPV DMs divided by all DMs sent (Infloww's formula).
         </Kpi>
         <Kpi title="PPV unlock (DM)" {...kpiState} empty={!dm?.sent} value={formatPercent(dm?.rate)} sub={`${dm?.opened ?? 0} opened / ${dm?.sent ?? 0} sent`}>
           Priced DMs opened over those sent. Upper bound: opened counts as bought.
@@ -89,59 +98,28 @@ function Revenue() {
         />
       </DataCard>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <DataCard title="By kind" description="OF's transaction type, most gross first." state={revenue} empty={noSales} {...TABLE_CARD}>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Kind</TableHead>
-                <TableHead className="text-right">Transactions</TableHead>
-                <TableHead className="text-right">Gross</TableHead>
-                <TableHead className="text-right">Net</TableHead>
+      <DataCard title="By kind" description="OF's transaction type, most gross first." state={revenue} empty={noSales} {...TABLE_CARD}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Kind</TableHead>
+              <TableHead className="text-right">Transactions</TableHead>
+              <TableHead className="text-right">Gross</TableHead>
+              <TableHead className="text-right">Net</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data?.byKind.map((k) => (
+              <TableRow key={k.kind}>
+                <TableCell className="font-medium">{k.kind}</TableCell>
+                <TableCell className="text-right">{k.transactions.toLocaleString()}</TableCell>
+                <TableCell className="text-right">{formatMoney(k.gross)}</TableCell>
+                <TableCell className="text-right">{formatMoney(k.net)}</TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data?.byKind.map((k) => (
-                <TableRow key={k.kind}>
-                  <TableCell className="font-medium">{k.kind}</TableCell>
-                  <TableCell className="text-right">{k.transactions.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">{formatMoney(k.gross)}</TableCell>
-                  <TableCell className="text-right">{formatMoney(k.net)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </DataCard>
-
-        <DataCard
-          title="PPV by scope"
-          description="Priced messages sent, unsent ones included; opened counts as bought."
-          state={revenue}
-          empty={!data?.ppv.some((p) => p.sent > 0)}
-          {...TABLE_CARD}
-        >
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Scope</TableHead>
-                <TableHead className="text-right">Sent</TableHead>
-                <TableHead className="text-right">Opened</TableHead>
-                <TableHead className="text-right">Rate</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data?.ppv.map((p) => (
-                <TableRow key={p.scope}>
-                  <TableCell className="font-medium">{p.scope === 'dm' ? 'DM' : 'Mass'}</TableCell>
-                  <TableCell className="text-right">{p.sent.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">{p.opened.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">{formatPercent(p.rate)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </DataCard>
-      </div>
+            ))}
+          </TableBody>
+        </Table>
+      </DataCard>
 
       <DataCard title="Top payers" description="The 50 fans who paid the most in this range." state={revenue} empty={!data?.topPayers.length} {...TABLE_CARD}>
         <Table>

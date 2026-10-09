@@ -236,12 +236,16 @@ const REVENUE_TERMS: [string, string][] = [
   ],
   ['Payers', 'Fans with a transaction in the range, per account. A transaction whose fan is unknown counts in the sums only.'],
   [
+    'Fan CVR',
+    'Payers ÷ fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%.',
+  ],
+  [
     'Golden ratio',
-    'Payers divided by fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%.',
+    "Infloww's formula: PPV DMs sent ÷ DMs sent. A DM is an outbound message that is not mass and not automated (welcome message or automation); a PPV DM is a priced one. Unsent ones count.",
   ],
   [
     'PPV unlock',
-    "Priced messages sent in the range: DM (not mass) or mass. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
+    "Priced DMs (not mass) sent in the range. Unsent PPVs still count as sent; a fan who bought before the unsend keeps it. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
   ],
   [
     'Top payers',

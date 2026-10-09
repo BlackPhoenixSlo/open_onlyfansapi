@@ -31,7 +31,8 @@ const percent = (part: number, whole: number) => (whole > 0 ? (part / whole) * 1
  * of the range; see `statsRevenue`.
  */
 export async function scopedRevenue(scope: Scope, days: string[], tz: string): Promise<Pick<StatsRevenue, 'totals' | 'byKind' | 'byDay' | 'ppv' | 'topPayers'>> {
-  const ppvMass = sql`${messageFact.direction} = 'outbound' and ${messageFact.isMass} and ${messageFact.priceCents} > 0`;
+  // A DM as Infloww's golden ratio counts it: outbound, not mass, not automated (welcome message or automation).
+  const dm = sql`${messageFact.direction} = 'outbound' and not ${messageFact.isMass} and not ${messageFact.isAutomated}`;
   const [groups, [messages]] = await Promise.all([
     // `day` is grouped by its output name: the timezone parameter would make a repeated expression differ.
     db
@@ -53,10 +54,10 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     db
       .select({
         fansMessaged: sql<number>`(count(distinct (${messageFact.accountId}, ${messageFact.chatId})) filter (where ${messageFact.deletedAt} is null))::int`,
-        dmSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
-        dmOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
-        massSent: sql<number>`(count(*) filter (where ${ppvMass}))::int`,
-        massOpened: sql<number>`(count(*) filter (where ${ppvMass} and ${messageFact.isOpened}))::int`,
+        dmMessages: sql<number>`(count(*) filter (where ${dm}))::int`,
+        dmPpvs: sql<number>`(count(*) filter (where ${dm} and ${messageFact.priceCents} > 0))::int`,
+        ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
+        ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
       })
       .from(messageFact)
       .where(inScope(messageFact, scope)),
@@ -113,15 +114,22 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   const detail = new Map(details.map((d) => [`${d.accountId}:${d.fanId}`, d]));
 
   // An aggregate without GROUP BY always returns one row.
-  const { fansMessaged, dmSent, dmOpened, massSent, massOpened } = messages!;
+  const { fansMessaged, dmMessages, dmPpvs, ppvSent, ppvOpened } = messages!;
   return {
-    totals: { ...totals, settledGross, pendingGross, payers: payers.size, fansMessaged, goldenRatio: percent(payers.size, fansMessaged) },
+    totals: {
+      ...totals,
+      settledGross,
+      pendingGross,
+      payers: payers.size,
+      fansMessaged,
+      fanCvr: percent(payers.size, fansMessaged),
+      dmMessages,
+      dmPpvs,
+      goldenRatio: percent(dmPpvs, dmMessages),
+    },
     byKind: [...kinds].map(([kind, s]) => ({ kind, ...s })).sort((a, b) => b.gross - a.gross || a.kind.localeCompare(b.kind)),
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
-    ppv: [
-      { scope: 'dm', sent: dmSent, opened: dmOpened, rate: percent(dmOpened, dmSent) },
-      { scope: 'mass', sent: massSent, opened: massOpened, rate: percent(massOpened, massSent) },
-    ],
+    ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
     topPayers: top.map(({ lastAt, ...p }) => {
       const d = detail.get(`${p.accountId}:${p.fanId}`);
       return { ...p, name: d?.name ?? null, lastAt: lastAt.toISOString(), hasChat: d?.hasChat ?? false };
