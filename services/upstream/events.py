@@ -33,25 +33,30 @@ def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
+def parse_time(value: Any) -> datetime | None:
+    """OF's ISO time; a naive one is UTC. None when absent or not ISO."""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
 def _ts(value: Any, now: datetime) -> str:
-    if isinstance(value, str):
-        try:
-            dt = datetime.fromisoformat(value)
-        except ValueError:
-            return iso(now)
-        return iso(dt if dt.tzinfo else dt.replace(tzinfo=UTC))
-    return iso(now)
+    return iso(parse_time(value) or now)
 
 
-def _int(value: Any) -> int | None:
+def int_or_none(value: Any) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
 
 
-def _user_id(user: Any) -> int | None:
-    return _int(user.get("id")) if isinstance(user, dict) else None
+def user_id(user: Any) -> int | None:
+    return int_or_none(user.get("id")) if isinstance(user, dict) else None
 
 
 # Internal (v4) name -> public (v5) name (plan-v5 §2.4). Names missing here are public as they are.
@@ -118,14 +123,27 @@ def _chat_message(account_id: int, msg: Any, now: datetime) -> dict | None:
     """OF's message object is the payload, as in the reference product; a received one gains `fanData`."""
     if not isinstance(msg, dict):
         return None
-    message_id = _int(msg.get("id"))
-    from_id = _user_id(msg.get("fromUser"))
+    message_id = int_or_none(msg.get("id"))
+    from_id = user_id(msg.get("fromUser"))
     if message_id is None or from_id is None:
         return None
     ts = _ts(msg.get("createdAt"), now)
     if from_id == account_id:
         return event("message.sent", account_id, message_id, ts, msg)
     return event("message.received", account_id, message_id, ts, {**msg, "fanData": _fan_data(ts)})
+
+
+def sent_message(account_id: int, msg: Any, with_user: Any) -> dict | None:
+    """`messages.sent` for one of the account's own DMs read from a chat (sent_poller): the socket's
+    frame, with the chat's `withUser` (`{id, _view}`) as `toUser`. None for a fan's message and for a
+    queued send (`isFromQueue`: a broadcast copy)."""
+    if not isinstance(msg, dict) or msg.get("isFromQueue"):
+        return None
+    ev = _chat_message(account_id, msg, datetime.now(UTC))
+    if ev is None or ev["type"] != PUBLIC["message.sent"]:
+        return None
+    ev["payload"] = {**ev["payload"], "toUser": with_user}
+    return ev
 
 
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire", "chat_message_delete"})
@@ -159,10 +177,10 @@ def classify(account_id: int, frame: dict, *, now: datetime | None = None) -> li
         if key == "api2_chat_message":
             ev = _chat_message(account_id, value, now)
         elif key == "post_expire":
-            post_id = _int(value)
+            post_id = int_or_none(value)
             ev = (event("post.expired", account_id, post_id, iso(now), {"postId": post_id})
                   if post_id is not None else None)
-        elif key == "chat_message_delete" and (message_id := _int(value)) is not None:
+        elif key == "chat_message_delete" and (message_id := int_or_none(value)) is not None:
             ev = event("message.deleted", account_id, message_id, iso(now), {"id": str(message_id)})
         else:
             ev = event(f"upstream.{key}", account_id, None, iso(now), value)

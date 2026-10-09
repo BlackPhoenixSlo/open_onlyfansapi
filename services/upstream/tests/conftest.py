@@ -14,6 +14,7 @@ sys.path.insert(0, str(HERE.parent))
 os.environ["UPSTREAM_STATE_DIR"] = tempfile.mkdtemp(prefix="upstream-test-")
 os.environ["UPSTREAM_TOKEN"] = TOKEN = "test-token-0123456789"
 os.environ["OF_REQUIRE_PROXY"] = "true"
+os.environ["SENT_POLL_INTERVAL_S"] = "0"  # app's pumps poll no chat list (OFFake would see the calls)
 
 from curl_cffi.requests import Response
 from curl_cffi.requests.headers import Headers

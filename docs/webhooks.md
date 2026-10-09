@@ -51,7 +51,7 @@ it validates. **Status** says whether this gateway sends the event:
 | Type | Status | Sent when | `payload` |
 |---|---|---|---|
 | `messages.received` | emitted | A connected account received a message | The OnlyFans message object, with `fromUser` |
-| `messages.sent` | emitted | A connected account sent a message | The OnlyFans message object, with `toUser` |
+| `messages.sent` | emitted | A connected account sent a direct message (polled, see below; mass and other queued messages are not sent) | The OnlyFans message object, with `toUser` |
 | `messages.ppv.unlocked` | TBC | A fan unlocked a paid message (post unlocks arrive as `transactions.new`) | The OnlyFans notification, with `user` |
 | `messages.deleted` | emitted | A message in one of the account's chats was deleted | `{ id }` (the message id, as a string) |
 | `messages.liked` | TBC | A fan liked a message | `{ id }` |
@@ -96,9 +96,19 @@ of them:
 
 - `messages.received`: observed on a subscriber-side account (a 3-day capture, docs/spec/plan-v6-ws-events.md), the
   frame carried the reference's full 42-key `fromUser` and no `replyToMessage`; creator-side frames are
-  unverified. `messages.sent` was not observed; it is assumed to have no `toUser`.
+  unverified.
 - `posts.expired`: in the same capture OnlyFans sent `post_expire` for posts of other creators in the account's
   feed, at about 480 a day, so the event and its `/v1/stats` count are not limited to the account's own posts.
+- `messages.sent`: OnlyFans's socket never delivers an account's own messages, so the upstream polls each account for
+  them every `SENT_POLL_INTERVAL_S` seconds (120 by default, 10 to 86400; `0` turns the event off). An event arrives
+  within one poll interval of the send unless the chats that changed in that interval hold more than 8 pages of about
+  10 messages (a busy chat can take 2 or 3); then the rest follow on later polls in order. Direct messages only: mass
+  messages and other queued sends (`isFromQueue` true) are not sent; use the analytics backfill for them. The payload
+  is the OnlyFans message object with `toUser`, the chat's fan as `{ id, _view }`. Sends are missed while the upstream
+  is down, in read chats while the account has more than about 50 unread chats (keep the inbox answered), past about
+  30 messages in one chat between two polls, and, when more than 200 changed chats wait for a later poll, in the chats
+  that have waited longest (among chats that changed in the same interval, the most recently active ones). Each poll
+  makes at most 13 OnlyFans requests per account (about 390 an hour at the 120 s default).
 - `fanData.available` is `false` and the `spending` figures are zero, because the gateway does not compute fan
   spending. `fanData.last_updated_at` is the message's time. Branch on `available` before using `spending`.
 

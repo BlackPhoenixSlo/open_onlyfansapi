@@ -88,6 +88,7 @@ services:
       UPSTREAM_STATE_DIR: /data
       OF_REQUIRE_PROXY: ${OF_REQUIRE_PROXY:-false}
       STATIC_PARAM: ${STATIC_PARAM:-}
+      SENT_POLL_INTERVAL_S: ${SENT_POLL_INTERVAL_S:-120}
     # Sessions (cookies) and proxies.json (proxy passwords): credentials. Back up encrypted.
     volumes:
       - upstream_data:/data

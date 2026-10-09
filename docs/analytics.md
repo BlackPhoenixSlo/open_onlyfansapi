@@ -155,15 +155,12 @@ out of Fan CVR, the golden ratio and the PPV unlock rate.
 Between backfills, the upstream's `messages.received` and `messages.sent` events for a claimed account (one with an
 `account_workspace` row) add the message's `message_fact` row, derived with the backfill's own mapper, and
 `messages.deleted` marks it deleted ([unsent messages](#stored-messages-and-export)). Events for unclaimed accounts are ignored. The latency is the upstream's delivery over
-its event socket (OF's own socket, then one hop to the gateway, usually seconds); events missed while the gateway is
+its event socket (OF's own socket, then one hop to the gateway, usually seconds; `messages.sent` is polled
+([webhooks](webhooks.md))); events missed while the gateway is
 down or reconnecting are not replayed, so a backfill is still the complete view of the messages that exist. It
 cannot see unsends: an unsent message vanishes from OF's history, so a `messages.deleted` missed while the gateway was
 down is never applied, and `deleted_at` null means "no unsend event seen", not "not unsent". Only `message_fact` changes live,
-and a row already stored is kept. The live mapper has no mass history, so a live outbound message is mass when OF's
-`isFromQueue` is true. That is right on every broadcast copy (6,512 of 6,512 stored mass rows, 2026-10-09) and wrong
-on single-chat queued sends: of the 733 stored non-mass outbound rows with `isFromQueue` true, 683 share a queue id
-across 2 to 321 chats (broadcasts outside the mass history a run read) and 50 (0.19% of 26,133 DMs) are queued single DMs, which
-count as mass until a backfill over their range re-derives the row from the mass history; until then the Conversations page hides such a DM with the mass messages not bought. A live row's `isOpened` is OF's flag when the event arrived (false on a PPV just sent) and no purchase event updates it, so a PPV bought since reads not bought until a backfill reads the message again. The live mapper has no
+and a row already stored is kept. Live outbound rows are DMs; mass messages and queued single DMs are stored only by a backfill. A live row's `isOpened` is OF's flag when the event arrived (false on a PPV just sent) and no purchase event updates it, so a PPV bought since reads not bought until a backfill reads the message again. The live mapper has no
 welcome message or automation texts either, so no live message counts as automated until then. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
 the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under

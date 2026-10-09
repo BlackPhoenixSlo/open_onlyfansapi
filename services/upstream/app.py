@@ -7,6 +7,7 @@ Run exactly one worker: the pumps and the hub live in this process.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hmac
 import logging
 import os
@@ -26,6 +27,7 @@ import client_pool
 import config
 import events
 import proxies
+import sent_poller
 import session_bootstrap
 from deps import (  # noqa: F401  (tests override account_client)
     ApiError,
@@ -50,10 +52,27 @@ if len(TOKEN) < 16:
 _BEARER = f"Bearer {TOKEN}".encode()
 _WS_PROTOCOL = f"bearer.{TOKEN}".encode()
 
+
+def _sent_poll_interval(raw: str | None) -> float:
+    """SENT_POLL_INTERVAL_S: 120 when unset, 0 (off) or 10 to 86400 seconds, else SystemExit."""
+    error = SystemExit(f"SENT_POLL_INTERVAL_S must be 0 (off) or 10 to 86400 seconds, got {raw!r}")
+    try:
+        seconds = float(raw or 120)
+    except ValueError:
+        raise error from None
+    if not (seconds == 0 or 10 <= seconds <= 86400):  # nan and inf fail both
+        raise error
+    return seconds
+
+
+SENT_POLL_INTERVAL_S = _sent_poll_interval(os.environ.get("SENT_POLL_INTERVAL_S"))
+
 hub = Hub()
 # `supervisor.require_proxy` is the one OF_REQUIRE_PROXY switch; `supervisor.blocker()` the one gate.
 supervisor = Supervisor(hub, require_proxy=(os.environ.get("OF_REQUIRE_PROXY") or "false").strip().lower()
-                        not in {"0", "false", "no", "off"})
+                        not in {"0", "false", "no", "off"},
+                        poller=functools.partial(sent_poller.run, interval=SENT_POLL_INTERVAL_S)
+                        if SENT_POLL_INTERVAL_S else None)
 
 
 @asynccontextmanager

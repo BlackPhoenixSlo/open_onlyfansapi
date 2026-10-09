@@ -13,7 +13,7 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +35,8 @@ CLOSE_TRY_AGAIN_LATER = 1013
 
 FrameSource = Callable[[Any], AsyncIterator[dict]]
 ClientFactory = Callable[[str], Any]
+# The `messages.sent` poller per pump (sent_poller.run, interval bound): account id, client, publish, on_expired.
+Poller = Callable[[int, Any, Callable[[dict], None], Callable[[], None]], Awaitable[None]]
 
 
 async def of_frames(client: Any) -> AsyncIterator[dict]:
@@ -148,10 +150,12 @@ class _Pump:
 class Supervisor:
     def __init__(self, hub: Hub, *, require_proxy: bool = True,
                  source: FrameSource = of_frames,
-                 client_factory: ClientFactory | None = None) -> None:
+                 client_factory: ClientFactory | None = None,
+                 poller: Poller | None = None) -> None:
         self.hub = hub
         self.require_proxy = require_proxy
         self.source = source
+        self.poller = poller  # None: no `messages.sent`
         # Looked up per call, so the pool stays the one place clients are built.
         self.client_factory = client_factory or (lambda aid: client_pool.get(aid))
         self._pumps: dict[str, _Pump] = {}
@@ -237,12 +241,17 @@ class Supervisor:
 
     async def _pump(self, aid: str, key: Key) -> None:
         account_id = int(aid)
+        poll: asyncio.Task | None = None
         try:
             client = await asyncio.to_thread(self.client_factory, aid)
             if self.require_proxy and not getattr(client, "proxy_url", None):
                 # Fail closed; the next reconcile retries.
                 log.warning("client for account=%s has no proxy: not connecting", aid)
                 return
+            if self.poller is not None:
+                poll = asyncio.create_task(self.poller(
+                    account_id, client, self.hub.publish, lambda: self.mark_expired(aid, key)))
+                poll.add_done_callback(lambda t: _poller_ended(aid, t))
             async for frame in self.source(client):
                 self._live.add(aid)
                 try:
@@ -258,6 +267,9 @@ class Supervisor:
         except Exception:  # restarted by the next reconcile
             log.exception("pump failed account=%s", aid)
         finally:
+            if poll is not None:
+                poll.cancel()
+                await asyncio.wait([poll])  # an exception it ended with is logged by `_poller_ended`
             self._live.discard(aid)
 
     async def _stop(self, aid: str) -> None:
@@ -271,6 +283,11 @@ class Supervisor:
     async def stop(self) -> None:
         for aid in list(self._pumps):
             await self._stop(aid)
+
+
+def _poller_ended(aid: str, task: asyncio.Task) -> None:
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        log.error("sent poller failed account=%s: no messages.sent until the pump restarts", aid, exc_info=exc)
 
 
 def _session_mtime(account_id: str) -> float | None:

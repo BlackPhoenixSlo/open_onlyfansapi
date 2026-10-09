@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import pytest
 from conftest import frame, key_paths, make_account, new_session, payload_fixture
@@ -252,6 +253,53 @@ def test_an_expiry_is_announced_once_per_session(evicted):
         await sup.reconcile()
         await settle()
         assert src.starts == ["100001"] and len(hub.frames) == 1
+        await sup.stop()
+
+    asyncio.run(main())
+
+
+def test_the_sent_poller_runs_with_the_pump(evicted):
+    async def main():
+        hub = FakeHub()
+        started, cancelled = [], []
+
+        async def poller(account_id, client, publish, on_expired):
+            started.append((account_id, client.aid, on_expired))
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(account_id)
+                raise
+
+        sup, src = supervisor(hub, poller=poller)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        assert [s[:2] for s in started] == [(100001, "100001")] and src.starts == ["100001"]
+        started[0][2]()  # the poller saw a refused session
+        assert sup.status("100001") == "session_expired"
+        assert [f["type"] for f in hub.frames] == ["accounts.session_expired"]
+        await sup.stop()
+        assert cancelled == [100001] and src.closed == 1
+
+    asyncio.run(main())
+
+
+def test_a_sent_poller_that_dies_is_logged(evicted, caplog):
+    async def main():
+        async def poller(*args):
+            raise OverflowError("boom")
+
+        sup, src = supervisor(poller=poller)
+        make_account("100001")
+        with caplog.at_level(logging.ERROR, logger="upstream.pump"):
+            await sup.reconcile()
+            await settle()
+            await settle()  # the poller's task, then its done callback
+        assert src.starts == ["100001"]
+        [rec] = [r for r in caplog.records if "sent poller" in r.getMessage()]
+        assert rec.getMessage().startswith("sent poller failed account=100001")
+        assert isinstance(rec.exc_info[1], OverflowError)
         await sup.stop()
 
     asyncio.run(main())
