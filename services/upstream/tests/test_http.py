@@ -309,11 +309,11 @@ def test_of_accounts_shape(routed):
     rows = sorted(routed.get("/of-accounts", headers=AUTH).json(), key=lambda r: r["id"])
     assert rows == [
         {"id": 100001, "label": "Main", "ofUsername": "main_acct", "ofDisplayName": "Main Account",
-         "ofAvatarUrl": "https://cdn.example.invalid/a.jpg", "status": "connecting"},
+         "ofAvatarUrl": "https://cdn.example.invalid/a.jpg", "status": "connecting", "proxyLabel": "acct-100001"},
         {"id": 100002, "label": "Account 100002", "ofUsername": None, "ofDisplayName": None,
-         "ofAvatarUrl": None, "status": "no_proxy"},
+         "ofAvatarUrl": None, "status": "no_proxy", "proxyLabel": None},
         {"id": 100003, "label": "Account 100003", "ofUsername": None, "ofDisplayName": None,
-         "ofAvatarUrl": None, "status": "no_session"},
+         "ofAvatarUrl": None, "status": "no_session", "proxyLabel": "acct-100003"},
     ]
 
 

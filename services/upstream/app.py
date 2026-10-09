@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from curl_cffi.requests import exceptions as curl_errors
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import accounts
@@ -28,6 +28,7 @@ import config
 import events
 import mass_poller
 import proxies
+import proxy_stats
 import sent_poller
 import session_bootstrap
 from deps import (  # noqa: F401  (tests override account_client)
@@ -167,20 +168,21 @@ def of_accounts() -> list[dict]:
     to /users/me; waits for a new session (re-connect);
     `no_session` — no captured session; `no_proxy` — no proxy while OF_REQUIRE_PROXY is on.
     """
-    rows = []
-    for meta in accounts.list_accounts():
-        aid = str(meta.get("id") or "")
-        if not aid.isdigit():
-            continue
-        rows.append({
-            "id": int(aid),
-            "label": meta.get("nickname"),
-            "ofUsername": meta.get("username"),
-            "ofDisplayName": meta.get("name"),
-            "ofAvatarUrl": meta.get("avatar"),
-            "status": supervisor.status(aid),
-        })
-    return rows
+    return [_account_row(meta) for meta in accounts.list_accounts() if str(meta.get("id") or "").isdigit()]
+
+
+def _account_row(meta: dict) -> dict:
+    aid = str(meta["id"])
+    proxy = proxies.get_for_account(aid)
+    return {
+        "id": int(aid),
+        "label": meta.get("nickname"),
+        "ofUsername": meta.get("username"),
+        "ofDisplayName": meta.get("name"),
+        "ofAvatarUrl": meta.get("avatar"),
+        "status": supervisor.status(aid),
+        "proxyLabel": proxy.get("label") if proxy else None,
+    }
 
 
 class Bootstrap(BaseModel):
@@ -201,6 +203,13 @@ def _proxy_entry(url: str) -> dict:
     # "" rather than None, so upsert clears credentials a previous URL had.
     return {"scheme": u.scheme, "host": u.hostname, "port": port,
             "username": u.username or "", "password": u.password or ""}
+
+
+def _bind_own_proxy(uid: str, entry: dict) -> None:
+    """Store `entry` (from `_proxy_entry`) as the account's own `acct-<uid>` proxy and move the account onto it."""
+    label = f"acct-{uid}"
+    proxies.upsert({"label": label, **entry})
+    proxies.assign_account(label, uid)
 
 
 # from_curl rewrites these in place; everything else it writes is a new file.
@@ -283,9 +292,7 @@ def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
         raise
 
     if new_entry is not None:
-        label = f"acct-{uid}"
-        proxies.upsert({"label": label, **new_entry})
-        proxies.assign_account(label, uid)
+        _bind_own_proxy(uid, new_entry)
     client_pool.evict(uid)
     meta = accounts.load_meta(uid) or {"id": uid}
     meta.update(username=me.get("username"), name=me.get("name"), avatar=me.get("avatar"))
@@ -303,6 +310,100 @@ async def session_bootstrap_route(body: Bootstrap) -> dict:
     supervisor.hub.publish(frame)
     await supervisor.reconcile()
     return {**result, "status": supervisor.status(str(result["accountId"]))}
+
+
+class ProxyRef(BaseModel):
+    """Exactly one of: `label`, an existing proxy; `url`, a new one stored as `acct-<id>`."""
+    label: str | None = None
+    url: str | None = None
+
+    @model_validator(mode="after")
+    def _one_of(self) -> ProxyRef:
+        if (self.label is None) == (self.url is None):
+            raise ValueError("pass exactly one of label, url")
+        return self
+
+
+class AccountPatch(BaseModel):
+    nickname: str | None = Field(default=None, min_length=1, max_length=100)
+    proxy: ProxyRef | None = None  # null unbinds; absent leaves the binding as is
+
+
+def _update_account(uid: str, body: AccountPatch) -> bool:
+    """Apply `body`; True when the proxy binding changed."""
+    if not uid.isdigit() or not accounts.is_account(uid):
+        raise ApiError(404, "account_not_found")
+    if body.nickname is not None:
+        # load/save rather than upsert_account: upsert rebuilds meta and drops username/name/avatar.
+        meta = accounts.load_meta(uid) or {"id": uid}
+        meta["nickname"] = body.nickname.strip() or meta.get("nickname")
+        accounts.save_meta(uid, meta)
+    if "proxy" not in body.model_fields_set:
+        return False
+    ref = body.proxy
+    if ref is None:
+        current = proxies.get_for_account(uid)
+        if current is not None:
+            proxies.unbind_account(current["label"], uid)
+    elif ref.url is not None:
+        _bind_own_proxy(uid, _proxy_entry(ref.url))
+    else:
+        try:
+            proxies.assign_account(ref.label, uid)
+        except KeyError:
+            raise ApiError(404, "proxy_not_found") from None
+    client_pool.evict(uid)
+    return True
+
+
+@app.patch("/of-accounts/{account_id}", tags=["of-accounts"], operation_id="ofAccounts.update")
+async def of_account_update(account_id: str, body: AccountPatch) -> dict:
+    """Rename an account and/or change its proxy: `proxy` {label} or {url}, or null to unbind."""
+    if await run_in_threadpool(_update_account, account_id, body):
+        await supervisor.reconcile()
+    return _account_row(accounts.load_meta(account_id) or {"id": account_id})
+
+
+# ─── Proxies (operator surface; never returns a password) ─────────
+
+
+def _proxy_view(p: dict) -> dict:
+    return {
+        "label": p["label"],
+        "scheme": p.get("scheme") or "http",
+        "host": p.get("host"),
+        "port": p.get("port"),
+        "username": p.get("username") or None,
+        "assigned_account_ids": proxies._ids_on(p),
+        "verified_ip": p.get("verified_ip"),
+        "verified_at": p.get("verified_at"),
+        "verified_geo": p.get("verified_geo"),
+        "stats": proxy_stats.get(p["label"]),
+        "since": proxy_stats.SINCE,
+    }
+
+
+@app.get("/proxies", tags=["operator"], operation_id="proxies.list")
+def proxies_list() -> list[dict]:
+    """Registered proxies with their bound accounts, last probe and traffic counters
+    (`stats` are in-process and reset on restart: counted since `since`)."""
+    return [_proxy_view(p) for p in proxies.list_proxies() if p.get("label")]
+
+
+@app.post("/proxies/{label}/probe", tags=["operator"], operation_id="proxies.probe")
+async def proxies_probe(label: str) -> dict:
+    """Fetch the proxy's egress IP and geo, store the result, and return the entry; 502 when the proxy fails."""
+    p = proxies.get_by_label(label)
+    if p is None:
+        raise ApiError(404, "proxy_not_found")
+    result = await run_in_threadpool(proxies.probe, p)
+    proxies.record_verification(label, ip=result["ip"], geo=result["geo"], ok=result["ok"])
+    if not result["ok"]:
+        message = str(result.get("error") or "probe failed")
+        if p.get("password"):
+            message = message.replace(p["password"], "***")
+        raise ApiError(502, "proxy_error", message[:300])
+    return _proxy_view(proxies.get_by_label(label) or p)
 
 
 # ─── /ws ──────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ from curl_cffi import requests  # Chrome TLS fingerprint via libcurl-impersonate
 import accounts as account_registry
 import live_rev
 import proxies as proxy_registry
+import proxy_stats
 from of_signer import sign
 
 # Dedicated logger so proxy/upstream errors are filterable from the rest
@@ -352,10 +353,11 @@ class OFClient:
         so OF still sees one sticky IP. This is the single retry policy: both
         _http_call AND the handful of raw self.http.get/post calls (CDN media
         download, /users/list, convert upload) funnel through it, so one
-        half-second proxy blip can no longer hard-fail a request."""
+        half-second proxy blip can no longer hard-fail a request. It is also where
+        proxy_stats counts each proxied call: ok, or failed on a proxy error or timeout."""
         for attempt in range(tries):
             try:
-                return fn()
+                r = fn()
             except requests.exceptions.ProxyError as e:
                 if attempt < tries - 1:
                     log_of.info(
@@ -365,7 +367,17 @@ class OFClient:
                     )
                     time.sleep(pause_s)
                     continue
+                if self.proxy_label:
+                    proxy_stats.record_failed(self.proxy_label, f"proxy_error: {str(e)[:160]}")
                 raise
+            except requests.exceptions.Timeout as e:
+                if self.proxy_label:
+                    proxy_stats.record_failed(self.proxy_label, f"timeout: {str(e)[:160]}")
+                raise
+            # Any response (an OF 4xx included) means the proxy carried the call.
+            if self.proxy_label:
+                proxy_stats.record_ok(self.proxy_label)
+            return r
 
     def get_json(self, path_or_url: str, **kw) -> Any:
         r = self.get(path_or_url, **kw)
