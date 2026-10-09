@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { retryDelay } from '../src/modules/analytics/backfill.js';
 import { REPLY_CAP_MS } from '../src/modules/analytics/config.js';
 import {
-  bulkQueueIds,
   deriveContext,
   deriveMessage,
   derivePurchase,
@@ -145,18 +144,6 @@ describe('analytics derived columns', () => {
     expect(deriveMessage(msg({ queueId: 900, isFromQueue: true }), 2001, ctx)).toMatchObject({ isMass: true, queueId: 900 });
     expect(deriveMessage(msg({ queueId: 901, isFromQueue: true }), 2001, ctx)).toMatchObject({ isMass: false, queueId: 901 });
     expect(deriveMessage(msg({ queueId: 902 }), 2001, ctx)!.isMass).toBe(false);
-  });
-
-  it('names a queue id in 8 or more chats of outbound messages a bulk send; repeats in one chat, inbound and no queue id do not count', () => {
-    const out = (chatId: number, queueId: number | null) => ({ direction: 'outbound' as const, queueId, chatId });
-    const rows = [
-      ...[1, 2, 3, 4, 5, 6, 7, 8].map((c) => out(c, 950)),
-      ...[1, 2, 3, 4, 5, 6, 7, 7].map((c) => out(c, 951)),
-      ...[1, 2, 3, 4, 5, 6, 7].map((c) => out(c, 952)),
-      { direction: 'inbound' as const, queueId: 952, chatId: 8 },
-      ...[1, 2, 3, 4, 5, 6, 7, 8].map((c) => out(c, null)),
-    ];
-    expect(bulkQueueIds(rows)).toEqual(new Set([950]));
   });
 
   it('derives nothing from a message without a numeric id', () => {

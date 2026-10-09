@@ -8,18 +8,7 @@ import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import type { Upstream } from '../../lib/upstream.js';
 import { backfillConfig, type BackfillConfig } from './config.js';
-import {
-  BULK_CHATS,
-  bulkQueueIds,
-  deriveContext,
-  deriveMessage,
-  derivePurchase,
-  fanNames,
-  type DeriveContext,
-  type DerivedMessage,
-  type DerivedPurchase,
-  type Raw,
-} from './derive.js';
+import { deriveContext, deriveMessage, derivePurchase, fanNames, type DeriveContext, type DerivedMessage, type DerivedPurchase, type Raw } from './derive.js';
 import { syncScripts } from './scripts.js';
 
 const HOUR_MS = 3_600_000;
@@ -32,6 +21,11 @@ const STALE_CHAT_PAGES = 3;
 const PAGE = 100; // the upstream's cap on messages, mass history and transactions
 /** Chats in a row OF refuses (its 400 or 403) that end the run: a dead session answers every chat read 400 "Wrong user" or 403. */
 const DEAD_SESSION_CHATS = 5;
+/**
+ * The account's chats one queue id must reach to be a bulk send, stored as mass though the mass history a run read
+ * does not list it; a DM goes to one chat (the counts behind it: derive.ts `deriveMessage`).
+ */
+const BULK_CHATS = 8;
 
 export type BackfillOptions = {
   upstream: Upstream;
@@ -276,7 +270,8 @@ function unique<T>(list: T[], key: (x: T) => string | number, seen: Set<string |
  * `deleted_at` too: the derived rows have none). Older ones were derived without their mass history, so on conflict
  * they update every column but `is_mass`, `is_automated` and `automated_reason`: the flags a run that read the mass
  * history derived are not undone. A message read again exists upstream, so either way its `deleted_at` is cleared.
- * After each page, the stored outbound messages of a bulk send (a queue id of the page's in BULK_CHATS+ chats) are mass.
+ * In the page's transaction, the stored outbound messages of a bulk send (a queue id of the page's in BULK_CHATS+
+ * chats) are marked mass.
  * Coverage merges: it never moves back. Transactions upsert on `(account_id, tx_id)`. `finish` syncs the account's
  * script candidates and, for a run that ran to its end, moves `account_workspace.refreshed_at` forward (never back).
  */
@@ -284,36 +279,40 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
   const owned = { teamId, accountId };
   return {
     async messages(covered, tail) {
-      if (covered.length) {
-        await db
-          .insert(messageFact)
-          .values(covered.map((r) => ({ ...owned, ...r })))
-          .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
-      }
-      if (tail.length) {
-        await db
-          .insert(messageFact)
-          .values(tail.map((r) => ({ ...owned, ...r })))
-          .onConflictDoUpdate({
-            target: [messageFact.accountId, messageFact.messageId],
-            set: updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']),
-          });
-      }
-      // Bulk sends, counted over the stored rows (not this run's only), so a narrower run that re-derives a row from the
-      // mass history marks it again; the page's queue ids bound the count.
-      const queueIds = [...new Set([...covered, ...tail].flatMap((r) => (r.direction === 'outbound' && r.queueId !== null ? [r.queueId] : [])))];
-      if (!queueIds.length) return;
-      const outbound = and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.direction, 'outbound'));
-      const bulk = db
-        .select({ queueId: messageFact.queueId })
-        .from(messageFact)
-        .where(and(outbound, inArray(messageFact.queueId, queueIds)))
-        .groupBy(messageFact.queueId)
-        .having(sql`count(distinct ${messageFact.chatId}) >= ${BULK_CHATS}`);
-      await db
-        .update(messageFact)
-        .set({ isMass: true })
-        .where(and(outbound, eq(messageFact.isMass, false), inArray(messageFact.queueId, bulk)));
+      // One transaction: the covered upsert re-derives `is_mass` from the mass history, so a run that died before the
+      // bulk mark would leave a bulk send's copies unmarked.
+      await db.transaction(async (tx) => {
+        if (covered.length) {
+          await tx
+            .insert(messageFact)
+            .values(covered.map((r) => ({ ...owned, ...r })))
+            .onConflictDoUpdate({ target: [messageFact.accountId, messageFact.messageId], set: updateAll(messageFact, ['accountId', 'messageId']) });
+        }
+        if (tail.length) {
+          await tx
+            .insert(messageFact)
+            .values(tail.map((r) => ({ ...owned, ...r })))
+            .onConflictDoUpdate({
+              target: [messageFact.accountId, messageFact.messageId],
+              set: updateAll(messageFact, ['accountId', 'messageId', 'isMass', 'isAutomated', 'automatedReason']),
+            });
+        }
+        // Bulk sends, counted over the stored rows (not this run's only), so a narrower run that re-derives a row from
+        // the mass history marks it again; the page's queue ids bound the count.
+        const queueIds = [...new Set([...covered, ...tail].flatMap((r) => (r.direction === 'outbound' && r.queueId !== null ? [r.queueId] : [])))];
+        if (!queueIds.length) return;
+        const outbound = and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.direction, 'outbound'));
+        const bulk = tx
+          .select({ queueId: messageFact.queueId })
+          .from(messageFact)
+          .where(and(outbound, inArray(messageFact.queueId, queueIds)))
+          .groupBy(messageFact.queueId)
+          .having(sql`count(distinct ${messageFact.chatId}) >= ${BULK_CHATS}`);
+        await tx
+          .update(messageFact)
+          .set({ isMass: true })
+          .where(and(outbound, eq(messageFact.isMass, false), inArray(messageFact.queueId, bulk)));
+      });
     },
     async coverage(walk) {
       // A narrower walk keeps what an earlier one reached: the older oldest message (with its time) and reached_start.
@@ -383,11 +382,25 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
  * as `dbStore` does. Coverage is the walk's own; the stored chats are those of `rows`.
  */
 export function memoryStore(rows: BackfillRows): BackfillStore {
+  /** The outbound rows by queue id, with their chats. */
+  const sends = new Map<number, { chats: Set<number>; rows: DerivedMessage[] }>();
   return {
     async messages(covered, tail) {
-      rows.messages.push(...[...covered, ...tail].map(({ raw: _r, fetchedAt: _f, ...d }) => d));
-      const bulk = bulkQueueIds(rows.messages);
-      for (const m of rows.messages) if (m.direction === 'outbound' && m.queueId !== null && bulk.has(m.queueId)) m.isMass = true;
+      const page = [...covered, ...tail].map(({ raw: _r, fetchedAt: _f, ...d }) => d);
+      rows.messages.push(...page);
+      const queueIds = new Set<number>();
+      for (const m of page) {
+        if (m.direction !== 'outbound' || m.queueId === null) continue;
+        const send = sends.get(m.queueId) ?? { chats: new Set<number>(), rows: [] };
+        sends.set(m.queueId, send);
+        send.chats.add(m.chatId);
+        send.rows.push(m);
+        queueIds.add(m.queueId);
+      }
+      for (const id of queueIds) {
+        const send = sends.get(id)!;
+        if (send.chats.size >= BULK_CHATS) for (const m of send.rows) m.isMass = true;
+      }
     },
     async coverage(walk) {
       rows.chats.push(walk);

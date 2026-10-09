@@ -192,11 +192,13 @@ export type DerivedMessage = {
 
 /**
  * Derived columns of one OF message in chat `chatId`; null when it has no numeric `id`. Outbound = `fromUser.id` is
- * the account. Mass = its `queueId` is a broadcast with `sentCount > 1`. Every OF message carries a numeric `queueId`;
- * `isFromQueue` is true on every broadcast (6,512 of 6,512 mass rows, 2026-10-09) and on 733 stored non-mass outbound
- * rows: 683 share a queue id across 2-321 chats (broadcasts outside the mass history a run read) and 50 are single-chat queued
- * sends (0.19% of 26,133 DMs). The backfill uses the mass history, and its store also marks bulk sends (`bulkQueueIds`)
- * mass; live rows (live.ts) use `isFromQueue`. Automated =
+ * the account. Mass = its `queueId` is a broadcast with `sentCount > 1` in the mass history; the backfill's store also
+ * marks bulk sends mass (a queue id in 8+ chats, backfill.ts `BULK_CHATS`). Every OF message carries a numeric
+ * `queueId`; `isFromQueue` is true on every broadcast (6,512 of 6,512 mass rows, 2026-10-09) and on some sends the mass
+ * history a run read does not list: bulk sends and single-chat queued sends (about 0.2% of DMs). On 2026-10-09 (account
+ * 337749380, before the bulk mark), 671 non-mass outbound rows shared one of 6 queue ids, each in 8 to 321 of their
+ * chats (OF set `isFromQueue` on 321 of the rows), and every other non-mass outbound row had a queue id of its own:
+ * none was shared by 2 to 7 chats. The backfill uses the mass history; live rows (live.ts) use `isFromQueue`. Automated =
  * it matches the welcome message (text or media) or an automation text. `names` are the fan's names from the chat
  * list; any on the message's fan user object are added.
  */
@@ -232,24 +234,6 @@ export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext, name
     textHash: outbound ? scriptHash(raw.text, [...names, ...messageFanNames(raw, chatId)]) : null,
     normaliserVersion: outbound ? NORMALISER_VERSION : null,
   };
-}
-
-/**
- * How many of the account's chats one queue id must reach to be a bulk send: mass, even when the mass history a run
- * read does not list it. A DM goes to one chat; on 2026-10-09, 671 stored outbound rows not marked mass shared one of
- * 6 queue ids across 8 to 862 chats, and no unmarked queue id reached 2 to 7 chats.
- */
-export const BULK_CHATS = 8;
-
-/** The queue ids of `rows`' outbound messages that reach BULK_CHATS distinct chats: bulk sends. */
-export function bulkQueueIds(rows: Pick<DerivedMessage, 'direction' | 'queueId' | 'chatId'>[]): Set<number> {
-  const chats = new Map<number, Set<number>>();
-  for (const r of rows) {
-    if (r.direction !== 'outbound' || r.queueId === null) continue;
-    const set = chats.get(r.queueId) ?? new Set<number>();
-    chats.set(r.queueId, set.add(r.chatId));
-  }
-  return new Set([...chats].flatMap(([queueId, set]) => (set.size >= BULK_CHATS ? [queueId] : [])));
 }
 
 /** The names on the fan's user object of a message (`fromUser` when the fan sent it, else `toUser`). */
