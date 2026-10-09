@@ -1,4 +1,4 @@
-import { and, max, sql } from 'drizzle-orm';
+import { and, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
@@ -35,8 +35,6 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     // `day` is grouped by its output name: the timezone parameter would make a repeated expression differ.
     db
       .select({
-        accountId: purchaseFact.accountId,
-        fanId: purchaseFact.fanId,
         kind: purchaseFact.kind,
         day: sql<string>`to_char(${purchaseFact.createdAt} at time zone ${tz}, 'YYYY-MM-DD')`.as('day'),
         gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
@@ -44,11 +42,10 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
         transactions: sql<number>`count(*)::int`,
         settled: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${txStatus} = 'done'), 0)::int`,
         pending: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${txStatus} = 'loading'), 0)::int`,
-        lastAt: max(purchaseFact.createdAt),
       })
       .from(purchaseFact)
       .where(sales)
-      .groupBy(purchaseFact.accountId, purchaseFact.fanId, purchaseFact.kind, sql`"day"`),
+      .groupBy(purchaseFact.kind, sql`"day"`),
     db
       .select({
         fansMessaged: sql<number>`(count(distinct (${messageFact.accountId}, ${messageFact.chatId})) filter (where ${messageFact.deletedAt} is null and ${salesAccount}))::int`,
@@ -67,7 +64,6 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   let pendingGross = 0;
   const kinds = new Map<string, Sums>();
   const byDay = new Map(days.map((d) => [d, zero()]));
-  const payers = new Map<string, Sums & { accountId: number; fanId: number; lastAt: Date }>();
   for (const g of groups) {
     add(totals, g);
     settledGross += g.settled;
@@ -77,21 +73,14 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     add(kinds.get(kind)!, g);
     const day = byDay.get(g.day);
     if (day) add(day, g);
-    if (g.fanId === null) continue;
-    const key = `${g.accountId}:${g.fanId}`;
-    let payer = payers.get(key);
-    if (!payer) payers.set(key, (payer = { accountId: g.accountId, fanId: g.fanId, lastAt: g.lastAt!, ...zero() }));
-    add(payer, g);
-    if (g.lastAt! > payer.lastAt) payer.lastAt = g.lastAt!;
   }
 
-  const top = [...payers.values()].sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.fanId - b.fanId).slice(0, TOP_PAYERS);
-  // Per payer, the name and isDeleted on the newest transaction of the range with a name (else the newest), and whether
-  // the fan's chat is stored: `fanSpends`, as on the fans list. Every payer has a row: both read the range's booked sales.
-  const detail = new Map(spends.map((d) => [`${d.accountId}:${d.fanId}`, d]));
+  // The payers of the range (a booked sale in it has a `lastAt`), with the fan's details as on the fans list.
+  const payers = spends.flatMap(({ lastAt, ...p }) => (lastAt ? [{ ...p, lastAt }] : []));
+  const top = payers.sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.fanId - b.fanId).slice(0, TOP_PAYERS);
   const withoutChat = { payers: 0, gross: 0 };
-  for (const [key, p] of payers) {
-    if (detail.get(key)!.hasChat) continue;
+  for (const p of payers) {
+    if (p.hasChat) continue;
     withoutChat.payers++;
     withoutChat.gross += p.gross;
   }
@@ -103,9 +92,9 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
       ...totals,
       settledGross,
       pendingGross,
-      payers: payers.size,
+      payers: payers.length,
       fansMessaged,
-      fanCvr: percent(payers.size, fansMessaged),
+      fanCvr: percent(payers.length, fansMessaged),
       dmMessages,
       dmPpvs,
       goldenRatio: percent(dmPpvs, dmMessages),
@@ -113,10 +102,8 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     byKind: [...kinds].map(([kind, s]) => ({ kind, ...s })).sort((a, b) => b.gross - a.gross || a.kind.localeCompare(b.kind)),
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
-    topPayers: top.map(({ lastAt, ...p }) => {
-      const { name, username, isDeleted, hasChat } = detail.get(`${p.accountId}:${p.fanId}`)!;
-      return { ...p, name: name ?? username, isDeleted, lastAt: lastAt.toISOString(), hasChat };
-    }),
+    // The response schema drops the fields the contract does not name.
+    topPayers: top.map(({ name, username, lastAt, ...p }) => ({ ...p, name: name ?? username, lastAt: lastAt.toISOString() })),
     withoutChat,
   };
 }

@@ -71,8 +71,12 @@ export type FanSpend = {
   /** Booked gross in the range, and over every stored transaction, in cents. */
   gross: number;
   grossAllTime: number;
-  /** A booked sale in the range. */
+  /** Booked net and transactions in the range. */
+  net: number;
+  transactions: number;
+  /** A booked sale in the range, and the newest one's time (null with none). */
   paidInRange: boolean;
+  lastAt: Date | null;
   /** OF's `user` name, username and `isDeleted` on the newest booked transaction in the range with a name (else the newest in the range); null / false with none. */
   name: string | null;
   username: string | null;
@@ -97,7 +101,10 @@ export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
       fanId: purchaseFact.fanId,
       gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${inRange}), 0)::int`,
       grossAllTime: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
+      net: sql<number>`coalesce(sum(${purchaseFact.netCents}) filter (where ${inRange}), 0)::int`,
+      transactions: sql<number>`(count(*) filter (where ${inRange}))::int`,
       paidInRange: sql<boolean>`coalesce(bool_or(${inRange}), false)`,
+      lastAt: sql<Date | null>`max(${purchaseFact.createdAt}) filter (where ${inRange})`.mapWith(purchaseFact.createdAt),
       name: sql<string | null>`${newest(sql`nullif(${user}->>'name', '')`)}`,
       username: sql<string | null>`${newest(sql`nullif(${user}->>'username', '')`)}`,
       isDeleted: sql<boolean>`coalesce(${newest(sql`coalesce((${user}->>'isDeleted')::boolean, false)`)}, false)`,
