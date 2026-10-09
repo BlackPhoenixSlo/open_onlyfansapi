@@ -210,3 +210,41 @@ function VerifyFlow() {
     </svg>
   );
 }
+
+const REVENUE_TERMS: [string, string][] = [
+  [
+    'Gross and net',
+    "OF's amount (what the fan paid) and net (after OF's fee) of each transaction in the range, summed. Transactions are stored by the analytics backfill, so a range it never read shows nothing. Days are in the stats timezone.",
+  ],
+  [
+    'Kind',
+    "OF's transaction type: message (a PPV bought in chat), tips, subscription, subscription_prolong (a renewal), post (a paid post); unknown when OF gave none.",
+  ],
+  ['Payers', 'Fans with a transaction in the range, per account. A transaction whose fan is unknown counts in the sums only.'],
+  [
+    'Golden ratio',
+    'Payers divided by fans messaged: the fans with any message in the range, from either side, not unsent. Per account, like payers. A payer need not have been messaged, so it can pass 100%.',
+  ],
+  [
+    'PPV unlock',
+    "Priced messages sent in the range and not unsent: DM (not mass) or mass. Opened is OF's isOpened flag as of the last read, so the rate is an upper bound: opened counts as bought.",
+  ],
+  [
+    'Top payers',
+    "The 50 fans who paid the most in the range, with the name on their newest transaction. Chat says whether any message of theirs is stored; open it in Conversations.",
+  ],
+];
+
+/** The Revenue page's "How to read this": each number's definition. */
+export function RevenueTerms() {
+  return (
+    <dl className="divide-y">
+      {REVENUE_TERMS.map(([term, text]) => (
+        <div key={term} className="py-3 first:pt-0 last:pb-0">
+          <dt className="font-medium">{term}</dt>
+          <dd className="mt-1 text-sm leading-relaxed text-muted-foreground">{text}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}

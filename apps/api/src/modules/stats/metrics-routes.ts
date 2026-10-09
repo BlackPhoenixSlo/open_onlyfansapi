@@ -40,8 +40,6 @@ import {
   openerSamples,
   scopedOpeners,
   scopedTurns,
-  zonedMidnight,
-  zonedToday,
   type MetricId,
 } from '../analytics/metrics.js';
 import { connectedAccounts } from '../accounts/service.js';
@@ -52,24 +50,7 @@ import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } fr
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
-import { assertAccountAllowed, DAY_MS, DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
-
-const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
-
-/** `value`; 400 for a day that does not exist (e.g. 2026-02-30, 2026-13-01). */
-function checkDay(value: string, name: string): string {
-  parseDay(value, name);
-  return value;
-}
-
-/** `from`/`to` days in the config timezone (`to` inclusive), as the instants `[from, to)`. */
-function range(query: { from?: string; to?: string }, tz: string) {
-  const to = query.to ? checkDay(query.to, 'to') : zonedToday(tz);
-  const from = query.from ? checkDay(query.from, 'from') : addDays(to, -(DEFAULT_DAYS - 1));
-  if (from > to) throw new AppError(400, 'invalid_range', '`from` must not be after `to`');
-  if (addDays(from, MAX_DAYS - 1) < to) throw new AppError(400, 'range_too_large', `The range can span at most ${MAX_DAYS} days`);
-  return { fromDay: from, toDay: to, from: zonedMidnight(from, tz), to: zonedMidnight(addDays(to, 1), tz) };
-}
+import { assertAccountAllowed, DAY_MS, range, scopedAccounts } from './scope.js';
 
 function metricId(id: string): MetricId {
   if (!isMetricId(id)) throw new AppError(404, 'metric_not_found', `No metric ${JSON.stringify(id)}`);

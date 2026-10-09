@@ -16,6 +16,7 @@ import type {
   StatsMetric,
   StatsMessages,
   StatsMetricSeries,
+  StatsRevenue,
   StatsScripts,
   Usage,
   UsageGroupBy,
@@ -208,6 +209,12 @@ export const statsFansQuery = (params: StatsRange & { limit?: number }) =>
   queryOptions({
     queryKey: ['stats', 'fans', params],
     queryFn: () => api<StatsFans>(`/v1/stats/fans?${qs(params)}`),
+  });
+
+export const statsRevenueQuery = (params: StatsRange) =>
+  queryOptions({
+    queryKey: ['stats', 'revenue', params],
+    queryFn: () => api<StatsRevenue>(`/v1/stats/revenue?${qs(params)}`),
   });
 
 /** The stored messages as CSV; `direction: 'in'` = the fans' messages only. */

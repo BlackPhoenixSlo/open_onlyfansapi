@@ -17,6 +17,7 @@ import openapiRoutes from './modules/openapi/routes.js';
 import proxyRoutes from './modules/proxy/routes.js';
 import realtimeRoutes from './modules/realtime/routes.js';
 import statsMetricsRoutes from './modules/stats/metrics-routes.js';
+import statsRevenueRoutes from './modules/stats/revenue-routes.js';
 import statsRoutes from './modules/stats/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import webhooksRoutes from './modules/webhooks/routes.js';
@@ -97,6 +98,7 @@ export async function buildApp(opts: AppOptions = {}) {
       await v1.register(realtimeRoutes);
       await v1.register(statsRoutes);
       await v1.register(statsMetricsRoutes);
+      await v1.register(statsRevenueRoutes);
       await v1.register(proxyRoutes);
     },
     { prefix: '/v1' },

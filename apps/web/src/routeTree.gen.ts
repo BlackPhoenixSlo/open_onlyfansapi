@@ -17,6 +17,7 @@ import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
 import { Route as AppConversationsRouteImport } from './routes/_app/conversations'
 import { Route as AppKeysRouteImport } from './routes/_app/keys'
 import { Route as AppPlaygroundRouteImport } from './routes/_app/playground'
+import { Route as AppRevenueRouteImport } from './routes/_app/revenue'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppStatsRouteImport } from './routes/_app/stats'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
@@ -64,6 +65,11 @@ const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
   path: '/playground',
   getParentRoute: () => AppRoute,
 } as any)
+const AppRevenueRoute = AppRevenueRouteImport.update({
+  id: '/revenue',
+  path: '/revenue',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -108,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/conversations': typeof AppConversationsRoute
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
+  '/revenue': typeof AppRevenueRoute
   '/settings': typeof AppSettingsRoute
   '/stats': typeof AppStatsRoute
   '/usage': typeof AppUsageRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/conversations': typeof AppConversationsRoute
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
+  '/revenue': typeof AppRevenueRoute
   '/settings': typeof AppSettingsRoute
   '/stats': typeof AppStatsRoute
   '/usage': typeof AppUsageRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/_app/conversations': typeof AppConversationsRoute
   '/_app/keys': typeof AppKeysRoute
   '/_app/playground': typeof AppPlaygroundRoute
+  '/_app/revenue': typeof AppRevenueRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/stats': typeof AppStatsRoute
   '/_app/usage': typeof AppUsageRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/keys'
     | '/playground'
+    | '/revenue'
     | '/settings'
     | '/stats'
     | '/usage'
@@ -175,6 +185,7 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/keys'
     | '/playground'
+    | '/revenue'
     | '/settings'
     | '/stats'
     | '/usage'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/_app/conversations'
     | '/_app/keys'
     | '/_app/playground'
+    | '/_app/revenue'
     | '/_app/settings'
     | '/_app/stats'
     | '/_app/usage'
@@ -266,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlaygroundRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/revenue': {
+      id: '/_app/revenue'
+      path: '/revenue'
+      fullPath: '/revenue'
+      preLoaderRoute: typeof AppRevenueRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
@@ -323,6 +342,7 @@ interface AppRouteChildren {
   AppConversationsRoute: typeof AppConversationsRoute
   AppKeysRoute: typeof AppKeysRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
+  AppRevenueRoute: typeof AppRevenueRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStatsRoute: typeof AppStatsRoute
   AppUsageRoute: typeof AppUsageRoute
@@ -338,6 +358,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppConversationsRoute: AppConversationsRoute,
   AppKeysRoute: AppKeysRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
+  AppRevenueRoute: AppRevenueRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStatsRoute: AppStatsRoute,
   AppUsageRoute: AppUsageRoute,

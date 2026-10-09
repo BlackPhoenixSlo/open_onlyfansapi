@@ -743,3 +743,53 @@ export const statsMessages = z.object({
   items: z.array(statsMessage),
 });
 export type StatsMessages = z.infer<typeof statsMessages>;
+
+/** `GET /v1/stats/revenue`: `from`/`to` days in the config timezone, `to` inclusive; default the last 30 days. */
+export const statsRevenueQuery = z.object({
+  from: isoDay.optional(),
+  to: isoDay.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+});
+export type StatsRevenueQuery = z.input<typeof statsRevenueQuery>;
+
+/** Money sums in cents: OF's `amount` (gross) and `net` per transaction, a missing one counted as 0. */
+const revenueSums = { gross: z.number().int(), net: z.number().int(), transactions: z.number().int() };
+
+/** Revenue from the stored transactions (`purchase_fact`) and PPV sends (`message_fact`). Rates are 0 to 1, null when nothing to divide by. */
+export const statsRevenue = z.object({
+  timezone: z.string(),
+  configVersion: z.number().int(),
+  asOf: z.string(),
+  from: z.string(),
+  to: z.string(),
+  totals: z.object({
+    ...revenueSums,
+    /** Fans with a transaction in the range whose fan is known; per account (a fan paying on two accounts counts twice). */
+    payers: z.number().int(),
+    /** Fans (chats) with a message in the range that is not unsent, either direction; per account. */
+    fansMessaged: z.number().int(),
+    /** `payers / fansMessaged`. */
+    goldenRatio: z.number().nullable(),
+  }),
+  /** OF's transaction type (`message`, `tips`, `subscription`, `subscription_prolong`, `post`, ...; `unknown` when absent), most gross first. */
+  byKind: z.array(z.object({ kind: z.string(), ...revenueSums })),
+  /** Every day of the range in the config timezone, zeros included. */
+  byDay: z.array(z.object({ day: z.string(), ...revenueSums })),
+  /** Priced outbound messages not unsent: `dm` not mass, `mass` mass; `opened` = OF's `isOpened` (bought). */
+  ppv: z.array(z.object({ scope: z.enum(['dm', 'mass']), sent: z.number().int(), opened: z.number().int(), rate: z.number().nullable() })),
+  /** Up to 50 (account, fan) pairs, most gross first. */
+  topPayers: z.array(
+    z.object({
+      accountId: z.number().int(),
+      fanId: z.number().int(),
+      /** The OF display name (else username) on the fan's newest transaction that has one; null when none does. */
+      name: z.string().nullable(),
+      ...revenueSums,
+      /** The newest transaction, ISO. */
+      lastAt: z.string(),
+      /** A message of the fan's chat on the account is stored (any time). */
+      hasChat: z.boolean(),
+    }),
+  ),
+});
+export type StatsRevenue = z.infer<typeof statsRevenue>;

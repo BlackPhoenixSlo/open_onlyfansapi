@@ -26,6 +26,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
 | `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, the latest fan message first (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), and `ppvSent`, `ppvOpened`, `tips`, `tipCents` ([below](#stored-messages-and-export)). `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
 | `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list, and then `nextCursor`, passed as `cursor`, returns the next page (`400 invalid_cursor` for a malformed one). `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
+| `GET /v1/stats/revenue` | Gross and net by kind and by day, payers, the golden ratio, PPV unlocks by DM and mass, and the top 50 payers, from the stored transactions and messages ([Revenue](#revenue)) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
 | `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `error`, `errorCode` (`session_expired` when OF refused the account's session, else null); or `{ "status": "idle" }` |
 
@@ -112,6 +113,26 @@ of migration 0013 handles JSON numbers; rows are re-derived by the next backfill
 `isOpened`), `tips` (the fan's tip messages) and `tipCents` (their `tipAmount`). The Fans card shows PPV as
 bought/sent and Tips as count and amount. These come from the message objects in the chat, not from transactions:
 a PPV bought or a tip sent outside the stored messages is not in them.
+
+### Revenue
+
+`GET /v1/stats/revenue` (and the dashboard's Revenue page) sums the transactions the backfill stored in
+`purchase_fact` (OF's `/payouts/transactions`; live events add none, so a range never backfilled shows nothing) and
+counts PPV sends in `message_fact`. Money is in cents, integers: `gross` is OF's `amount`, `net` its `net` (a missing
+one counts as 0). Rates are fractions from 0 to 1, null when the denominator is 0.
+
+- `totals`: `gross`, `net`, `transactions`; `payers`, the fans with a transaction in the range whose fan is known;
+  `fansMessaged`, the fans (chats) with a message in the range that is not unsent, from either side; `goldenRatio`,
+  `payers / fansMessaged` (a payer need not have been messaged, so it can pass 1). Payers and fans count per account:
+  a fan on two accounts counts twice.
+- `byKind`: per OF transaction type (`descriptionDetails.type`: `message`, `tips`, `subscription`,
+  `subscription_prolong`, `post`; `unknown` when absent), `transactions`, `gross`, `net`, most gross first.
+- `byDay`: every day of the range in the config timezone, zeros included.
+- `ppv`: `dm` (not mass) and `mass`, over outbound priced messages not unsent: `sent`, `opened` (`isOpened`) and
+  `rate`. `isOpened` is OF's flag as of the last read, so the rate is an upper bound: opened counts as bought.
+- `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `fanId`, `name` (OF's display name,
+  else username, on the fan's newest transaction that has one; null when none does), `gross`, `net`,
+  `transactions`, `lastAt` and `hasChat` (a message of the fan's chat on that account is stored, at any time).
 
 ## Live updates
 
