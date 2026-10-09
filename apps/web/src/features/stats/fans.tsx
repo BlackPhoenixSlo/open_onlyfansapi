@@ -1,51 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import { toast } from 'sonner';
+import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { type StatsRange, statsFansQuery, statsMessagesCsvPath } from '@/lib/api';
-
-/** Saves a CSV from the API as `filename`. A plain link would not send `x-dashboard`, so the session would not authorise it. */
-export async function downloadCsv(path: string, filename: string) {
-  let blob: Blob;
-  try {
-    const res = await fetch(path, { headers: { 'x-dashboard': '1' }, credentials: 'include' });
-    if (!res.ok) {
-      toast.error(`CSV export failed (${res.status})`);
-      return;
-    }
-    blob = await res.blob();
-  } catch {
-    toast.error('CSV export failed (network error)');
-    return;
-  }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url));
-}
-
-/** OF amounts are US dollars. */
-const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+import { useCsvDownload } from '@/lib/download';
+import { formatMoney } from '@/lib/utils';
 
 /** The fans with messages in the range, latest fan message first, and their stored messages as CSV. */
 export function FansCard({ range }: { range?: StatsRange }) {
   const fans = useQuery({ ...statsFansQuery(range ?? {}), enabled: range !== undefined });
-  const [downloading, setDownloading] = useState(false);
+  const csv = useCsvDownload();
   const span = `${fans.data?.from ?? range?.from}-${fans.data?.to ?? range?.to}`;
-  async function download(direction: 'in' | 'all', name: string, scope: { accountId?: number; chatId?: number } = {}) {
-    setDownloading(true);
-    try {
-      await downloadCsv(statsMessagesCsvPath({ ...range, ...scope, direction }), `${name}-${span}.csv`);
-    } finally {
-      setDownloading(false);
-    }
-  }
-  const disabled = downloading || !fans.data?.items.length;
+  const download = (direction: 'in' | 'all', name: string, scope: { accountId?: number; chatId?: number } = {}) =>
+    csv.download(statsMessagesCsvPath({ ...range, ...scope, direction }), `${name}-${span}.csv`);
+  const disabled = csv.downloading || !fans.data?.items.length;
 
   return (
     <Card>
@@ -89,17 +59,26 @@ export function FansCard({ range }: { range?: StatsRange }) {
               <TableBody>
                 {fans.data.items.map((f) => (
                   <TableRow key={`${f.accountId}:${f.chatId}`}>
-                    <TableCell className="font-medium">{f.fanUsername ? `@${f.fanUsername}` : f.chatId}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link
+                        to="/conversations"
+                        search={{ range: 'custom', from: fans.data.from, to: fans.data.to, chatAccountId: f.accountId, chatId: f.chatId }}
+                        className="underline-offset-4 hover:underline"
+                        title="Read the conversation"
+                      >
+                        {f.fanUsername ? `@${f.fanUsername}` : f.chatId}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-right">{f.fanMessages}</TableCell>
                     <TableCell className="text-right">{f.dmMessages}</TableCell>
                     <TableCell className="text-right">{f.ppvSent ? `${f.ppvOpened}/${f.ppvSent}` : '—'}</TableCell>
-                    <TableCell className="text-right">{f.tips ? `${f.tips} · ${money(f.tipCents)}` : '—'}</TableCell>
+                    <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
                     <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={downloading}
+                        disabled={csv.downloading}
                         onClick={() => download('all', `messages-${f.fanUsername ?? f.chatId}`, { accountId: f.accountId, chatId: f.chatId })}
                       >
                         CSV

@@ -14,3 +14,6 @@ export function prettyJson(body: string) {
     return body;
   }
 }
+
+/** OF amounts are US dollars. */
+export const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;

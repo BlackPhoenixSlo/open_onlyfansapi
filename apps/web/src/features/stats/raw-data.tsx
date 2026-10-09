@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { NoData, Skeleton } from '@/features/stats/cards';
-import { downloadCsv } from '@/features/stats/fans';
+import { downloadCsv } from '@/lib/download';
 import { formatPercent, formatWait } from '@/features/stats/series';
 import { type StatsRange, statsMetricPath, statsMetricQuery } from '@/lib/api';
 

@@ -29,6 +29,7 @@ const nav = [
   { to: '/logs', label: 'Logs' },
   { to: '/usage', label: 'Usage' },
   { to: '/stats', label: 'Stats' },
+  { to: '/conversations', label: 'Conversations' },
   { to: '/webhooks', label: 'Webhooks' },
   { to: '/playground', label: 'Playground' },
   { to: '/settings', label: 'Settings' },

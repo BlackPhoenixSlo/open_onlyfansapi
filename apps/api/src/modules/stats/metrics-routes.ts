@@ -48,7 +48,7 @@ import { connectedAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { NORMALISER_VERSION } from '../analytics/derive.js';
 import { freshness } from '../analytics/live.js';
-import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } from '../analytics/messages.js';
+import { MESSAGE_EXPORT_COLUMNS, messageBatches, messageCursor, scopedFans, scopedMessages } from '../analytics/messages.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
 import { assignAccount } from '../analytics/workspace.js';
@@ -191,7 +191,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
           // A stream skips the serializer; the schema's string stands for the CSV in the OpenAPI document.
           .send(Readable.from(lines()) as unknown as string);
       }
-      const page = await scopedMessages(scope, query.limit);
+      const page = await scopedMessages(scope, query.limit, query.cursor ? messageCursor(query.cursor) : null);
       return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...page };
     },
   );

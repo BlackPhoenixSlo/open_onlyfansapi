@@ -1,9 +1,11 @@
 import { and, arrayOverlaps, desc, eq, or, sql, type SQL } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { webhookDelivery, webhookEndpoint } from '../../db/schema.js';
 import { webhookEventType, type DeliveryStatus, type WebhookDelivery, type WebhookEndpoint, type WebhookEventType } from '../../contracts.js';
 import { env } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
+import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import { newWebhookSecret } from '../../lib/signature.js';
@@ -182,18 +184,7 @@ export async function redeliver(teamId: string, endpointId: string, deliveryId: 
 }
 
 /** Keyset cursor over (created_at desc, id desc). */
-const encodeCursor = (createdAt: Date, id: string) =>
-  Buffer.from(JSON.stringify([createdAt.toISOString(), id])).toString('base64url');
-
-function decodeCursor(cursor: string): [string, string] {
-  try {
-    const [ts, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString()) as unknown[];
-    if (typeof ts === 'string' && typeof id === 'string' && !Number.isNaN(Date.parse(ts))) return [ts, id];
-  } catch {
-    // fall through
-  }
-  throw new AppError(400, 'invalid_cursor', 'The cursor is invalid');
-}
+const cursorKey = z.tuple([cursorTime, z.string()]);
 
 export async function listDeliveries(
   teamId: string,
@@ -205,7 +196,7 @@ export async function listDeliveries(
   if (f.status) where.push(eq(webhookDelivery.status, f.status));
   if (f.event) where.push(eq(webhookDelivery.eventType, f.event));
   if (f.cursor) {
-    const [ts, id] = decodeCursor(f.cursor);
+    const [ts, id] = decodeCursor(f.cursor, cursorKey);
     where.push(sql`(${webhookDelivery.createdAt}, ${webhookDelivery.id}) < (${ts}::timestamptz, ${id})`);
   }
   const rows = await db
@@ -218,7 +209,7 @@ export async function listDeliveries(
   const last = page.at(-1);
   return {
     items: page.map(toDelivery),
-    nextCursor: rows.length > f.limit && last ? encodeCursor(last.createdAt, last.id) : null,
+    nextCursor: rows.length > f.limit && last ? encodeCursor([last.createdAt.toISOString(), last.id]) : null,
   };
 }
 

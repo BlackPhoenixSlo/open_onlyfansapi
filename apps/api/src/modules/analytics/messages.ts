@@ -1,7 +1,9 @@
 import { and, asc, desc, eq, gte, inArray, lt, max, min, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact } from '../../db/schema.js';
 import type { StatsFan, StatsMessage } from '../../contracts.js';
+import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
 import { messageDetail, plainText } from './derive.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`, `GET /v1/stats/messages`): read from `message_fact` of the
@@ -118,6 +120,7 @@ async function messagePage(scope: MessageScope, after: Cursor | null, limit: num
       mediaCount: messageFact.mediaCount,
       isMass: messageFact.isMass,
       isAutomated: messageFact.isAutomated,
+      automatedReason: messageFact.automatedReason,
       deletedAt: messageFact.deletedAt,
       raw: messageFact.raw,
     })
@@ -146,10 +149,31 @@ const toMessage = ({ createdAt, deletedAt, raw, ...r }: Awaited<ReturnType<typeo
   deletedAt: deletedAt?.toISOString() ?? null,
 });
 
-/** The first `limit` messages in `[from, to)`, by account, chat, time and message id; `truncated` when more match. */
-export async function scopedMessages(scope: MessageScope, limit: number): Promise<{ truncated: boolean; items: StatsMessage[] }> {
-  const { rows } = await messagePage(scope, null, limit + 1);
-  return { truncated: rows.length > limit, items: rows.slice(0, limit).map(toMessage) };
+/** The `cursor` of `GET /v1/stats/messages`: account, chat, time and message id of the last row. */
+const cursorKey = z.tuple([z.number().int(), z.number().int(), cursorTime, z.number().int()]);
+
+/** A row's `nextCursor`. */
+const cursorOf = (c: Cursor) => encodeCursor([c.accountId, c.chatId, c.createdAt.toISOString(), c.messageId]);
+
+/** Parses a `cursor`; 400 `invalid_cursor` when it is not one. */
+export function messageCursor(cursor: string): Cursor {
+  const [accountId, chatId, at, messageId] = decodeCursor(cursor, cursorKey);
+  return { accountId, chatId, createdAt: new Date(at), messageId };
+}
+
+/**
+ * The first `limit` messages in `[from, to)` after `after`, by account, chat, time and message id; `truncated` when
+ * more match, and then `nextCursor` continues after the last item.
+ */
+export async function scopedMessages(
+  scope: MessageScope,
+  limit: number,
+  after: Cursor | null = null,
+): Promise<{ truncated: boolean; nextCursor: string | null; items: StatsMessage[] }> {
+  const { rows } = await messagePage(scope, after, limit + 1);
+  const page = rows.slice(0, limit);
+  const truncated = rows.length > limit;
+  return { truncated, nextCursor: truncated ? cursorOf(page.at(-1)!) : null, items: page.map(toMessage) };
 }
 
 /** Every message in `[from, to)` in the same order, `messageExport.batchSize` rows per query. */

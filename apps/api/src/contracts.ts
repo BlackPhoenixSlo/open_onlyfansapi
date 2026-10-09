@@ -673,7 +673,10 @@ export const statsFans = z.object({
 });
 export type StatsFans = z.infer<typeof statsFans>;
 
-/** `GET /v1/stats/messages`: the stored messages, `direction=in` for the fans' messages only. `limit` caps JSON only; CSV holds the whole range. */
+/**
+ * `GET /v1/stats/messages`: the stored messages, `direction=in` for the fans' messages only. `limit` and `cursor` page
+ * JSON only; CSV holds the whole range.
+ */
 export const statsMessagesQuery = z.object({
   from: isoDay.optional(),
   to: isoDay.optional(),
@@ -682,6 +685,8 @@ export const statsMessagesQuery = z.object({
   direction: z.enum(['in', 'out', 'all']).default('all'),
   format: z.enum(['json', 'csv']).default('json'),
   limit: z.coerce.number().int().min(1).max(5000).default(1000),
+  /** The previous page's `nextCursor`: continue after its last message. */
+  cursor: z.string().optional(),
 });
 export type StatsMessagesQuery = z.input<typeof statsMessagesQuery>;
 
@@ -713,6 +718,8 @@ export const statsMessage = z.object({
   hasPreview: z.boolean(),
   isMass: z.boolean(),
   isAutomated: z.boolean(),
+  /** Why `isAutomated`: the welcome message or a known automation's text; null when not automated. */
+  automatedReason: z.enum(['welcome', 'automation']).nullable(),
   /** Replies to another message (OF's `replyToMessage`). */
   isReply: z.boolean(),
   /** OF's `isLiked`: the other side liked it. */
@@ -730,6 +737,8 @@ export const statsMessages = z.object({
   to: z.string(),
   /** `limit` cut the list: more messages match. */
   truncated: z.boolean(),
+  /** Pass as `cursor` for the next page; null when nothing is cut. */
+  nextCursor: z.string().nullable(),
   /** By account, chat, time and message id. */
   items: z.array(statsMessage),
 });

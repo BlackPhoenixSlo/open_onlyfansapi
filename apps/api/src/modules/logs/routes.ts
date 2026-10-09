@@ -6,6 +6,7 @@ import { db } from '../../db/index.js';
 import { apiKey, requestLog } from '../../db/schema.js';
 import { logDetail, logList, logStatus, type LogDetail, type LogSummary } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
+import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
 
 const listQuery = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
@@ -42,18 +43,7 @@ const summaryColumns = {
 };
 
 /** Keyset cursor over (created_at desc, id desc). */
-const encodeCursor = (createdAt: Date, id: string) =>
-  Buffer.from(JSON.stringify([createdAt.toISOString(), id])).toString('base64url');
-
-function decodeCursor(cursor: string): [string, string] {
-  try {
-    const [ts, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString()) as unknown[];
-    if (typeof ts === 'string' && typeof id === 'string' && !Number.isNaN(Date.parse(ts))) return [ts, id];
-  } catch {
-    // fall through
-  }
-  throw new AppError(400, 'invalid_cursor', 'The cursor is invalid');
-}
+const cursorKey = z.tuple([cursorTime, z.string()]);
 
 /** ILIKE pattern matching `text` anywhere, with LIKE wildcards escaped. */
 const contains = (text: string) => `%${text.replace(/[\\%_]/g, '\\$&')}%`;
@@ -91,7 +81,7 @@ export default async function logsRoutes(app: FastifyInstance) {
       );
     }
     if (f.cursor) {
-      const [ts, id] = decodeCursor(f.cursor);
+      const [ts, id] = decodeCursor(f.cursor, cursorKey);
       where.push(sql`(${requestLog.createdAt}, ${requestLog.id}) < (${ts}::timestamptz, ${id})`);
     }
 
@@ -106,7 +96,7 @@ export default async function logsRoutes(app: FastifyInstance) {
     const last = page.at(-1);
     return {
       items: page.map((row): LogSummary => withIso(row)),
-      nextCursor: rows.length > f.limit && last ? encodeCursor(last.createdAt, last.id) : null,
+      nextCursor: rows.length > f.limit && last ? encodeCursor([last.createdAt.toISOString(), last.id]) : null,
     };
   });
 

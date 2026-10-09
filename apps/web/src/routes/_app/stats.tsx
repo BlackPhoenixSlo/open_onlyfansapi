@@ -1,21 +1,19 @@
 import type { StatsGroupBy } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
-import { Link, createFileRoute } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { FilterSelect } from '@/components/filter-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChartCard, Empty, ErrorCard, Kpi, NoData, Skeleton } from '@/features/stats/cards';
+import { ChartCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
 import { BackfillNotice } from '@/features/stats/BackfillNotice';
 import { HowToRead } from '@/features/stats/explainers';
 import { FansCard } from '@/features/stats/fans';
-import { CustomRange, Segmented, day } from '@/features/stats/range';
+import { RangeControls, type RangeSearch, rangeSearch, searchRange } from '@/features/stats/range';
 import { RawData } from '@/features/stats/raw-data';
 import { ScriptCard } from '@/features/stats/scripts';
 import {
-  addDays,
   combineAccounts,
   daysBetween,
   formatPercent,
@@ -28,35 +26,23 @@ import {
   replySeries,
   slaSeries,
   sum,
-  todayIn,
 } from '@/features/stats/series';
 import {
   ApiError,
   type StatsRange,
-  accountsQuery,
   statsConfigQuery,
   statsMetricQuery,
   statsMetricsQuery,
   statsScriptsQuery,
 } from '@/lib/api';
 
-const PRESET_DAYS = { '7d': 7, '30d': 30 } as const;
-type Preset = keyof typeof PRESET_DAYS | 'custom';
-const PRESETS: Preset[] = ['7d', '30d', 'custom'];
-
-type Search = { range?: Preset; from?: string; to?: string; accountId?: number; metric?: string };
+type Search = RangeSearch & { metric?: string };
 
 export const Route = createFileRoute('/_app/stats')({
-  validateSearch: (s: Record<string, unknown>): Search => {
-    const accountId = Number(s.accountId);
-    return {
-      range: PRESETS.find((p) => p === s.range),
-      from: day(s.from),
-      to: day(s.to),
-      accountId: Number.isInteger(accountId) && accountId > 0 ? accountId : undefined,
-      metric: typeof s.metric === 'string' && s.metric ? s.metric : undefined,
-    };
-  },
+  validateSearch: (s: Record<string, unknown>): Search => ({
+    ...rangeSearch(s),
+    metric: typeof s.metric === 'string' && s.metric ? s.metric : undefined,
+  }),
   component: Stats,
 });
 
@@ -78,17 +64,12 @@ function Stats() {
 
   const config = useQuery(statsConfigQuery);
   const catalogue = useQuery(statsMetricsQuery);
-  const accounts = useQuery(accountsQuery);
   const tz = config.data?.config.timezone;
 
-  // Presets end today in the stats timezone; a custom range without days falls back to the API default (30 days).
-  const range = useMemo((): StatsRange | undefined => {
-    if (preset === 'custom') return { from: search.from, to: search.to, accountId: search.accountId };
-    // Without the config (an error shown below), let the API pick its default range.
-    if (!tz) return config.isError ? { accountId: search.accountId } : undefined;
-    const to = todayIn(tz);
-    return { from: addDays(to, -(PRESET_DAYS[preset] - 1)), to, accountId: search.accountId };
-  }, [preset, search.from, search.to, search.accountId, tz, config.isError]);
+  const range = useMemo(
+    () => searchRange({ range: preset, from: search.from, to: search.to, accountId: search.accountId }, tz, config.isError),
+    [preset, search.from, search.to, search.accountId, tz, config.isError],
+  );
 
   const replyDay = useMetric('reply_time', 'day', range);
   const p90Day = useMetric('reply_time_p90', 'day', range);
@@ -101,22 +82,7 @@ function Stats() {
   const queries = [config, catalogue, replyDay, p90Day, slaDay, openersDay, replyHour, replyAccount, scripts];
   const unlinked = queries.some((q) => q.error instanceof ApiError && q.error.code === 'team_not_linked');
 
-  if (unlinked) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Stats</h1>
-        <Empty title="Workspace not linked">
-          Stats read what the analytics backfill stored for this workspace. Link the workspace (
-          <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>
-          ), then connect the account in{' '}
-          <Link to="/accounts" className="underline">
-            Accounts
-          </Link>{' '}
-          and press Run analytics.
-        </Empty>
-      </div>
-    );
-  }
+  if (unlinked) return <WorkspaceNotLinked title="Stats">Stats read what the analytics backfill stored for this workspace.</WorkspaceNotLinked>;
 
   const cfg = config.data?.config;
   const verified = (id: string) => catalogue.data?.items.find((m) => m.id === id)?.verified;
@@ -138,40 +104,13 @@ function Stats() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold">Stats</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <FilterSelect
-              all="All accounts"
-              className="w-48"
-              value={search.accountId === undefined ? undefined : String(search.accountId)}
-              options={(accounts.data?.items ?? []).map((a) => ({
-                value: String(a.id),
-                label: a.username ? `@${a.username}` : (a.label ?? String(a.id)),
-              }))}
-              onChange={(v) => navigate({ search: (prev) => ({ ...prev, accountId: v ? Number(v) : undefined }) })}
-            />
-            <Segmented
-              options={PRESETS}
-              value={preset}
-              onChange={(next) =>
-                navigate({
-                  search: (prev) =>
-                    next === 'custom'
-                      ? { ...prev, range: next, from: range?.from ?? replyDay.data?.from, to: range?.to ?? replyDay.data?.to }
-                      : { ...prev, range: next, from: undefined, to: undefined },
-                })
-              }
-            />
-          </div>
-        </div>
-        {preset === 'custom' && (
-          <CustomRange
-            from={range?.from}
-            to={range?.to}
-            onApply={(from, to) => navigate({ search: (prev) => ({ ...prev, range: 'custom', from, to }) })}
-          />
-        )}
+        <RangeControls
+          title="Stats"
+          search={search}
+          range={range}
+          served={replyDay.data}
+          onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
+        />
         <p className="text-xs text-muted-foreground">
           {replyDay.data ? `${replyDay.data.from} to ${replyDay.data.to} · ` : ''}
           {cfg ? `timezone ${cfg.timezone} · config v${cfg.version}` : 'loading config…'}

@@ -25,7 +25,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
 | `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, the latest fan message first (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), and `ppvSent`, `ppvOpened`, `tips`, `tipCents` ([below](#stored-messages-and-export)). `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
-| `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list. `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
+| `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list, and then `nextCursor`, passed as `cursor`, returns the next page (`400 invalid_cursor` for a malformed one). `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
 | `GET /v1/stats/backfill?accountId=` | The account's last backfill run since the API started: `status` (`queued`, `running`, `done`, `error`), `from`, `to`, `startedAt`, `finishedAt`, `runId`, `requests`, `retries` (after a transient upstream failure), `chats` (walked), `messages` (stored), `error`, `errorCode` (`session_expired` when OF refused the account's session, else null); or `{ "status": "idle" }` |
 
@@ -40,7 +40,7 @@ Query parameters:
 | `chatId` | messages | One fan's chat; default every fan in scope |
 | `direction` | messages | `all` (default), `in` (the fans' messages only) or `out` (the creator side: DMs, mass and automated) |
 | `group` | samples | Only the turns or openers in this group (a row's `group`, e.g. `2026-09-14`) |
-| `limit` | samples, scripts, fans, messages | Samples: 1 to 20, default 20. Scripts: 1 to 200, default 50. Fans: 1 to 1000, default 200 (`total` shows how many there are). Messages: 1 to 5000, default 1000, JSON only (`truncated` shows a cut; the CSV is never cut) |
+| `limit` | samples, scripts, fans, messages | Samples: 1 to 20, default 20. Scripts: 1 to 200, default 50. Fans: 1 to 1000, default 200 (`total` shows how many there are). Messages: 1 to 5000, default 1000, JSON only (`truncated` shows a cut and `nextCursor` pages past it; the CSV is never cut) |
 
 A turn is grouped by the time of its first fan message, an opener by its send time. Every response carries `asOf`,
 `timezone` and `configVersion`; scripts also carry `normaliserVersion`. The same stored data, `asOf` and versions
@@ -80,7 +80,7 @@ openers and scripts (the message was sent and seen); the export shows `deletedAt
 The owner reports Infloww's fan-reply export is poor. To export the fans' own messages, call
 `GET /v1/stats/messages?from=2026-09-01&to=2026-09-30&direction=in&format=csv`, with `accountId` and `chatId` to narrow
 it; `direction=all` gives the whole conversation. The Stats page's Fans card has the same downloads, for the page's
-account and range and per fan. The CSV is plain UTF-8 with LF line endings, like the metric CSV; fields are quoted
+account and range and per fan, and the Conversations page shows one fan's thread (up to 366 days ending at the range's end) with that fan's CSV. The CSV is plain UTF-8 with LF line endings, like the metric CSV; fields are quoted
 only when they hold a comma, quote or line break, and the text is not otherwise altered. pandas reads it directly
 (`pd.read_csv`); in Excel, open it with Data > From Text/CSV and pick UTF-8, so emoji and accents show. `text` is the
 message as plain text: block and break tags (`p`, `div`, `br`, `li`, `tr`, `h1` to `h6`) become a space, other tags
@@ -91,7 +91,8 @@ at a time.
 Each message carries, as JSON fields (CSV columns in snake_case, in this order): `accountId`, `chatId`, `fanUsername`,
 `messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text`, `priceCents`, `isFree`, `isOpened`, `isTip`,
 `tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `isReply`,
-`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). `isOpened` and `tipCents` are stored columns (the one-time fill
+`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). JSON also carries `automatedReason` (`welcome`, `automation`, or
+null when not automated; not a CSV column). `isOpened` and `tipCents` are stored columns (the one-time fill
 of migration 0013 handles JSON numbers; rows are re-derived by the next backfill that reads them); the other detail fields are read from OF's stored message object
 (`raw`) when the export runs, so no backfill is needed for messages already stored:
 

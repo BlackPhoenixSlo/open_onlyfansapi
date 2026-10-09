@@ -14,6 +14,7 @@ import type {
   StatsFreshness,
   StatsGroupBy,
   StatsMetric,
+  StatsMessages,
   StatsMetricSeries,
   StatsScripts,
   Usage,
@@ -199,7 +200,8 @@ export const statsScriptsQuery = (params: StatsRange) =>
     queryFn: () => api<StatsScripts>(`/v1/stats/scripts?${qs(params)}`),
   });
 
-export const statsFansQuery = (params: StatsRange) =>
+/** `limit` defaults to the API's 200. */
+export const statsFansQuery = (params: StatsRange & { limit?: number }) =>
   queryOptions({
     queryKey: ['stats', 'fans', params],
     queryFn: () => api<StatsFans>(`/v1/stats/fans?${qs(params)}`),
@@ -208,6 +210,30 @@ export const statsFansQuery = (params: StatsRange) =>
 /** The stored messages as CSV; `direction: 'in'` = the fans' messages only. */
 export const statsMessagesCsvPath = (params: StatsRange & { chatId?: number; direction: 'in' | 'all' }) =>
   `/v1/stats/messages?${qs({ ...params, format: 'csv' })}`;
+
+/** Rows per page when reading a whole conversation: the API's JSON maximum. */
+const CONVERSATION_PAGE = 5000;
+
+/**
+ * One fan's messages in the range, oldest first: every page of `GET /v1/stats/messages` (`cursor` = `nextCursor`).
+ * Not refetched on focus, which would re-run every page.
+ */
+export const statsConversationQuery = (params: StatsRange & { chatId: number }) =>
+  queryOptions({
+    queryKey: ['stats', 'conversation', params],
+    queryFn: async ({ signal }): Promise<StatsMessages> => {
+      const items: StatsMessages['items'] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const path = `/v1/stats/messages?${qs({ ...params, direction: 'all', limit: CONVERSATION_PAGE, cursor })}`;
+        const page = await api<StatsMessages>(path, { signal });
+        items.push(...page.items);
+        if (!page.nextCursor) return { ...page, items };
+        cursor = page.nextCursor;
+      }
+    },
+    staleTime: 60_000,
+  });
 
 /** The account's last analytics backfill run (`POST /v1/stats/backfill`), or `idle`. */
 export const statsBackfillQuery = (accountId: number) =>

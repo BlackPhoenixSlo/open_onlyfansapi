@@ -183,6 +183,7 @@ describe('stats messages', () => {
       hasPreview: false,
       isMass: false,
       isAutomated: false,
+      automatedReason: null,
       isReply: false,
       isLiked: false,
       deletedAt: null,
@@ -203,7 +204,38 @@ describe('stats messages', () => {
     expect(await messageIds(RANGE)).toEqual(ALL_IDS);
     const cut = (await get(`/v1/stats/messages?${RANGE}&limit=3`)).json();
     expect([cut.truncated, cut.items.map((x: { messageId: number }) => x.messageId)]).toEqual([true, [1, 2, 3]]);
-    expect((await get(`/v1/stats/messages?${RANGE}&limit=${ALL_IDS.length}`)).json().truncated).toBe(false);
+    expect((await get(`/v1/stats/messages?${RANGE}&limit=${ALL_IDS.length}`)).json()).toMatchObject({ truncated: false, nextCursor: null });
+    const welcome = (await get(`/v1/stats/messages?${RANGE}&chatId=3003`)).json().items;
+    expect(welcome.map((x: { isAutomated: boolean; automatedReason: string | null }) => [x.isAutomated, x.automatedReason])).toEqual([
+      [true, 'welcome'],
+      [false, null],
+    ]);
+  });
+
+  it('pages JSON with cursor = nextCursor, across messages of the same instant, to the whole range', async () => {
+    const ids: number[] = [];
+    let cursor: string | null = null;
+    for (let pages = 1; ; pages++) {
+      const res = await get(`/v1/stats/messages?${RANGE}&limit=4${cursor ? `&cursor=${cursor}` : ''}`);
+      expect(res.statusCode).toBe(200);
+      const page = res.json();
+      ids.push(...page.items.map((x: { messageId: number }) => x.messageId));
+      expect(page.truncated).toBe(page.nextCursor !== null);
+      cursor = page.nextCursor;
+      if (!cursor) {
+        expect(pages).toBe(3); // [1 2 3 4] [8 6 7 31] [32 21 22]: 4 and 8 share a created_at
+        break;
+      }
+    }
+    expect(ids).toEqual(ALL_IDS);
+    // The cursor holds within a filter too: chat 3001's messages, two at a time.
+    const first = (await get(`/v1/stats/messages?${RANGE}&chatId=3001&limit=2`)).json();
+    const rest = (await get(`/v1/stats/messages?${RANGE}&chatId=3001&limit=2&cursor=${first.nextCursor}`)).json();
+    expect(rest.items.map((x: { messageId: number }) => x.messageId)).toEqual([3, 4]);
+    for (const bad of ['nope', Buffer.from('[1,2,"x",3]').toString('base64url')]) {
+      const res = await get(`/v1/stats/messages?${RANGE}&cursor=${bad}`);
+      expect([res.statusCode, res.json().error.code]).toEqual([400, 'invalid_cursor']);
+    }
   });
 
   it('filters by direction: in is the fan messages only, out the creator side', async () => {

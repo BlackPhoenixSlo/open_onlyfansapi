@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
+import { Route as AppConversationsRouteImport } from './routes/_app/conversations'
 import { Route as AppKeysRouteImport } from './routes/_app/keys'
 import { Route as AppPlaygroundRouteImport } from './routes/_app/playground'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
@@ -46,6 +47,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppAccountsRoute = AppAccountsRouteImport.update({
   id: '/accounts',
   path: '/accounts',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppConversationsRoute = AppConversationsRouteImport.update({
+  id: '/conversations',
+  path: '/conversations',
   getParentRoute: () => AppRoute,
 } as any)
 const AppKeysRoute = AppKeysRouteImport.update({
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/accounts': typeof AppAccountsRoute
+  '/conversations': typeof AppConversationsRoute
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
@@ -113,6 +120,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/accounts': typeof AppAccountsRoute
+  '/conversations': typeof AppConversationsRoute
   '/keys': typeof AppKeysRoute
   '/playground': typeof AppPlaygroundRoute
   '/settings': typeof AppSettingsRoute
@@ -130,6 +138,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/_app/accounts': typeof AppAccountsRoute
+  '/_app/conversations': typeof AppConversationsRoute
   '/_app/keys': typeof AppKeysRoute
   '/_app/playground': typeof AppPlaygroundRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/accounts'
+    | '/conversations'
     | '/keys'
     | '/playground'
     | '/settings'
@@ -162,6 +172,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/accounts'
+    | '/conversations'
     | '/keys'
     | '/playground'
     | '/settings'
@@ -178,6 +189,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/_app/accounts'
+    | '/_app/conversations'
     | '/_app/keys'
     | '/_app/playground'
     | '/_app/settings'
@@ -231,6 +243,13 @@ declare module '@tanstack/react-router' {
       path: '/accounts'
       fullPath: '/accounts'
       preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/conversations': {
+      id: '/_app/conversations'
+      path: '/conversations'
+      fullPath: '/conversations'
+      preLoaderRoute: typeof AppConversationsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/keys': {
@@ -301,6 +320,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
+  AppConversationsRoute: typeof AppConversationsRoute
   AppKeysRoute: typeof AppKeysRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -315,6 +335,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
+  AppConversationsRoute: AppConversationsRoute,
   AppKeysRoute: AppKeysRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
   AppSettingsRoute: AppSettingsRoute,
