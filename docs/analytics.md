@@ -7,7 +7,7 @@ row (as the backfill does); every metric is computed per request: each request r
 and applies the workspace's current windows, so a changed window applies to all history at once.
 
 Every metric is `verified: false`. The formulas are built and tested, but nobody has checked them by hand in OF or
-against an Infloww export yet (see [Morning checklist](#morning-checklist)). Openers and scripts are the least
+against an Infloww export yet (the hand-check CLIs are parked on branch `infloww-diff-parked`). Openers and scripts are the least
 certain.
 
 ## Routes
@@ -335,51 +335,9 @@ curl -X PUT -H "Authorization: Bearer $API_KEY" -H "content-type: application/js
 
 ## CLIs
 
-Run from the repo root; in the container, `node dist/cli/analytics-<name>.js` with the same arguments. They read the
-analytics tables only. `--from` is inclusive and `--to` exclusive; a date without a time is midnight UTC (unlike the
-routes, whose `to` day is inclusive and in the config timezone). Windows come from the workspace's stats config.
-`--team` is needed only when the account is not claimed. Keep the output out of the repo: it holds fan ids and
-message text.
+Run from the repo root; in the container, `node dist/cli/analytics-<name>.js` with the same arguments. It reads and
+writes the analytics tables only. `--team` is needed only when the account is not claimed.
 
 | Command | What it does |
 |---|---|
-| `pnpm --filter @gateway/api analytics:openers --account <id> --from <date> --to <date> --out <file.md> [--team <teamId>]` | Writes up to 20 openers of the range, spread evenly over it, each with the reason we think it is an opener |
-| `pnpm --filter @gateway/api analytics:scripts --account <id> --from <date> --to <date> --out <file.md> [--team <teamId>]` | Writes the top 20 scripts by sends in the range, with reply rates and up to 5 exact variants each |
 | `pnpm --filter @gateway/api analytics:rehash --account <id> [--team <teamId>]` | Rebuilds `text_hash` and `normaliser_version` of the account's outbound messages from their stored text, then records its scripts. Prints `outbound`, `updated` and `scripts` |
-
-## Morning checklist
-
-The hand check that `verified` waits for. The files come from the CLIs above, run over the backfilled 30 days:
-`/tmp/step0/openers-samples.md` and `/tmp/step0/scripts-top20.md`. Log in to OF as the account. Check every row,
-and write down for each one: OK, or wrong and what OF shows.
-
-**Finding a message.** The chat id is the fan's user id: open `https://onlyfans.com/my/chats/chat/<chat id>/`. OF
-does not show message ids. Scroll to the listed time (UTC; convert to your clock), or fetch the message through the
-gateway to see its text and time: `GET /v1/<account>/chats/<chat id>/messages/<message id>`.
-
-**Openers** (`openers-samples.md`), for each row:
-
-1. The message at "Sent at" is a chatter's DM: not a mass message, not the welcome message, not an automation.
-2. Before it, for the whole `open_gap` (7 days), there is no fan message and no DM. Mass and welcome messages may be
-   there; the "Why" column counts them.
-3. The last fan message or DM before it is a DM, not an unanswered fan message.
-4. The kind fits. `reactivation`: the DM named in "Why" is there, at that time. `first_ever`: nothing but mass or
-   welcome messages before it, back to the start of the chat. `unknown`: scroll back and note whether the chat has
-   earlier history.
-5. The fan reply, if listed, is the fan's first message after the opener, at that time.
-
-**Scripts** (`scripts-top20.md`), for each script:
-
-1. Read its variants. They should be one script: the same copy, differing only in the fan's name, case, spacing or
-   HTML.
-2. They must not be different offers: a different price, number or media means the normaliser merged too much.
-3. Note texts you know are one script but appear as separate hashes (an edit, a typo): the normaliser splits too
-   much there.
-4. A script with 1 send in the range is expected when its other sends fall outside the range: in
-   `GET /v1/stats/scripts` its `sendsAll` and `chatsAll` are then higher than `sends` and `chats`. With a key over
-   all accounts a script has `sendsAll` of at least 5 and `chatsAll` of at least 3 (detection needs that on one
-   account); lower all-time counts there are a wrong row. A key limited to some accounts may see less
-   (see [Scripts](#scripts)).
-
-**After.** Nothing flips `verified` yet; that is a later step. Send the notes to the developer. A wrong row needs its
-chat id, message id and what OF shows, so the rule can be fixed and the CLIs re-run.

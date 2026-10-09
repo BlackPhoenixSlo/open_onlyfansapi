@@ -131,12 +131,9 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 | Stats metrics | `GET /v1/stats/metrics`, then `/v1/stats/metrics/reply_time?from=…&to=…&groupBy=day\|hour\|account` and `/samples` | 200, `verified:false`, `asOf`, `configVersion` | Numbers consistent (turns = inCap + late + breached + pending) | All metrics unverified |
 | CSV export | `…/v1/stats/metrics/reply_time?format=csv&groupBy=hour` | `text/csv`, 24 data rows by hour | Header matches docs | none recorded |
 | Stats config | `GET /v1/stats/config`. `PUT` with `$WRITE` `{"slaSeconds":600}`. `PUT` with `$READ` | Defaults, then `version`+1, then `403 insufficient_scope` | All three seen. Put the value back afterwards | `convertSeconds` is stored only |
-| Stats scripts | `GET /v1/stats/scripts?from=…&to=…` | Items with `sends`, `sendsAll`, `chatsAll`, variants | Matches the scripts CLI | Variants keep raw `<p>` HTML. Every script is `origin: auto` |
+| Stats scripts | `GET /v1/stats/scripts?from=…&to=…` | Items with `sends`, `sendsAll`, `chatsAll`, variants | Each script's variants are one copy | Variants keep raw `<p>` HTML. Every script is `origin: auto` |
 | Stats errors and isolation | `from=2026-13-01`. Then every stats route with `$ISO`, including `accountId=<id>` | `400 validation_error`. Empty rows/items for `$ISO` | Zero matches for `<id>` in the `$ISO` output | none recorded |
-| Openers CLI | `pnpm --filter @gateway/api analytics:openers --account <id> --from <d> --to <d> --out /tmp/step0/openers-samples.md` | `openers N, listed ≤20` | Morning check OK (§6.2) | Unverified |
-| Scripts CLI | `… analytics:scripts … --out /tmp/step0/scripts-top20.md` | `scripts N, listed ≤20` | Morning check OK | Unverified |
 | Rehash | `pnpm --filter @gateway/api analytics:rehash --account <id>` | `normaliser v1: outbound N, updated M, scripts K`. A second run shows `updated 0` | Idempotent | Fan names are only used after a post-0010 re-walk |
-| Diff | `pnpm --filter @gateway/api analytics:diff --ours <dir> --infloww <file.csv> [--tz +02:00]` | Mapping, per-row lines, summary. Exits 0 | Every row explained or unresolved | Waits on the client's export |
 | Owner captures | `docs/spec/plan-v6-capture-kit.md`, into `~/of-captures/` | cURL per `?` row | 72 rows captured | Files hold live cookies. Not in this runbook's scope |
 
 ## 6. Analytics acceptance against the real model
@@ -146,16 +143,11 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
    then `Done · view Stats` (opens Stats for that account) or the error. Leave the pacing variables unset (600/h cap).
    The reference run (2026-09-06..10-06, CLI) took 259 requests in 12 min, with 87 chats, 9150 messages, 1286 turns and 7 incomplete chats.
    Leave an hour before the next run: each run counts its cap from zero. Restarting the API ends a run and forgets its
-   status (stored rows stay; press the button again). For CSVs (step 3), `--automation` or `--dry-run`, use the CLI:
+   status (stored rows stay; press the button again). For CSVs, `--automation` or `--dry-run`, use the CLI:
    `pnpm --filter @gateway/api analytics:backfill --account <id> --from <today-30d> --to <tomorrow> --out /tmp/step0/last30-<date>`
    (`--to` is exclusive; Ctrl-C stops it and still writes the CSVs).
-2. **Morning check.** Run the openers and scripts CLIs over the same range (§5). Log in to OF and check every row per
-   `docs/analytics.md` "Morning checklist". Write the verdict, OK or wrong for each row with its chat id, message id and what OF shows,
-   to `/tmp/step0/morning-verdict.md`. The earlier passes looked for that file (check).
-3. **Infloww diff, when the CSV arrives.** Ask for the Message Dashboard export: one creator, one past week, report tz UTC+0, plus Sales
-   Records for the same week. Export the `.xlsx` sheet to CSV (UTF-8). Backfill exactly that week to its own `--out` dir, then
-   run `analytics:diff --ours <that dir> --infloww <csv>`. `/tmp/step0/presh.xlsx` is an earlier export. It is not
-   for this account's week (check).
+2. **Morning check.** Parked: the openers and scripts CLIs it used are on branch `infloww-diff-parked`.
+3. **Infloww diff.** Parked on branch `infloww-diff-parked` until the client's Message Dashboard export exists.
 4. **Completeness (spec 6.1) re-run.** Run `analytics:backfill … --from <today-7d> --to <tomorrow> --dry-run --out /tmp/step0/dryrun-<date>`.
    Compare its `messages.csv` per chat with stored `message_fact` for the same range. The pass used the scratch
    `/tmp/step0/compare7.mjs` (not in the repo). Every difference needs an explanation: late arrival, fan deletion, or the

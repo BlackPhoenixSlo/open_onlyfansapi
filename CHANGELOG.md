@@ -57,6 +57,8 @@ All notable changes to this project are documented here. The format is based on
 - The upstream no longer forwards counter frames made of numbers and flags only, such as
   `{"hasSystemNotifications": …, "messages": …}`; they were sent as `upstream.hasSystemNotifications` and
   `upstream.messages`.
+- The Infloww diff CLIs (`analytics:diff`, and the morning-check `analytics:openers` and `analytics:scripts`) are
+  parked on branch `infloww-diff-parked` until the client's Infloww export exists.
 
 ## [2.1.0] - 2026-10-05
 

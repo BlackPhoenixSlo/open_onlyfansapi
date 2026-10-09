@@ -1,8 +1,8 @@
 # Analytics backfill (step 0)
 
 Step 0 of the [client stats ask](spec/future-client-story-ask.md#6-first-slice-account-and-shift-performance): read one
-account's past week from OnlyFans through the upstream, store it, write it to CSV, and diff it against the client's
-Infloww export. The backfill runs from the dashboard or the command line; the stats routes over what it stores (reply
+account's past week from OnlyFans through the upstream, store it, and write it to CSV. The
+backfill runs from the dashboard or the command line; the stats routes over what it stores (reply
 time, openers, scripts) are in [analytics.md](analytics.md). Every row belongs to one workspace, and a workspace's key
 never sees another workspace's rows.
 
@@ -32,14 +32,14 @@ Limits:
 
 ## From the command line
 
-The CLI stays for `--dry-run`, `--automation <file>`, a range that does not end now, and the CSVs (for the
-Infloww diff). Three commands, all run from the repo root:
+The CLI stays for `--dry-run`, `--automation <file>`, a range that does not end now, and the CSVs. Two
+commands, all run from the repo root (the Infloww diff, `analytics:diff`, is parked on branch
+`infloww-diff-parked` until the client's export exists):
 
 | Command | What it does |
 |---|---|
 | `pnpm --filter @gateway/api analytics:claim --team <teamId> --account <id>` | Records that the account belongs to the workspace |
 | `pnpm --filter @gateway/api analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]` | Backfills the range, then writes four CSVs to `<dir>` |
-| `pnpm --filter @gateway/api analytics:diff --ours <dir> --infloww <file.csv> [--tz <offset>]` | Compares the CSVs with an Infloww export |
 
 In the container, run `node dist/cli/analytics-<name>.js` with the same arguments (`docker compose exec gateway …`),
 then copy the output folder out with `docker compose cp`. `deploy/docker-compose.yml` does not pass the
@@ -196,55 +196,3 @@ automation texts. Pass those with `--automation <file>`: a text file, one automa
 ignored; matching uses the script normaliser's text steps (tags, case and spacing do not matter; fan names are not
 replaced). Without it,
 `automated_reason` is `welcome` or empty.
-
-## Diffing against Infloww
-
-Ask the client for the **Message Dashboard export, one creator, one past week**, the same week as the backfill, with
-the report time zone set to UTC+0 ([infloww-definitions.md §6](spec/infloww-definitions.md#6-exports)). Ask for
-the Sales Records CSV for the same range too; the diff does not read it yet.
-
-The export is an `.xlsx`. The repo has no spreadsheet reader, so open it in Excel, Numbers or Google Sheets, export
-the sheet as CSV (UTF-8) and pass that:
-
-```sh
-pnpm --filter @gateway/api analytics:diff --ours ~/of-analytics/1001-week36 --infloww ~/Downloads/message-dashboard.csv
-```
-
-If the report was not in UTC, pass its offset: `--tz +02:00`. The diff touches neither the database nor the
-upstream, and it exits 0 even with unresolved rows: it is a report.
-
-What it prints:
-
-- **The column mapping.** The Message Dashboard's own headers (`Sent date`, `Sent time`, `Replay time` (sic),
-  `Price`, `Sender`, `Sent to`, `Status`, …) map first, then a few aliases matched case-insensitively. It lists the
-  fields it could not map and the columns it did not use.
-- **One line per difference**, ending in `explained: <rule>` or `unresolved`. The export has no message id and our
-  CSVs have no text, so an Infloww row joins one of our outbound messages sent within ±60 s at the same price,
-  preferring one in a chat whose `fan_username` (chats.csv) is the row's `Sent to` (case and a leading `@`
-  ignored), then one whose reply time agrees, then a DM, then the nearest. A chat with no known username can still
-  pick the wrong chat in a busy hour; the summary counts joins that had more than one candidate.
-- **A summary**: matched, ours-only, infloww-only, explained (per rule), unresolved.
-- **Reply time.** Infloww reports a mean per fan turn over replied turns, unreplied ones excluded. Its clock starts
-  at the first unanswered fan message, moved later if the chat was marked read
-  ([definitions §8](spec/infloww-definitions.md#8-local-evidence-added-2026-10-05)); its cap is unknown. The table
-  puts our mean per replied turn (`in_cap` and `late`), with the timer from the turn's first and from its last fan
-  message, beside Infloww's mean, and names the closer one. Our median and p90 over `in_cap` turns, and our mean per
-  inbound message, have no Infloww counterpart and show `n/a`.
-
-The rules live in one object, `RULES` in `apps/api/src/cli/infloww-diff.ts`; the first that holds explains a
-difference:
-
-| Rule | Explains |
-|---|---|
-| `mass`, `welcome`, `automated` | A message of ours that Infloww leaves out of DMs (definitions §7) |
-| `scheduled` | A scheduled 1:1 send: it never closes a turn in Infloww, so Infloww has no reply row for it |
-| `notAReply` | A DM of ours that ended no fan turn: the export has one row per reply |
-| `withdrawn` | An Infloww row with a withdrawn status: unsent messages vanish from OF history |
-| `outsideRange` | An Infloww row outside the time span of our `messages.csv` |
-| `beforeCoverage` | An Infloww row older than our walk of that chat reached (only when the fan is a numeric id) |
-| `lastFanMessage` | A reply time that matches ours timed from the turn's last fan message: Infloww starts the clock at the first unanswered fan message, moved later if the chat was marked read (definitions §8) |
-| `afterScheduled` | An Infloww reply time on a DM that ended no turn for us, because a scheduled send closed it first (Infloww's scheduled sends do not close a turn) |
-| `onlineOnly` | A reply of ours with no Infloww reply time: Infloww times only DMs to online fans (definitions §1) |
-
-Anything else is unresolved. The usual case is a reply of ours that Infloww does not list, which may have been sent
-from OF directly: Infloww sees only messages sent through it.
