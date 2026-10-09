@@ -2,11 +2,16 @@ import type { Account, ProxyInfo } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatAgo } from '@/features/stats/series';
 import { api, proxiesQuery } from '@/lib/api';
+
+/** The last transport error is newer than the last response through the proxy (or it never answered). */
+const failing = (p: ProxyInfo) =>
+  p.stats.lastErrorAt !== null && (p.stats.lastOkAt === null || Date.parse(p.stats.lastErrorAt) > Date.parse(p.stats.lastOkAt));
 
 const ago = (iso: string | null) => (iso ? <span title={new Date(iso).toLocaleString()}>{formatAgo(iso)}</span> : '—');
 
@@ -26,13 +31,16 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
     return a?.username ? `@${a.username}` : (a?.label ?? String(id));
   };
   const since = proxies.data?.items[0]?.since;
+  // Failing proxies first; otherwise the upstream's order (the sort is stable).
+  const rows = [...(proxies.data?.items ?? [])].sort((a, b) => Number(failing(b)) - Number(failing(a)));
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Proxies</CardTitle>
         <CardDescription>
-          OK and Failed count OF calls made through each proxy
+          OK counts responses through each proxy, Blocked those OnlyFans answered 403 or 429, and Failed every
+          failed attempt
           {since ? ` since ${new Date(since).toLocaleString()}` : ''}; they reset when the upstream restarts. Test
           checks the proxy's egress IP.
         </CardDescription>
@@ -55,6 +63,7 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
                 <TableHead>Accounts</TableHead>
                 <TableHead>Egress</TableHead>
                 <TableHead className="text-right">OK</TableHead>
+                <TableHead className="text-right">Blocked</TableHead>
                 <TableHead className="text-right">Failed</TableHead>
                 <TableHead>Last error</TableHead>
                 <TableHead>Last used</TableHead>
@@ -62,9 +71,16 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {proxies.data.items.map((p) => (
+              {rows.map((p) => (
                 <TableRow key={p.label}>
-                  <TableCell className="font-mono text-xs">{p.label}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {p.label}
+                    {failing(p) && (
+                      <Badge variant="destructive" className="ml-2">
+                        failing
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="font-mono text-xs">
                     {p.scheme}://{p.host}:{p.port}
                   </TableCell>
@@ -80,6 +96,7 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{p.stats.ok}</TableCell>
+                  <TableCell className="text-right tabular-nums">{p.stats.blocked}</TableCell>
                   <TableCell className="text-right tabular-nums">{p.stats.failed}</TableCell>
                   <TableCell className="max-w-64">
                     {p.stats.lastError ? (

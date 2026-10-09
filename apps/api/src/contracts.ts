@@ -88,9 +88,12 @@ export const proxy = z.object({
   verifiedIp: z.string().nullable(),
   verifiedAt: z.string().nullable(),
   verifiedGeo: z.string().nullable(),
+  /** `failed` counts every failed attempt (retries included); `blocked` the responses OF answered 403 or 429. */
   stats: z.object({
     ok: z.number().int(),
     failed: z.number().int(),
+    blocked: z.number().int(),
+    lastOkAt: z.string().nullable(),
     lastError: z.string().nullable(),
     lastErrorAt: z.string().nullable(),
     lastUsedAt: z.string().nullable(),

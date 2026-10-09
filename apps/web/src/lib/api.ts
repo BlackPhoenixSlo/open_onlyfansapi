@@ -95,6 +95,7 @@ export const accountsQuery = queryOptions({
 export const proxiesQuery = queryOptions({
   queryKey: ['proxies'],
   queryFn: () => api<{ items: ProxyInfo[] }>('/api/proxies'),
+  refetchInterval: 30_000,
 });
 
 export const whoamiQuery = queryOptions({

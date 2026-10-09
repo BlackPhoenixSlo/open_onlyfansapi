@@ -354,12 +354,19 @@ class OFClient:
         _http_call AND the handful of raw self.http.get/post calls (CDN media
         download, /users/list, convert upload) funnel through it, so one
         half-second proxy blip can no longer hard-fail a request. It is also where
-        proxy_stats counts each proxied call: ok, or failed on a proxy error or timeout."""
+        proxy_stats counts each proxied attempt: ok (and blocked on a 403/429), or
+        failed on any transport error."""
         for attempt in range(tries):
             try:
                 r = fn()
-            except requests.exceptions.ProxyError as e:
-                if attempt < tries - 1:
+            except requests.exceptions.RequestException as e:
+                # Every failed attempt counts, so a flapping proxy shows even when a retry rescues the call.
+                if self.proxy_label:
+                    kind = ("proxy_error" if isinstance(e, requests.exceptions.ProxyError)
+                            else "timeout" if isinstance(e, requests.exceptions.Timeout)
+                            else type(e).__name__)
+                    proxy_stats.record_failed(self.proxy_label, f"{kind}: {str(e)[:160]}")
+                if isinstance(e, requests.exceptions.ProxyError) and attempt < tries - 1:
                     log_of.info(
                         "proxy_error_retry account=%s proxy=%s(%s) attempt=%d/%d %s err=%s",
                         self.account_id, self.proxy_label or "—", self._proxy_ip(),
@@ -367,16 +374,10 @@ class OFClient:
                     )
                     time.sleep(pause_s)
                     continue
-                if self.proxy_label:
-                    proxy_stats.record_failed(self.proxy_label, f"proxy_error: {str(e)[:160]}")
-                raise
-            except requests.exceptions.Timeout as e:
-                if self.proxy_label:
-                    proxy_stats.record_failed(self.proxy_label, f"timeout: {str(e)[:160]}")
                 raise
             # Any response (an OF 4xx included) means the proxy carried the call.
             if self.proxy_label:
-                proxy_stats.record_ok(self.proxy_label)
+                proxy_stats.record_ok(self.proxy_label, getattr(r, "status_code", None))
             return r
 
     def get_json(self, path_or_url: str, **kw) -> Any:

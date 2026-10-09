@@ -145,35 +145,42 @@ def proxies_dict_for_requests(p: dict[str, Any]) -> dict[str, str]:
 
 
 def upsert(entry: dict[str, Any]) -> dict[str, Any]:
-    """Add or replace by label. Returns the stored entry."""
+    """Add or update by label. Returns the stored entry.
+
+    Updating an existing label replaces only the keys the caller passed: the
+    `assigned_*` bindings, the last probe and anything else omitted are kept.
+    (Defaulting them here once reset `assigned_account_ids` to [], which
+    silently unbound every other account sharing the proxy.)"""
     label = entry.get("label")
     if not label:
         raise ValueError("proxy entry needs a 'label'")
     for required in ("host", "port"):
         if not entry.get(required):
             raise ValueError(f"proxy entry missing '{required}'")
-    entry.setdefault("scheme", "http")
-    entry.setdefault("notes", "")
-    entry.setdefault("assigned_session", None)     # legacy per-file binding
-    entry.setdefault("assigned_account_id", None)  # legacy singular — mirrored from list[0]
-    entry.setdefault("assigned_account_ids", [])   # canonical: many-accounts-per-proxy
-    entry.setdefault("user_id", None)              # owner; null = shared default pool
-    entry.setdefault("verified_ip", None)
-    entry.setdefault("verified_at", None)
-    entry.setdefault("verified_geo", None)
+    defaults = {
+        "scheme": "http",
+        "notes": "",
+        "assigned_session": None,      # legacy per-file binding
+        "assigned_account_id": None,   # legacy singular — mirrored from list[0]
+        "assigned_account_ids": [],    # canonical: many-accounts-per-proxy
+        "user_id": None,               # owner; null = shared default pool
+        "verified_ip": None,
+        "verified_at": None,
+        "verified_geo": None,
+    }
 
     with _lock:
         data = load()
         for i, p in enumerate(data["proxies"]):
             if p.get("label") == label:
-                # Preserve any fields the caller didn't supply.
-                merged = {**p, **{k: v for k, v in entry.items() if v is not None or k == "assigned_session"}}
+                merged = {**p, **entry}
                 data["proxies"][i] = merged
                 save(data)
                 return merged
-        data["proxies"].append(entry)
+        stored = {**defaults, **entry}
+        data["proxies"].append(stored)
         save(data)
-        return entry
+        return stored
 
 
 def remove(label: str) -> bool:
@@ -337,31 +344,31 @@ def record_verification(label: str, *, ip: str | None, geo: str | None,
 
 
 def probe(p: dict[str, Any], timeout_s: int = 15) -> dict[str, Any]:
-    """Fetch the egress IP through the proxy + a coarse geo lookup.
-    Returns {ok, ip, geo, error?}. Safe to call from a request handler."""
-    import urllib.request
-    import urllib.error
-    import socket
+    """Fetch the egress IP through the proxy + a coarse geo lookup (direct).
+    Returns {ok, ip, geo, error?}. Blocking (network): call it off the event loop.
 
-    url = proxy_url(p)
+    Goes through curl_cffi with `proxies_dict_for_requests`, the transport OF
+    traffic uses, so socks5/socks5h proxies probe like http ones."""
+    from curl_cffi import requests as cffi
+
     ip = None
     geo = None
     err = None
     try:
-        # Build an opener so we can target the proxy precisely.
-        proxy_handler = urllib.request.ProxyHandler({"http": url, "https": url})
-        opener = urllib.request.build_opener(proxy_handler)
-        with opener.open("https://api.ipify.org", timeout=timeout_s) as r:
-            ip = r.read().decode().strip()
-    except (urllib.error.URLError, socket.timeout, OSError) as e:
+        r = cffi.get("https://api.ipify.org", proxies=proxies_dict_for_requests(p),
+                     timeout=timeout_s, impersonate="chrome")
+        r.raise_for_status()
+        ip = r.text.strip() or None
+        if ip is None:
+            err = "proxy_probe_failed: empty answer from api.ipify.org"
+    except Exception as e:
         err = f"proxy_probe_failed: {e}"
 
     if ip:
         try:
-            with urllib.request.urlopen(f"https://ipinfo.io/{ip}/json", timeout=timeout_s) as r:
-                info = json.loads(r.read().decode())
-                parts = [info.get("city"), info.get("region"), info.get("country")]
-                geo = ", ".join(p for p in parts if p)
+            info = cffi.get(f"https://ipinfo.io/{ip}/json", timeout=timeout_s).json()
+            parts = [info.get("city"), info.get("region"), info.get("country")]
+            geo = ", ".join(x for x in parts if x) or None
         except Exception:
             geo = None
 

@@ -15,7 +15,15 @@ type UpstreamProxy = {
   verified_ip?: string | null;
   verified_at?: string | null;
   verified_geo?: string | null;
-  stats?: { ok?: number; failed?: number; last_error?: string | null; last_error_at?: string | null; last_used_at?: string | null };
+  stats?: {
+    ok?: number;
+    failed?: number;
+    blocked?: number;
+    last_ok_at?: string | null;
+    last_error?: string | null;
+    last_error_at?: string | null;
+    last_used_at?: string | null;
+  };
   since?: string | null;
 };
 
@@ -34,6 +42,8 @@ function toProxy(p: UpstreamProxy): ProxyInfo {
     stats: {
       ok: s.ok ?? 0,
       failed: s.failed ?? 0,
+      blocked: s.blocked ?? 0,
+      lastOkAt: s.last_ok_at ?? null,
       lastError: s.last_error ?? null,
       lastErrorAt: s.last_error_at ?? null,
       lastUsedAt: s.last_used_at ?? null,
@@ -72,8 +82,8 @@ export default async function proxiesRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['dashboard'],
-        // One path segment the upstream can route: no `/`, never `.` or `..`.
-        params: z.object({ label: z.string().regex(/^[\w-][\w.-]{0,127}$/) }),
+        // One path segment (encoded by the upstream client): no `/`, and no leading `.`, so never `.` or `..`.
+        params: z.object({ label: z.string().min(1).max(200).regex(/^[^/.][^/]*$/) }),
       },
     },
     async (request, reply) => {

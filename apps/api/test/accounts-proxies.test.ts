@@ -81,7 +81,7 @@ describe('GET /api/proxies', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('proxy-secret');
     expect(res.body).not.toContain('proxy-user');
-    const [first, dead] = res.json().items;
+    const [first, , dead] = res.json().items;
     expect(first).toEqual({
       label: 'acct-1001',
       scheme: 'http',
@@ -91,10 +91,18 @@ describe('GET /api/proxies', () => {
       verifiedIp: null,
       verifiedAt: null,
       verifiedGeo: null,
-      stats: { ok: 3, failed: 1, lastError: 'timeout: slow', lastErrorAt: '2026-10-09T11:00:00Z', lastUsedAt: '2026-10-09T11:30:00Z' },
+      stats: {
+        ok: 3,
+        failed: 1,
+        blocked: 1,
+        lastOkAt: '2026-10-09T11:30:00Z',
+        lastError: 'timeout: slow',
+        lastErrorAt: '2026-10-09T11:00:00Z',
+        lastUsedAt: '2026-10-09T11:30:00Z',
+      },
       since: '2026-10-09T10:00:00Z',
     });
-    expect(dead.stats).toEqual({ ok: 0, failed: 0, lastError: null, lastErrorAt: null, lastUsedAt: null });
+    expect(dead.stats).toEqual({ ok: 0, failed: 0, blocked: 0, lastOkAt: null, lastError: null, lastErrorAt: null, lastUsedAt: null });
   });
 
   it('needs a linked workspace and the dashboard session', async () => {
@@ -115,6 +123,13 @@ describe('POST /api/proxies/:label/probe', () => {
     expect(calls('/proxies/acct-1001/probe').at(-1)!.method).toBe('POST');
   });
 
+  it('encodes a label with a space for the upstream path', async () => {
+    const res = await probe('proxy%20two');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().proxy.label).toBe('proxy two');
+    expect(calls('/proxies/proxy%20two/probe')).toHaveLength(1);
+  });
+
   it("passes the upstream's 502 proxy_error and 404 through", async () => {
     const dead = await probe('dead');
     expect(dead.statusCode).toBe(502);
@@ -122,7 +137,7 @@ describe('POST /api/proxies/:label/probe', () => {
     expect((await probe('missing')).json()).toEqual({ error: { code: 'proxy_not_found' } });
   });
 
-  it('refuses a label that is not one path segment, and API keys', async () => {
+  it('refuses a label with a leading dot or a slash, and API keys', async () => {
     const before = upstream.requests.length;
     expect((await probe('.x')).statusCode).toBe(400);
     expect((await probe('a%2Fb')).statusCode).toBe(400);

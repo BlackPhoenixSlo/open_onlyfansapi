@@ -194,9 +194,19 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
       verified_ip: null,
       verified_at: null,
       verified_geo: null,
-      stats: { ok: 3, failed: 1, last_error: 'timeout: slow', last_error_at: '2026-10-09T11:00:00Z', last_used_at: '2026-10-09T11:30:00Z' },
+      stats: {
+        ok: 3,
+        failed: 1,
+        blocked: 1,
+        last_status: 429,
+        last_ok_at: '2026-10-09T11:30:00Z',
+        last_error: 'timeout: slow',
+        last_error_at: '2026-10-09T11:00:00Z',
+        last_used_at: '2026-10-09T11:30:00Z',
+      },
       since: '2026-10-09T10:00:00Z',
     },
+    { label: 'proxy two', scheme: 'http', host: '203.0.113.20', port: 3128, assigned_account_ids: [], stats: {}, since: '2026-10-09T10:00:00Z' },
     { label: 'dead', scheme: 'socks5', host: '203.0.113.99', port: 1080, assigned_account_ids: [], stats: {}, since: '2026-10-09T10:00:00Z' },
   ];
   const app = Fastify({ forceCloseConnections: true });

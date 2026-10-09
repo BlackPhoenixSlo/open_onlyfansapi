@@ -26,6 +26,11 @@ export function EditAccountDialog({ account, onClose }: { account: Account; onCl
   const assigned = proxies.data?.items.find((p) => p.assignedAccountIds.includes(account.id));
   const current = assigned ? `p:${assigned.label}` : NO_PROXY;
   const selected = choice ?? current;
+  // Other accounts' own `acct-<id>` proxies are hidden: sharing an IP across accounts is what OF correlates.
+  const own = `acct-${account.id}`;
+  const options = (proxies.data?.items ?? []).filter(
+    (p) => p === assigned || p.label === own || !/^acct-\d+$/.test(p.label),
+  );
 
   const save = useMutation({
     mutationFn: (body: UpdateAccountBody) => api(`/api/accounts/${account.id}`, { method: 'PATCH', body }),
@@ -63,13 +68,13 @@ export function EditAccountDialog({ account, onClose }: { account: Account; onCl
           </div>
           <div className="space-y-2">
             <Label htmlFor="account-proxy">Proxy</Label>
-            <Select value={selected} onValueChange={setChoice} disabled={proxies.isPending}>
+            <Select value={selected} onValueChange={setChoice} disabled={proxies.isPending || proxies.isError}>
               <SelectTrigger id="account-proxy" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NO_PROXY}>No proxy</SelectItem>
-                {proxies.data?.items.map((p) => (
+                {options.map((p) => (
                   <SelectItem key={p.label} value={`p:${p.label}`}>
                     {p.label}
                     <span className="text-muted-foreground">
@@ -80,7 +85,10 @@ export function EditAccountDialog({ account, onClose }: { account: Account; onCl
                 <SelectItem value={NEW_PROXY}>New proxy URL…</SelectItem>
               </SelectContent>
             </Select>
-            {proxies.isError && <p className="text-xs text-destructive">Proxies could not be loaded: {proxies.error.message}</p>}
+            {proxies.isError && <p className="text-xs text-destructive">Couldn't load proxies: {proxies.error.message}</p>}
+            {selected === NO_PROXY && !proxies.isError && (
+              <p className="text-xs text-muted-foreground">Requests will leave from the server's own IP.</p>
+            )}
             {selected === NEW_PROXY && (
               <Input
                 aria-label="Proxy URL"

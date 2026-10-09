@@ -41,3 +41,16 @@ def test_failed_save_keeps_old_file_and_leaves_no_temp_file(monkeypatch, target)
     monkeypatch.undo()
     assert json.loads(config.PROXIES_PATH.read_text()) == DATA
     assert _stray() == []
+
+
+def test_upsert_of_an_existing_label_keeps_what_the_caller_did_not_pass():
+    proxies.upsert({"label": "shared", "host": "203.0.113.10", "port": 8080})
+    proxies.assign_account("shared", "1")
+    proxies.assign_account("shared", "2")
+    proxies.record_verification("shared", ip="198.51.100.7", geo="X", ok=True)
+    stored = proxies.upsert({"label": "shared", "scheme": "socks5", "host": "203.0.113.11", "port": 1080,
+                             "username": "", "password": ""})
+    assert (stored["scheme"], stored["host"], stored["port"]) == ("socks5", "203.0.113.11", 1080)
+    assert stored["assigned_account_ids"] == ["1", "2"] and stored["assigned_account_id"] == "1"
+    assert stored["verified_ip"] == "198.51.100.7"
+    assert proxies.get_by_label("shared") == stored

@@ -205,9 +205,20 @@ def _proxy_entry(url: str) -> dict:
             "username": u.username or "", "password": u.password or ""}
 
 
+_ENDPOINT_KEYS = ("scheme", "host", "port", "username", "password")
+
+
 def _bind_own_proxy(uid: str, entry: dict) -> None:
-    """Store `entry` (from `_proxy_entry`) as the account's own `acct-<uid>` proxy and move the account onto it."""
+    """Store `entry` (from `_proxy_entry`) as the account's own `acct-<uid>` proxy and move the account onto it.
+
+    The upsert keeps the accounts already bound to `acct-<uid>` (uid included), and until the assign `uid` stays
+    on its previous proxy, so it never runs unproxied in between. A changed endpoint drops the last probe and the
+    traffic counters: they described the old one."""
     label = f"acct-{uid}"
+    old = proxies.get_by_label(label)
+    if old is not None and any(str(old.get(k) or "") != str(entry.get(k) or "") for k in _ENDPOINT_KEYS):
+        entry = {**entry, "verified_ip": None, "verified_at": None, "verified_geo": None}
+        proxy_stats.clear(label)
     proxies.upsert({"label": label, **entry})
     proxies.assign_account(label, uid)
 
@@ -330,27 +341,33 @@ class AccountPatch(BaseModel):
 
 
 def _update_account(uid: str, body: AccountPatch) -> bool:
-    """Apply `body`; True when the proxy binding changed."""
+    """Apply `body`; True when the proxy binding changed. Everything is checked before anything is written,
+    so a bad proxy leaves the nickname unchanged too."""
     if not uid.isdigit() or not accounts.is_account(uid):
         raise ApiError(404, "account_not_found")
+    ref = body.proxy
+    set_proxy = "proxy" in body.model_fields_set
+    new_entry = _proxy_entry(ref.url) if set_proxy and ref is not None and ref.url is not None else None
+    if set_proxy and ref is not None and ref.label is not None and proxies.get_by_label(ref.label) is None:
+        raise ApiError(404, "proxy_not_found")
+
     if body.nickname is not None:
         # load/save rather than upsert_account: upsert rebuilds meta and drops username/name/avatar.
         meta = accounts.load_meta(uid) or {"id": uid}
         meta["nickname"] = body.nickname.strip() or meta.get("nickname")
         accounts.save_meta(uid, meta)
-    if "proxy" not in body.model_fields_set:
+    if not set_proxy:
         return False
-    ref = body.proxy
     if ref is None:
         current = proxies.get_for_account(uid)
         if current is not None:
             proxies.unbind_account(current["label"], uid)
-    elif ref.url is not None:
-        _bind_own_proxy(uid, _proxy_entry(ref.url))
+    elif new_entry is not None:
+        _bind_own_proxy(uid, new_entry)
     else:
         try:
             proxies.assign_account(ref.label, uid)
-        except KeyError:
+        except KeyError:  # removed since the check above
             raise ApiError(404, "proxy_not_found") from None
     client_pool.evict(uid)
     return True
@@ -373,7 +390,6 @@ def _proxy_view(p: dict) -> dict:
         "scheme": p.get("scheme") or "http",
         "host": p.get("host"),
         "port": p.get("port"),
-        "username": p.get("username") or None,
         "assigned_account_ids": proxies._ids_on(p),
         "verified_ip": p.get("verified_ip"),
         "verified_at": p.get("verified_at"),
@@ -390,13 +406,12 @@ def proxies_list() -> list[dict]:
     return [_proxy_view(p) for p in proxies.list_proxies() if p.get("label")]
 
 
-@app.post("/proxies/{label}/probe", tags=["operator"], operation_id="proxies.probe")
-async def proxies_probe(label: str) -> dict:
-    """Fetch the proxy's egress IP and geo, store the result, and return the entry; 502 when the proxy fails."""
+def _probe(label: str) -> dict:
+    """Probe and store the result (network and an fsync: run it in a thread)."""
     p = proxies.get_by_label(label)
     if p is None:
         raise ApiError(404, "proxy_not_found")
-    result = await run_in_threadpool(proxies.probe, p)
+    result = proxies.probe(p)
     proxies.record_verification(label, ip=result["ip"], geo=result["geo"], ok=result["ok"])
     if not result["ok"]:
         message = str(result.get("error") or "probe failed")
@@ -404,6 +419,13 @@ async def proxies_probe(label: str) -> dict:
             message = message.replace(p["password"], "***")
         raise ApiError(502, "proxy_error", message[:300])
     return _proxy_view(proxies.get_by_label(label) or p)
+
+
+@app.post("/proxies/{label}/probe", tags=["operator"], operation_id="proxies.probe")
+async def proxies_probe(label: str) -> dict:
+    """Fetch the proxy's egress IP (through it, as OF traffic goes) and geo, store the result, and return the
+    entry; 502 when the proxy fails."""
+    return await asyncio.to_thread(_probe, label)
 
 
 # ─── /ws ──────────────────────────────────────────────────────────
