@@ -804,21 +804,12 @@ export const statsRevenue = z.object({
   byDay: z.array(z.object({ day: z.string(), ...revenueSums })),
   /** PPV DMs: priced outbound messages, not mass, unsent and automated ones included; `opened` = OF's `isOpened` (bought); `rate` = opened / sent in percent. */
   ppv: z.object({ sent: z.number().int(), opened: z.number().int(), rate: z.number().nullable() }),
-  /** Up to 50 (account, fan) pairs, most gross first. */
+  /**
+   * Up to 50 (account, fan) pairs, most gross first, named as in `GET /v1/stats/fans`: `name` is OF's display name (else
+   * username) on the fan's newest transaction in the range that has one; `lastAt` is the newest transaction, ISO.
+   */
   topPayers: z.array(
-    z.object({
-      accountId: z.number().int(),
-      fanId: z.number().int(),
-      /** The OF display name (else username) on the fan's newest transaction that has one; null when none does. */
-      name: z.string().nullable(),
-      /** OF's `user.isDeleted` on that transaction: the fan deleted their OF account (as of the backfill that stored it). */
-      isDeleted: z.boolean(),
-      ...revenueSums,
-      /** The newest transaction, ISO. */
-      lastAt: z.string(),
-      /** A message of the fan's chat on the account is stored (any time). */
-      hasChat: z.boolean(),
-    }),
+    statsFan.pick({ accountId: true, chatId: true, name: true, isDeleted: true, hasChat: true }).extend({ ...revenueSums, lastAt: z.string() }),
   ),
   /** All payers of the range (not only the top 50) with no stored chat (`hasChat` false), and their gross. */
   withoutChat: z.object({ payers: z.number().int(), gross: z.number().int() }),

@@ -162,10 +162,10 @@ describe('stats revenue', () => {
   it('lists the top payers by gross with the newest name, a deleted account and whether their chat is stored', async () => {
     const body = await get(RANGE, dashboard(cookieA));
     expect(body.topPayers).toEqual([
-      { accountId: A1, fanId: 3002, name: null, isDeleted: false, gross: 2000, net: 1600, transactions: 1, lastAt: '2026-09-01T11:00:00.000Z', hasChat: true },
-      { accountId: A1, fanId: 3001, name: 'ann2', isDeleted: false, gross: 1500, net: 1200, transactions: 2, lastAt: '2026-09-03T12:00:00.000Z', hasChat: true },
-      { accountId: A2, fanId: 4001, name: 'Cy', isDeleted: false, gross: 700, net: 560, transactions: 1, lastAt: '2026-09-03T09:00:00.000Z', hasChat: true },
-      { accountId: A1, fanId: 3008, name: 'Hal', isDeleted: true, gross: 100, net: 80, transactions: 1, lastAt: '2026-09-03T14:00:00.000Z', hasChat: false },
+      { accountId: A1, chatId: 3002, name: null, isDeleted: false, gross: 2000, net: 1600, transactions: 1, lastAt: '2026-09-01T11:00:00.000Z', hasChat: true },
+      { accountId: A1, chatId: 3001, name: 'ann2', isDeleted: false, gross: 1500, net: 1200, transactions: 2, lastAt: '2026-09-03T12:00:00.000Z', hasChat: true },
+      { accountId: A2, chatId: 4001, name: 'Cy', isDeleted: false, gross: 700, net: 560, transactions: 1, lastAt: '2026-09-03T09:00:00.000Z', hasChat: true },
+      { accountId: A1, chatId: 3008, name: 'Hal', isDeleted: true, gross: 100, net: 80, transactions: 1, lastAt: '2026-09-03T14:00:00.000Z', hasChat: false },
     ]);
     expect(body.withoutChat).toEqual({ payers: 1, gross: 100 });
   });
@@ -194,7 +194,7 @@ describe('stats revenue', () => {
 
     const other = await get(RANGE, bearer(keyB));
     expect(other.totals).toMatchObject({ gross: 4000, payers: 1, fansMessaged: 0 });
-    expect(other.topPayers.map((p: { fanId: number }) => p.fanId)).toEqual([5001]);
+    expect(other.topPayers.map((p: { chatId: number }) => p.chatId)).toEqual([5001]);
     const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
     expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
     expect(none.topPayers).toEqual([]);

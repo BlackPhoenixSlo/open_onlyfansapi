@@ -129,7 +129,6 @@ function RevenueKpis({ totals, ppv }: Pick<StatsRevenue, 'totals' | 'ppv'>) {
 
 /** The top payers of `data`, each linked to their thread when a chat is stored, after a count of the range's payers without one. */
 function TopPayersTable({ data }: { data: StatsRevenue }) {
-  const payers = data.topPayers.map((p) => ({ ...p, chatId: p.fanId }));
   return (
     <>
       {data.withoutChat.payers ? (
@@ -149,7 +148,7 @@ function TopPayersTable({ data }: { data: StatsRevenue }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {payers.map((p) => (
+          {data.topPayers.map((p) => (
             <TableRow key={`${p.accountId}:${p.chatId}`}>
               <TableCell className="font-medium" title={`Fan ${p.chatId}`}>
                 <FanLabel fan={p} />

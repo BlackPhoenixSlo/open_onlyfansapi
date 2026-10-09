@@ -3,7 +3,7 @@ import type { StatsFan, StatsMessage } from '@api/contracts';
 /** OF amounts are US dollars. */
 export const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-/** A fan as a row names it; revenue rows have no username (and call the chat id `fanId`). */
+/** A fan as a row names it; revenue rows have no username. */
 export type FanNamed = { fanUsername?: string | null; name?: string | null; chatId: number };
 
 /** `@username`, else the fan's name when known, else `chat <id>`. */

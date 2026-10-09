@@ -104,7 +104,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
     // The response schema drops the fields the contract does not name.
-    topPayers: top.map(({ name, username, lastAt, ...p }) => ({ ...p, name: name ?? username, lastAt: lastAt.toISOString() })),
+    topPayers: top.map(({ fanId, name, username, lastAt, ...p }) => ({ ...p, chatId: fanId, name: name ?? username, lastAt: lastAt.toISOString() })),
     withoutChat,
   };
 }

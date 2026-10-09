@@ -156,7 +156,7 @@ accounts selected it is left out of Fan CVR. `dmMessages`, `dmPpvs` and `ppv` co
   OF's flag (bought) as of the last read. The rate is an upper bound: a PPV unsent before anyone bought it vanishes
   from OF's history, so a backfill never stores it (only a live event before the unsend does) and it is missing from
   `sent`, while a bought one stays.
-- `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `fanId`, `name` (OF's display name,
+- `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `chatId`, `name` (OF's display name,
   else username, on the fan's newest booked transaction in the range that has one; null when none does), `gross`, `net`,
   `transactions`, `lastAt`, `isDeleted` (OF's `user.isDeleted` on that same transaction: the fan deleted their OF
   account, as of the backfill that stored it; the dashboard shows "deleted account") and `hasChat` (a message of the
