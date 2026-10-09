@@ -1,9 +1,10 @@
-import { and, eq, getTableColumns, gte, inArray, isNotNull, lt, sql, type SQL } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from '../../db/index.js';
 import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../../db/schema.js';
 import type { BackfillRows, BackfillStore } from './backfill.js';
 import type { DerivedMessage } from './derive.js';
+import { inScope, owned } from './facts.js';
 import { syncScripts } from './scripts.js';
 
 // Where a backfill puts what it reads (`BackfillStore`): the analytics tables, or a dry run's memory.
@@ -59,7 +60,7 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
         // the mass history marks it again; the page's queue ids bound the count.
         const queueIds = [...new Set([...covered, ...tail].flatMap((r) => (r.direction === 'outbound' && r.queueId !== null ? [r.queueId] : [])))];
         if (!queueIds.length) return;
-        const outbound = and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId), eq(messageFact.direction, 'outbound'));
+        const outbound = and(owned(messageFact, teamId, [accountId]), eq(messageFact.direction, 'outbound'));
         const bulk = tx
           .select({ queueId: messageFact.queueId })
           .from(messageFact)
@@ -106,22 +107,14 @@ export function dbStore(teamId: string, accountId: number): BackfillStore {
       const rows = await db
         .selectDistinct({ chatId: messageFact.chatId })
         .from(messageFact)
-        .where(and(eq(messageFact.teamId, teamId), eq(messageFact.accountId, accountId)));
+        .where(owned(messageFact, teamId, [accountId]));
       return rows.map((r) => r.chatId);
     },
     async payers(from, to) {
       const rows = await db
         .selectDistinct({ fanId: purchaseFact.fanId })
         .from(purchaseFact)
-        .where(
-          and(
-            eq(purchaseFact.teamId, teamId),
-            eq(purchaseFact.accountId, accountId),
-            isNotNull(purchaseFact.fanId),
-            gte(purchaseFact.createdAt, from),
-            lt(purchaseFact.createdAt, to),
-          ),
-        );
+        .where(and(inScope(purchaseFact, { teamId, accountIds: [accountId], from, to }), isNotNull(purchaseFact.fanId)));
       return rows.flatMap((r) => (r.fanId !== null ? [r.fanId] : []));
     },
     async finish(refreshedAt) {
