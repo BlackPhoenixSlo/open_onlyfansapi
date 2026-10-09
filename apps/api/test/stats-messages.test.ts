@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { pool } from '../src/db/index.js';
+import { db, pool } from '../src/db/index.js';
+import { purchaseFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { messageExport } from '../src/modules/analytics/messages.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
@@ -71,6 +72,7 @@ const DATA_A1 = of(
 );
 const DATA_A2 = of({ 4001: [msg(22, '09-01T22:20', A2), msg(21, '09-01T22:00', 4001)] }, { 4001: 'fan_c' });
 
+let teamA: string;
 let cookieA: string;
 let keyA: string;
 let limitedKeyA: string;
@@ -98,6 +100,7 @@ beforeAll(async () => {
   await resetDb();
   const a = await signUp(app, 'messages-a@example.test');
   const b = await signUp(app, 'messages-b@example.test');
+  teamA = a.teamId;
   cookieA = a.cookie;
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
@@ -147,6 +150,10 @@ describe('stats fans', () => {
         firstAt: iso(firstAt),
         lastAt: iso(lastAt),
         lastFanAt: iso(lastFanAt),
+        gross: 0,
+        grossAllTime: 0,
+        isDeleted: false,
+        hasChat: true,
       };
     };
     expect(body.items).toEqual([
@@ -159,6 +166,67 @@ describe('stats fans', () => {
     const limited = (await get(`/v1/stats/fans?${RANGE}&limit=1`)).json();
     expect([limited.total, limited.items.map((f: { chatId: number }) => f.chatId)]).toEqual([4, [3002]]);
     expect(await fans('from=2026-08-01&to=2026-08-31')).toEqual([[A1, 3001]]);
+  });
+
+  it('carries booked spend in the range and all time, most in the range first; lists payers with no stored chat; searches', async () => {
+    const tx = (txId: string, accountId: number, fanId: number | null, gross: number, at: string, status: string, user?: Record<string, unknown>) => ({
+      teamId: teamA,
+      accountId,
+      txId,
+      fanId,
+      fanIdSource: fanId === null ? null : ('field' as const),
+      kind: 'message',
+      grossCents: gross,
+      netCents: gross - 100,
+      currency: 'USD',
+      createdAt: new Date(`2026-${at}:00.000Z`),
+      raw: { id: txId, status, ...(user && { user }) },
+    });
+    await db.insert(purchaseFact).values([
+      tx('s1', A1, 3003, 700, '09-02T12:00', 'done'),
+      tx('s2', A1, 3003, 900, '08-15T12:00', 'done'), // before the range: all time only
+      tx('s3', A1, 3001, 500, '09-01T12:00', 'loading'),
+      tx('s4', A1, 3001, 9000, '09-02T12:00', 'undo'), // refunded: not booked
+      tx('s5', A1, 3009, 600, '09-02T13:00', 'done', { id: 3009, name: 'Gone Fan', username: 'gone', isDeleted: true }), // no stored chat
+      tx('s6', A1, 3010, 400, '08-20T12:00', 'done', { id: 3010, username: 'old_payer' }), // no chat, paid before the range only: not listed
+      tx('s7', A1, null, 800, '09-02T14:00', 'done'), // unknown fan
+      tx('s8', A2, 4009, 50, '09-03T12:00', 'done', { id: 4009, username: 'other' }), // no chat, on account A2
+    ]);
+    try {
+      const body = (await get(`/v1/stats/fans?${RANGE}`)).json();
+      const spend = (f: { accountId: number; chatId: number; gross: number; grossAllTime: number; isDeleted: boolean; hasChat: boolean }) => [
+        f.accountId,
+        f.chatId,
+        f.gross,
+        f.grossAllTime,
+        f.isDeleted,
+        f.hasChat,
+      ];
+      expect(body.total).toBe(6);
+      // Most gross in the range first; the rest keep the latest-fan-message order.
+      expect(body.items.map(spend)).toEqual([
+        [A1, 3003, 700, 1600, false, true],
+        [A1, 3009, 600, 600, true, false],
+        [A1, 3001, 500, 500, false, true],
+        [A2, 4009, 50, 50, false, false],
+        [A1, 3002, 0, 0, false, true],
+        [A2, 4001, 0, 0, false, true],
+      ]);
+      expect(body.items[1]).toMatchObject({ fanUsername: 'gone', fanMessages: 0, dmMessages: 0, ppvSent: 0, firstAt: null, lastAt: null, lastFanAt: null });
+
+      // Search: trimmed, any case, a leading @; username (chat list or the payer's transaction), name or chat id.
+      expect(await fans(`${RANGE}&search=${encodeURIComponent('  @FAN_A ')}`)).toEqual([[A1, 3001]]);
+      expect(await fans(`${RANGE}&search=gone%20f`)).toEqual([[A1, 3009]]);
+      expect(await fans(`${RANGE}&search=4001`)).toEqual([[A2, 4001]]);
+      expect(await fans(`${RANGE}&search=nobody`)).toEqual([]);
+      expect(await fans(`${RANGE}&search=%20`)).toHaveLength(6);
+      expect(await fans(`${RANGE}&accountId=${A2}`)).toEqual([
+        [A2, 4009],
+        [A2, 4001],
+      ]);
+    } finally {
+      await pool.query('TRUNCATE purchase_fact');
+    }
   });
 });
 

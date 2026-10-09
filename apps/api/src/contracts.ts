@@ -635,10 +635,16 @@ export const statsFansQuery = z.object({
   to: isoDay.optional(),
   accountId: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(200),
+  /** Keeps the fans whose username, name, custom name or chat id contains it (any case; trimmed, a leading `@` dropped); empty = all. */
+  search: z.string().max(200).optional(),
 });
 export type StatsFansQuery = z.input<typeof statsFansQuery>;
 
-/** One fan (chat) with a stored message in the range; the counts split the range's messages, so they sum to all of them. Times are ISO. */
+/**
+ * One fan (chat) with a stored message in the range, or a payer of the range with no stored chat (`hasChat` false:
+ * counts 0, times null); the counts split the range's messages, so they sum to all of them. Times are ISO; money is
+ * booked sales (as `GET /v1/stats/revenue`), in cents.
+ */
 export const statsFan = z.object({
   accountId: z.number().int(),
   /** The fan's user id (OF's chat id). */
@@ -659,10 +665,19 @@ export const statsFan = z.object({
   tips: z.number().int(),
   /** Their amounts (OF's `tipAmount`), in cents. */
   tipCents: z.number().int(),
-  firstAt: z.string(),
-  lastAt: z.string(),
+  /** Null on a payer without a stored chat. */
+  firstAt: z.string().nullable(),
+  lastAt: z.string().nullable(),
   /** The fan's newest message in the range; null when the fan wrote nothing in it. */
   lastFanAt: z.string().nullable(),
+  /** The fan's booked gross in the range. */
+  gross: z.number().int(),
+  /** The fan's booked gross over every stored transaction. */
+  grossAllTime: z.number().int(),
+  /** OF's `user.isDeleted` on the fan's newest booked transaction with a name (else the newest): the fan deleted their OF account. False with no transaction. */
+  isDeleted: z.boolean(),
+  /** A message of the fan's chat is stored; false only on a payer of the range with none, any time. */
+  hasChat: z.boolean(),
 });
 export type StatsFan = z.infer<typeof statsFan>;
 
@@ -674,7 +689,7 @@ export const statsFans = z.object({
   to: z.string(),
   /** Fans in scope before `limit`; more than `items` when the list is cut. */
   total: z.number().int(),
-  /** Latest fan message first (fans who wrote nothing last), then latest message. */
+  /** Most gross in the range first, then latest fan message (fans who wrote nothing last), then latest message. */
   items: z.array(statsFan),
 });
 export type StatsFans = z.infer<typeof statsFans>;

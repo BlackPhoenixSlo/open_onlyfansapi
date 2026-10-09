@@ -1,6 +1,6 @@
 import type { StatsMessage } from '@api/contracts';
 import { describe, expect, it } from 'vitest';
-import { byDay, isHiddenMass, matchesFan, messageBadges, noTextLabel } from './format';
+import { byDay, isHiddenMass, messageBadges, noTextLabel } from './format';
 
 const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   accountId: 1,
@@ -30,16 +30,7 @@ const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   ...over,
 });
 
-const fan = (fanUsername: string | null, chatId: number) => ({ fanUsername, chatId });
-
 describe('conversation format', () => {
-  it('filters fans by username or chat id', () => {
-    expect(matchesFan(fan('Ann_B', 123), '@ann')).toBe(true);
-    expect(matchesFan(fan(null, 123), '12')).toBe(true);
-    expect(matchesFan(fan(null, 123), 'ann')).toBe(false);
-    expect(matchesFan(fan(null, 123), ' ')).toBe(true);
-  });
-
   it('labels a message without text by why', () => {
     expect(noTextLabel(msg({ text: '', mediaCount: 1, photos: 1 }))).toBe('No text: media only');
     expect(noTextLabel(msg({ text: '', gifs: 1 }))).toBe('No text: media only');

@@ -2,7 +2,7 @@ import { and, desc, isNotNull, max, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
-import { dm, inScope, ppvDm, type Scope } from './messages.js';
+import { booked, dm, inScope, ppvDm, txStatus, type Scope } from './messages.js';
 
 // Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.
@@ -10,10 +10,6 @@ import { dm, inScope, ppvDm, type Scope } from './messages.js';
 type Sums = { gross: number; net: number; transactions: number };
 
 const TOP_PAYERS = 50;
-
-const txStatus = sql`${purchaseFact.raw}->>'status'`;
-/** A booked sale: OF's status `done` (settled) or `loading` (pending); `undo` (refunded) and `pending_return` (being reversed) are not. */
-const booked = sql`${txStatus} in ('done', 'loading')`;
 
 const zero = (): Sums => ({ gross: 0, net: 0, transactions: 0 });
 

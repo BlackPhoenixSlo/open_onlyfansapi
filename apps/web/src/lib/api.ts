@@ -204,8 +204,8 @@ export const statsScriptsQuery = (params: StatsRange) =>
 /** The most fans `GET /v1/stats/fans` returns (contracts.ts `statsFansQuery`, `limit` `.max(1000)`). */
 export const FAN_LIMIT = 1000;
 
-/** `limit` defaults to the API's 200. */
-export const statsFansQuery = (params: StatsRange & { limit?: number }) =>
+/** `limit` defaults to the API's 200; `search` (username, name or chat id) is matched by the API. */
+export const statsFansQuery = (params: StatsRange & { limit?: number; search?: string }) =>
   queryOptions({
     queryKey: ['stats', 'fans', params],
     queryFn: () => api<StatsFans>(`/v1/stats/fans?${qs(params)}`),

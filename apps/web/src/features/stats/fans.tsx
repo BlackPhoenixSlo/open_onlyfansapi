@@ -8,7 +8,7 @@ import { type StatsRange, statsFansQuery, statsMessagesCsvPath } from '@/lib/api
 import { useCsvDownload } from '@/lib/download';
 import { fanFileName, fanName, formatMoney } from '@/lib/utils';
 
-/** The fans with messages in the range, latest fan message first, and their stored messages as CSV. */
+/** The fans with messages in the range and the payers without a stored chat, most spend first, and their stored messages as CSV. */
 export function FansCard({ range }: { range?: StatsRange }) {
   const fans = useQuery({ ...statsFansQuery(range ?? {}), enabled: range !== undefined });
   const csv = useCsvDownload();
@@ -24,7 +24,8 @@ export function FansCard({ range }: { range?: StatsRange }) {
         <CardDescription>
           Messages are stored per fan for the backfilled ranges and for live events received while the gateway is
           connected; media is kept as metadata only. The downloads hold every stored message in the range for the account
-          filter. Latest fan message first.
+          filter. Most spend in the range first (booked sales), then latest fan message; payers of the range with no
+          stored chat are listed too.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -48,6 +49,9 @@ export function FansCard({ range }: { range?: StatsRange }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Fan</TableHead>
+                  <TableHead className="text-right" title="Booked gross in the range">
+                    Spend
+                  </TableHead>
                   <TableHead className="text-right">Fan msgs</TableHead>
                   <TableHead className="text-right">DMs</TableHead>
                   <TableHead className="text-right" title="PPVs bought / sent (not mass)">PPV</TableHead>
@@ -60,29 +64,37 @@ export function FansCard({ range }: { range?: StatsRange }) {
                 {fans.data.items.map((f) => (
                   <TableRow key={`${f.accountId}:${f.chatId}`}>
                     <TableCell className="font-medium">
-                      <Link
-                        to="/conversations"
-                        search={{ range: 'custom', from: fans.data.from, to: fans.data.to, chatAccountId: f.accountId, chatId: f.chatId }}
-                        className="underline-offset-4 hover:underline"
-                        title="Read the conversation"
-                      >
-                        {fanName(f)}
-                      </Link>
+                      {f.hasChat ? (
+                        <Link
+                          to="/conversations"
+                          search={{ range: 'custom', from: fans.data.from, to: fans.data.to, chatAccountId: f.accountId, chatId: f.chatId }}
+                          className="underline-offset-4 hover:underline"
+                          title="Read the conversation"
+                        >
+                          {fanName(f)}
+                        </Link>
+                      ) : (
+                        <span title="A payer of the range with no stored messages">{fanName(f)}</span>
+                      )}
+                      {f.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
                     </TableCell>
+                    <TableCell className="text-right">{f.gross ? formatMoney(f.gross) : '—'}</TableCell>
                     <TableCell className="text-right">{f.fanMessages}</TableCell>
                     <TableCell className="text-right">{f.dmMessages}</TableCell>
                     <TableCell className="text-right">{f.ppvSent ? `${f.ppvOpened}/${f.ppvSent}` : '—'}</TableCell>
                     <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
                     <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={csv.downloading}
-                        onClick={() => download('all', `messages-${fanFileName(f)}`, { accountId: f.accountId, chatId: f.chatId })}
-                      >
-                        CSV
-                      </Button>
+                      {f.hasChat && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={csv.downloading}
+                          onClick={() => download('all', `messages-${fanFileName(f)}`, { accountId: f.accountId, chatId: f.chatId })}
+                        >
+                          CSV
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -148,7 +148,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
     const asOf = new Date();
-    const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit);
+    const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit, query.search);
     return { timezone: cfg.timezone, configVersion: cfg.version, asOf: asOf.toISOString(), from: span.fromDay, to: span.toDay, ...fans };
   });
 

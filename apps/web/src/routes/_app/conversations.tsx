@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
+import { useState } from 'react';
 import { FanList } from '@/features/conversations/fan-list';
 import { Thread } from '@/features/conversations/thread';
 import { ErrorCard, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
@@ -25,7 +26,14 @@ function Conversations() {
   const navigate = Route.useNavigate();
   const stats = useStatsRange(search);
   const { config, range } = stats;
-  const fans = useQuery({ ...statsFansQuery({ ...range, limit: FAN_LIMIT }), enabled: range !== undefined, staleTime: 60_000 });
+  // The fan list's search, as sent to the API; the previous list stays up while a new search loads.
+  const [fanSearch, setFanSearch] = useState('');
+  const fans = useQuery({
+    ...statsFansQuery({ ...range, limit: FAN_LIMIT, search: fanSearch }),
+    enabled: range !== undefined,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
 
   if (isTeamNotLinked([config, fans])) return <WorkspaceNotLinked title="Conversations" subject="each fan's messages" />;
 
@@ -47,7 +55,7 @@ function Conversations() {
 
       <div className="grid gap-4 lg:h-[calc(100vh-12rem)] lg:min-h-[32rem] lg:grid-cols-[22rem_minmax(0,1fr)]">
         <div className="flex h-[28rem] min-h-0 flex-col rounded-xl border bg-card lg:h-auto">
-          <FanList fans={fans} selected={{ accountId: chatAccountId, chatId }} />
+          <FanList fans={fans} selected={{ accountId: chatAccountId, chatId }} onSearch={setFanSearch} />
         </div>
 
         <div className="flex h-[36rem] min-h-0 flex-col rounded-xl border bg-card lg:h-auto">

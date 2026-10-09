@@ -1,11 +1,5 @@
-import type { StatsFan, StatsMessage } from '@api/contracts';
+import type { StatsMessage } from '@api/contracts';
 import { formatMoney } from '@/lib/utils';
-
-/** The fan list filter: `q` (a leading `@` ignored, any case) in the username or the chat id. */
-export function matchesFan(f: Pick<StatsFan, 'fanUsername' | 'chatId'>, q: string): boolean {
-  const needle = q.trim().replace(/^@/, '').toLowerCase();
-  return !needle || (f.fanUsername?.toLowerCase().includes(needle) ?? false) || String(f.chatId).includes(needle);
-}
 
 const hasMedia = (m: StatsMessage) => m.mediaCount > 0 || m.gifs > 0;
 
