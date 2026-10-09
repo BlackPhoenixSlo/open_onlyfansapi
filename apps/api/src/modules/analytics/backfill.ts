@@ -400,10 +400,11 @@ async function listChats(get: Get, from: number): Promise<Chat[]> {
 
 /**
  * Pages one chat newest first with `first_id=<oldest id seen>` (OF's `id`), never `x-next-page`: OF returns short
- * pages before the end. Stops on `hasMore` false (the chat's start), a page with no new id, or the first page
- * reaching before `from` (the boundary page). Each page goes to `store`, split at `massFrom` (the boundary page's
- * tail before it was derived without its mass history), then the walk's coverage. Returns the messages read and
- * whether the store's coverage still falls short of `from`.
+ * pages before the end. Stops on `hasMore` false (the chat's start: OF's last page of messages still says true, and
+ * the empty page after it false), a page with no new id, or the first page reaching before `from` (the boundary
+ * page). Each page goes to `store`, split at `massFrom` (the boundary page's tail before it was derived without its
+ * mass history), then the walk's coverage. Returns the messages read and whether the store's coverage still falls
+ * short of `from`.
  */
 async function walkChat(
   get: Get,
@@ -422,12 +423,18 @@ async function walkChat(
     const cursor = oldest ? `&first_id=${oldest.id}` : '';
     const page = await get(`/chats/${chatId}/messages?limit=${PAGE}&order=desc${cursor}`);
     const fetchedAt = new Date();
-    const derived = items(page).flatMap((raw) => {
+    const list = items(page);
+    const derived = list.flatMap((raw) => {
       const d = deriveMessage(raw, chatId, ctx, fanNames({ name: chat.name, username: chat.username, displayName: chat.customName }));
       return d ? [{ d, raw }] : [];
     });
     const rows: WalkedMessage[] = unique(derived, (x) => x.d.messageId, seen).map(({ d, raw }) => ({ ...d, raw, fetchedAt }));
-    if (rows.length === 0) break;
+    if (rows.length === 0) {
+      // OF's last page of messages still says `hasMore`; the empty page after it says false: the chat's start. A page
+      // of ids already read (OF ignored the cursor) proves nothing.
+      if (list.length === 0 && !hasMore(page)) reachedStart = true;
+      break;
+    }
     const covered = rows.filter((r) => r.createdAt.getTime() >= massFrom);
     const tail = rows.filter((r) => !(r.createdAt.getTime() >= massFrom));
     for (const r of rows) {

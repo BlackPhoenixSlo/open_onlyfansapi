@@ -81,7 +81,8 @@ chat walks store messages on both sides of the range, and each outbound message'
 read once, before the walks, so a broadcast sent during the run is stored as DMs until the next run over its day), the
 welcome message, the chat list (most recent first, with `skip_users=none` so each chat carries the fan's username;
 see below), each chat's messages newest first down to the page that reaches
-`--from`. Messages on that boundary page older than the mass window (before the day
+`--from` or to the chat's start (OF's last page of a chat's messages still says `hasMore`; the empty page after it says
+false, and the walk records `reached_start`). Messages on that boundary page older than the mass window (before the day
 before `--from`) were derived without their mass history, so a later run that reads them again updates every column
 but `is_mass`, `is_automated` and `automated_reason`, and clears `deleted_at`; only a run whose `--from` covers them
 re-derives those flags. Mass history answers
@@ -99,7 +100,8 @@ It prints the request count and whether it was stopped, then one check:
 
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`
   (OF ignored the cursor), so `chats.csv` shows an `oldest_at` after `--from` and `reached_start` false. Their
-  messages before that time are missing.
+  messages before that time are missing. A walk that ends on OF's empty last page (`hasMore` false) reached the chat's
+  start and is not counted.
 
 Then the row count of each file. Last, stopped or not, it records the account's script candidates
 ([analytics.md](analytics.md#scripts)). Rows upsert, so a re-run never double counts, but it does request everything

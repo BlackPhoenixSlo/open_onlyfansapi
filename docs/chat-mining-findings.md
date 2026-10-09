@@ -75,9 +75,12 @@ Handoff §4 (2026-10-08 22:41 UTC) counted 111 settled and 19 `loading` message 
    UTC send (hypothesis: a mass message; one queue id, 321 chats in 27 s, `isFromQueue` true), which mass history,
    read once at the run's start 4.5 h earlier (`backfill.ts`), could not list. Mass history covers up to the run's
    start only: a broadcast sent during a run stays stored as DMs until the next run over its day.
-3. **Incomplete chats: UNPROVEN.** The log flags 1,224 of 1,347: 113 proven complete (the oldest stored message is the
-   welcome message, sent on subscribe), 7 proven truncated (a fan quotes a message older than the oldest stored one),
-   1,104 unknown. Opener kind is "unknown" on 1,073 of 1,664 openers.
+3. **Incomplete chats: mostly a false alarm, fixed.** The log flags 1,224 of 1,347. OF's last page of a chat's
+   messages says `hasMore: true` and the page after it is `{"list":[],"hasMore":false}`; the walk stopped on that
+   empty page without reading it as the chat's start, so `reached_start` stayed false (fixed 2026-10-09: the empty
+   page now records it; a re-run sets it). In this run's rows: 113 proven complete (the oldest stored message is the
+   welcome message, sent on subscribe), 7 with a fan quoting a message older than the oldest stored one, 1,104 unknown.
+   Opener kind is "unknown" on 1,073 of 1,664 openers until that re-run.
 4. **Unsent content vanishes, so unlock rates are upper bounds.** All 64 quoted-but-missing messages are ours, none
    bought (40 mass, 9 DM PPVs, 15 free DMs), 50 of them inside walked spans. The soft delete (62d3c50) has marked
    nothing yet: none of the 4 `messages.deleted` ids of 2026-10-09 was stored.
@@ -216,7 +219,7 @@ so no bulk send shows.
 3. **Which timezone?** Routes group by UTC; the window ran at UTC+2 throughout (CEST ends 2026-10-25). The kit uses
    Europe/Ljubljana.
 4. **Is 90 days enough?** LTV covers 90 days only, and opener kind is "unknown" on 1,073 of 1,664 openers because
-   most walks cannot show they reached the chat start (this doc §3, caveat 3).
+   this run's walks did not record reaching the chat start (this doc §3, caveat 3: fixed, a re-run records it).
 5. **Which automations or bots send?** Only the welcome message (114 rows) is flagged. Candidates: 15 texts sent word
    for word to 20+ chats (largest 497 and 498 chats, 2026-09-14..09-21), 4 queue ids shared by 8 to 174 chats
    (2026-09-21..09-29) and the 10-09 bulk send. Linked: do bulk sends count as DMs for golden ratio and Fan CVR? This

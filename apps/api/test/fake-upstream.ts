@@ -100,7 +100,9 @@ type Raw = Record<string, unknown>;
  * OF data for the analytics backfill, served on the upstream's named routes when `state.of` is set (else those
  * paths echo like any `/of/*`). Lists are newest first. Like OF: chat-list pages hold at most `chatPageCap` (10)
  * chats however large `limit` is and carry `nextOffset` (unless `noNextOffset`), `withUser` is only `{ _view, id }`
- * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is, mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
+ * without `skip_users=none`, message pages hold at most `pageCap` messages however large `limit` is (with `endPage`, every
+ * page of messages says `hasMore` and the page after a chat's last is `{ list: [], hasMore: endPage.hasMore }`, as OF's
+ * are with `false`), mass history ignores `offset` and always reports `hasMore`, and a chat in `stuckChats`
  * ignores the `first_id` cursor. `rateLimit` answers that many requests 429 (with `retryAfter` when set), then
  * `badGateway` that many 502; `unauthorized` answers every request 401, as the upstream does once OF refuses the session.
  */
@@ -111,6 +113,7 @@ export type FakeOf = {
   transactions: (Raw & { createdAt: string })[];
   welcome: Raw | null;
   pageCap?: number;
+  endPage?: { hasMore: boolean };
   chatPageCap?: number;
   noNextOffset?: boolean;
   stuckChats?: number[];
@@ -137,7 +140,8 @@ function serveOf(of: FakeOf, path: string, q: Record<string, string | undefined>
     const id = Number(chat[1]);
     const all = of.messages[id] ?? [];
     const older = q.first_id && !of.stuckChats?.includes(id) ? all.filter((m) => Number(m.id) < Number(q.first_id)) : all;
-    return page(older, 0, Math.min(limit, of.pageCap ?? limit));
+    const p = page(older, 0, Math.min(limit, of.pageCap ?? limit));
+    return of.endPage ? { ...p, hasMore: p.list.length > 0 || of.endPage.hasMore } : p;
   }
   if (path === '/of/mass-messaging/overview') {
     const [start, end] = [ofTime(q.startDate), ofTime(q.endDate)];

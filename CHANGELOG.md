@@ -38,6 +38,7 @@ All notable changes to this project are documented here. The format is based on
 - Analytics backfill: the chat list is paged by OF's `nextOffset` (OF answers about 10 chats a page whatever the `limit`); it advanced by 50 and skipped 43 of 62 active chats in a live week.
 - Analytics backfill: `chats.csv` `fan_username` is filled from the chat list, now read with `skip_users=none`; it was always empty.
 - Analytics backfill: a chat OF lists with `lastMessage: null` (its latest message deleted) is walked and counts as active; it was skipped, and its other messages in the range were missed (8 in a live week).
+- Analytics backfill: a chat walk that ends on OF's empty last page (`{"list":[],"hasMore":false}`, after a last page of messages that still says `hasMore`) records `reached_start`; it did not, so such chats counted as incomplete (1,224 of 1,347 in a live 90-day run) and their openers as kind `unknown`.
 
 ### Changed
 - Analytics backfill: `messages.csv` `text_hash` is the script hash ([docs/analytics.md](docs/analytics.md#scripts)): the fan's names become `<name>` and it is empty for text too short to be a script. Automation matching still hashes the text without replacing names.

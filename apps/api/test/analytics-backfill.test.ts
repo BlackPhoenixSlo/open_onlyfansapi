@@ -328,6 +328,18 @@ describe('analytics backfill', () => {
   });
 
   it.each([
+    [false, true, 1],
+    [true, false, 2],
+  ])("reads OF's end of a chat: hasMore on its last page of messages, then an empty page saying hasMore %s (reached_start %s)", async (more, reached, incomplete) => {
+    fake.state.of!.endPage = { hasMore: more };
+    const start = fake.requests.length;
+    expect(await backfill(opts())).toMatchObject({ incompleteChats: incomplete }); // 2002, whose cursor OF ignores, either way
+    expect(ofCalls(start)).toContain('/of/chats/2003/messages?limit=100&order=desc&first_id=301');
+    const [walked] = await db.select().from(chatCoverage).where(eq(chatCoverage.chatId, 2003));
+    expect(walked).toMatchObject({ oldestMessageId: 301, reachedStart: reached });
+  });
+
+  it.each([
     ['nextOffset', false],
     ['the chats returned, without nextOffset', true],
   ])('pages the chat list by %s, past one page with none active, down to two in a row', async (_, noNextOffset) => {
