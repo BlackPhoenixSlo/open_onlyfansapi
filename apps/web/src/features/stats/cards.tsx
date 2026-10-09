@@ -31,7 +31,7 @@ export function Kpi({
   value: string;
   sub?: string;
   hint?: string;
-  loading: boolean;
+  loading?: boolean;
   error?: string;
   empty: boolean;
   verified?: boolean;
