@@ -10,7 +10,16 @@ import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS,
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
-import { backfill, dbStore, memoryStore, SessionExpiredError, type BackfillOptions, type BackfillResult, type BackfillRows } from '../src/modules/analytics/backfill.js';
+import {
+  backfill,
+  dbStore,
+  memoryStore,
+  progressLine,
+  SessionExpiredError,
+  type BackfillOptions,
+  type BackfillResult,
+  type BackfillRows,
+} from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
 import { claimAccount } from '../src/modules/analytics/workspace.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
@@ -206,10 +215,12 @@ describe('analytics backfill', () => {
     const start = fake.requests.length;
     const result = await backfill(opts());
     expect(result).toEqual({
+      phase: 'chats',
       stopped: false,
       requests: 13,
       retries: 0,
       chats: 3,
+      chatsTotal: 3,
       messages: 12,
       broadcasts: 3,
       transactions: 3,
@@ -445,7 +456,7 @@ describe('analytics backfill', () => {
     await expect(run).rejects.toThrow(
       `OF session of account ${ACCOUNT} looks dead (5 chats in a row failed with a 4xx, as OF answers a dead session's chat reads): re-connect it in Accounts, then run the backfill again`,
     );
-    expect(progress).toMatchObject({ chats: 0, failedChats: [2003, 2001, 2002, 2011, 2012] });
+    expect(progress).toMatchObject({ chats: 0, chatsTotal: 7, failedChats: [2003, 2001, 2002, 2011, 2012] });
     expect(ofCalls(start).filter((u) => u.startsWith('/of/chats/2013/'))).toEqual([]);
   });
 
@@ -751,6 +762,38 @@ describe('analytics CSV export', () => {
       transactions: 0,
       replyTimes: 0,
     });
+  });
+});
+
+describe('backfill progress line', () => {
+  const result = (over: Partial<BackfillResult>): BackfillResult => ({
+    phase: 'chats',
+    stopped: false,
+    requests: 0,
+    retries: 0,
+    chats: 0,
+    chatsTotal: 0,
+    messages: 0,
+    broadcasts: 0,
+    transactions: 0,
+    welcome: false,
+    incompleteChats: 0,
+    seededChats: 0,
+    missingChats: 0,
+    failedChats: [],
+    droppedChats: 0,
+    ...over,
+  });
+
+  it('names the phase and requests; the chat total and ETA wait for the chat list', () => {
+    expect(progressLine(result({ phase: 'mass history', requests: 12 }), null)).toBe('progress: mass history, 12 requests, chats 0/?, ETA once the chat list is read');
+  });
+
+  it('counts walked, missing and failed chats as done, and projects the ETA from the pace since the chat phase began', () => {
+    const r = result({ requests: 480, chats: 28, missingChats: 1, failedChats: [7], chatsTotal: 100 }); // 30 done
+    // 20 chats in 20 minutes since the phase began with 10 done: 70 left at a minute each.
+    expect(progressLine(r, { at: 0, doneThen: 10 }, 20 * 60_000)).toBe('progress: chats, 480 requests, chats 30/100, ETA 1h 10m');
+    expect(progressLine(r, { at: 0, doneThen: 30 }, 20 * 60_000)).toBe('progress: chats, 480 requests, chats 30/100, ETA after the first chat');
   });
 });
 

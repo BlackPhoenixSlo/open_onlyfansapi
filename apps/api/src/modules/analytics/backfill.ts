@@ -70,7 +70,11 @@ export type BackfillRows = {
   transactions: DerivedPurchase[];
 };
 
+/** The run's step, in order: each reads before the next starts. */
+export type BackfillPhase = 'transactions' | 'mass history' | 'welcome message' | 'chat list' | 'chats';
+
 export type BackfillResult = {
+  phase: BackfillPhase;
   /** The signal ended the run early. */
   stopped: boolean;
   /** Upstream requests made, 429s and retries included. */
@@ -78,6 +82,8 @@ export type BackfillResult = {
   /** Retries after a transient failure (502, 503, 504 or a network error); 429 backoffs are not counted. */
   retries: number;
   chats: number;
+  /** Chats to walk (the listed active ones and the seeded ones); 0 until the chat list is read. */
+  chatsTotal: number;
   messages: number;
   broadcasts: number;
   transactions: number;
@@ -291,10 +297,12 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   const cfg = backfillConfig(opts.config);
 
   const result: BackfillResult = {
+    phase: 'transactions',
     stopped: false,
     requests: 0,
     retries: 0,
     chats: 0,
+    chatsTotal: 0,
     messages: 0,
     broadcasts: 0,
     transactions: 0,
@@ -372,6 +380,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       for (const tx of stored) if (tx.fanId !== null) payers.add(tx.fanId);
     });
     // Mass history from a day before the range up to now: the walks store outbound messages outside the range too.
+    result.phase = 'mass history';
     const massFrom = from - DAY_MS;
     const mass: Raw[] = [];
     const now = Date.now();
@@ -380,10 +389,12 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
     }
     result.broadcasts = new Set(mass.map((m) => String(m.id))).size;
 
+    result.phase = 'welcome message';
     const welcome = (await get('/settings/welcome-message')) as Raw | null;
     result.welcome = welcome !== null && typeof welcome === 'object';
     const ctx = deriveContext(accountId, mass, result.welcome ? welcome : null, cfg.automationTexts);
 
+    result.phase = 'chat list';
     const list = await listChats(get, from);
     result.droppedChats = list.dropped;
     // OF's chat list leaves some chats out (a deleted or deactivated fan's; its offset still counts them), so the
@@ -392,6 +403,8 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       (id) => Number.isSafeInteger(id) && id > 0 && id !== accountId && !list.listed.has(id),
     );
     result.seededChats = seeded.length;
+    result.chatsTotal = list.active.length + seeded.length;
+    result.phase = 'chats';
     let failedInARow = 0;
     for (const chat of [...list.active, ...seeded.map((id) => ({ id, username: null, name: null, customName: null }))]) {
       // One chat's 4xx (401 aside: SessionExpiredError; 429 aside: retried, then fatal) skips that chat; a 5xx ends the run.
@@ -423,6 +436,24 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
   }
   await store.finish();
   return result;
+}
+
+/** Chats walked or skipped (not found, failed). */
+export const chatsDone = (r: Readonly<BackfillResult>) => r.chats + r.missingChats + r.failedChats.length;
+
+/**
+ * The CLI's progress line: phase, requests, chats done of the total and the ETA, from the pace of the chats done
+ * since `chatsSince` (when the chat phase began, with `doneThen` chats done).
+ */
+export function progressLine(r: Readonly<BackfillResult>, chatsSince: { at: number; doneThen: number } | null, now = Date.now()): string {
+  const done = chatsDone(r);
+  let eta = 'ETA once the chat list is read';
+  if (r.phase === 'chats') {
+    const pace = chatsSince && done > chatsSince.doneThen ? (now - chatsSince.at) / (done - chatsSince.doneThen) : null;
+    const minutes = pace === null ? null : Math.ceil((pace * (r.chatsTotal - done)) / 60_000);
+    eta = minutes === null ? 'ETA after the first chat' : `ETA ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+  return `progress: ${r.phase}, ${r.requests} requests, chats ${done}/${r.chatsTotal || '?'}, ${eta}`;
 }
 
 type Get = (path: string) => Promise<unknown>;

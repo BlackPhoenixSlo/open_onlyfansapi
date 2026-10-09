@@ -114,6 +114,13 @@ for a 401). A walked chat resets the count; a chat OF answers 404 for (not found
 still ends the run (the session expired), a 429 ends it past its retries, and a 5xx ends it (a 502, 503 or 504 past
 its retries).
 
+Every 5 minutes it prints a progress line to stderr, such as `progress: chats, 4210 requests, chats 830/1612, ETA 2h 5m`:
+the phase (`transactions`, `mass history`, `welcome message`, `chat list`, then `chats`), the requests made, the chats
+walked or skipped of those to walk (known once the chat list is read), and the time left at the pace of the chat walks
+so far. If the run fails (a dead session, the upstream down or rate limiting past the retries, a database error), it
+prints the error, the last progress line and the counts below, and still writes the CSVs from what was stored (a dry
+run: from what it read), then exits 1. A CSV that cannot be written (the database is down) is an error of its own.
+
 It prints the request count and whether it was stopped, then:
 
 - **incomplete chats**: chats whose walk stopped on a page with no new message id before reaching back to `--from`

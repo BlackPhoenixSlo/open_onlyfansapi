@@ -4,17 +4,28 @@
 // `--to` is exclusive; dates without a time are UTC midnight. `--automation` names a file of the client's automation
 // texts, one per line: outbound messages matching one are `automated` (reason `automation`). Ctrl-C stops the run at once (a request in flight
 // finishes) and still writes the CSVs; a second Ctrl-C quits without writing. `--dry-run` stores nothing and writes the
-// CSVs from what it read. See docs/analytics-backfill.md.
+// CSVs from what it read. A progress line goes to stderr every 5 minutes; a run that fails prints its last counts and
+// still writes the CSVs of what it stored. See docs/analytics-backfill.md.
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
 import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
-import { backfill, dbStore, memoryStore, type BackfillRows, type BackfillStore } from '../modules/analytics/backfill.js';
+import {
+  backfill,
+  chatsDone,
+  dbStore,
+  memoryStore,
+  progressLine,
+  type BackfillResult,
+  type BackfillRows,
+  type BackfillStore,
+} from '../modules/analytics/backfill.js';
 import { claimAccount } from '../modules/analytics/workspace.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 
 const USAGE = 'usage: analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]';
+const PROGRESS_EVERY_MS = 5 * 60_000;
 
 function fail(message: string): never {
   console.error(message);
@@ -49,6 +60,25 @@ process.on('SIGINT', () => {
   console.error('stopping (Ctrl-C again to quit without writing the CSVs)');
 });
 
+/** The run's counts so far, and when its chat phase began (for the ETA). */
+let last: Readonly<BackfillResult> | null = null;
+let chatsSince: { at: number; doneThen: number } | null = null;
+const progress = setInterval(() => last && console.error(progressLine(last, chatsSince)), PROGRESS_EVERY_MS);
+
+function report(result: Readonly<BackfillResult>) {
+  const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
+  console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
+  console.log(
+    `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
+  );
+  console.log(`incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`);
+  const failed = result.failedChats;
+  const failedIds = failed.length ? `: ${failed.slice(0, 20).join(', ')}${failed.length > 20 ? ', ...' : ''}` : '';
+  console.log(
+    `chats the list left out ${result.seededChats} (the range's payers and chats with stored messages, walked; ${result.missingChats} not found upstream, skipped); list entries dropped ${result.droppedChats} (no readable fan id); chats failed ${failed.length} (a 4xx, skipped)${failedIds}`,
+  );
+}
+
 try {
   const teamId = await accountTeam(accountId, values.team);
   const automationTexts = automationFile ? await readAutomationTexts(automationFile) : [];
@@ -63,18 +93,21 @@ try {
     await claimAccount(teamId, accountId);
     sink = { store: dbStore(teamId, accountId), write: () => writeExport({ teamId, accountId, from, to, outDir }) };
   }
-  const result = await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store: sink.store });
-  const partial = dryRun ? 'yes (partial dry run)' : 'yes (partial: re-run to finish, rows upsert)';
-  console.log(`requests: ${result.requests}; stopped: ${result.stopped ? partial : 'no'}`);
-  console.log(
-    `chats ${result.chats}, messages ${result.messages}, broadcasts ${result.broadcasts}, transactions ${result.transactions}, welcome message ${result.welcome ? 'set' : 'none'}`,
-  );
-  console.log(`incomplete chats ${result.incompleteChats} (the walk stopped before reaching --from: see chats.csv oldest_at)`);
-  const failed = result.failedChats;
-  const failedIds = failed.length ? `: ${failed.slice(0, 20).join(', ')}${failed.length > 20 ? ', ...' : ''}` : '';
-  console.log(
-    `chats the list left out ${result.seededChats} (the range's payers and chats with stored messages, walked; ${result.missingChats} not found upstream, skipped); list entries dropped ${result.droppedChats} (no readable fan id); chats failed ${failed.length} (a 4xx, skipped)${failedIds}`,
-  );
+  const onProgress = (r: Readonly<BackfillResult>) => {
+    last = r;
+    if (r.phase === 'chats' && !chatsSince) chatsSince = { at: Date.now(), doneThen: chatsDone(r) };
+  };
+  try {
+    report(await backfill({ upstream, accountId, from, to, config: { automationTexts }, signal: stop.signal, store: sink.store, onProgress }));
+  } catch (err) {
+    // The rows stored so far stay: print the counts and write the CSVs of what was stored.
+    console.error(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    if (last) {
+      console.error(progressLine(last, chatsSince));
+      report(last);
+    }
+  }
   const written = await sink.write();
   console.log(
     `wrote ${outDir}: messages.csv ${written.messages}, chats.csv ${written.chats}, transactions.csv ${written.transactions}, reply_times.csv ${written.replyTimes} rows`,
@@ -83,5 +116,6 @@ try {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
 } finally {
+  clearInterval(progress);
   await pool.end();
 }
