@@ -118,6 +118,8 @@ class StatusError extends Error {
     super(`backfill: the upstream answered ${status} to GET ${path}${nextStep ? `: ${nextStep}` : ''}`);
   }
 }
+/** OF's own 400 or 403 (`ofError`): its answer to a dead session's reads, e.g. 400 "Wrong user". */
+const ofRefused = (status: number, ofError: boolean) => ofError && (status === 400 || status === 403);
 /** What to do after the upstream's last answer `status` fails the run, if anything (`ofError`: OF's error passed through). */
 function nextStep(status: number, ofError: boolean, cfg: BackfillConfig): string | undefined {
   if (status === 429) {
@@ -126,7 +128,7 @@ function nextStep(status: number, ofError: boolean, cfg: BackfillConfig): string
   if (TRANSIENT.has(status)) {
     return `still failing after ${cfg.transientDelaysMs.length} retries: check that the upstream at UPSTREAM_URL is running and answers within UPSTREAM_TIMEOUT_MS, read its logs, then run again`;
   }
-  if (ofError && (status === 400 || status === 403)) return "if the account's OF session is dead, re-connect it in Accounts, then run again";
+  if (ofRefused(status, ofError)) return "if the account's OF session is dead, re-connect it in Accounts, then run again";
   return undefined;
 }
 const isOfError = (body: Buffer): boolean => {
@@ -427,7 +429,7 @@ async function run(opts: BackfillOptions): Promise<BackfillResult> {
       // the run. Another 4xx (`failed`) or a missing chat neither counts nor resets the run of refusals.
       const walk = await walkChat(get, store, ctx, chat, from, massFrom).catch((err: unknown) => {
         if (!(err instanceof StatusError) || err.status < 400 || err.status >= 500 || err.status === 429) throw err;
-        return err.ofError && (err.status === 400 || err.status === 403) ? ('refused' as const) : ('failed' as const);
+        return ofRefused(err.status, err.ofError) ? ('refused' as const) : ('failed' as const);
       });
       if (walk === 'missing') {
         result.missingChats++;
