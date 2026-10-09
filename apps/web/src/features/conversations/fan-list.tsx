@@ -1,10 +1,10 @@
-import type { StatsFans } from '@api/contracts';
+import type { StatsFan, StatsFans } from '@api/contracts';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { FanLabel } from '@/features/conversations/fan';
-import { formatMoney } from '@/features/conversations/format';
+import { fanRowState, formatMoney } from '@/features/conversations/format';
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { formatAgo } from '@/features/stats/series';
 import { cn } from '@/lib/utils';
@@ -67,54 +67,60 @@ export function FanList({
             <NoData />
           </div>
         ) : (
-          fans.data.items.map((f) => {
-            const isSelected = f.accountId === selected.accountId && f.chatId === selected.chatId;
-            const body = (
-              <>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate font-medium">
-                    <FanLabel fan={f} />
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground" title={f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : undefined}>
-                    {!f.hasChat ? 'no stored chat' : f.lastAt === null ? 'no message in range' : f.lastFanAt ? formatAgo(f.lastFanAt) : 'fan silent'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                  {f.grossAllTime > 0 && (
-                    <span title="Booked gross in the range / over every stored transaction">
-                      spent {formatMoney(f.gross)} · all time {formatMoney(f.grossAllTime)}
-                    </span>
-                  )}
-                  {f.lastAt !== null && <span>{f.fanMessages} fan msgs</span>}
-                  {f.ppvSent > 0 && (
-                    <span title="PPVs bought / sent (not mass)">
-                      PPV {f.ppvOpened}/{f.ppvSent}
-                    </span>
-                  )}
-                  {f.tips > 0 && <span>tips {formatMoney(f.tipCents)}</span>}
-                </div>
-              </>
-            );
-            const key = `${f.accountId}:${f.chatId}`;
-            return f.hasChat ? (
-              <Link
-                key={key}
-                from="/conversations"
-                to="/conversations"
-                search={(prev) => ({ ...prev, chatAccountId: f.accountId, chatId: f.chatId })}
-                aria-current={isSelected ? 'true' : undefined}
-                className={cn('block border-b px-3 py-2 text-sm hover:bg-accent/60', isSelected && 'bg-accent')}
-              >
-                {body}
-              </Link>
-            ) : (
-              <div key={key} className="border-b px-3 py-2 text-sm" title={`Fan ${f.chatId}: a payer of the range with no stored messages`}>
-                {body}
-              </div>
-            );
-          })
+          fans.data.items.map((f) => (
+            <FanRow key={`${f.accountId}:${f.chatId}`} fan={f} selected={f.accountId === selected.accountId && f.chatId === selected.chatId} />
+          ))
         )}
       </div>
     </>
+  );
+}
+
+/** What a row says in place of the fan's last message time. */
+const NO_FAN_MESSAGE = { 'payer-only': 'no stored chat', 'no-message-in-range': 'no message in range', silent: 'fan silent' } as const;
+
+/** One fan: a link to its thread, else (a payer without a stored chat) a plain row. */
+function FanRow({ fan: f, selected }: { fan: StatsFan; selected: boolean }) {
+  const state = fanRowState(f);
+  const body = (
+    <>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="truncate font-medium">
+          <FanLabel fan={f} />
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground" title={f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : undefined}>
+          {state !== 'active' ? NO_FAN_MESSAGE[state] : f.lastFanAt && formatAgo(f.lastFanAt)}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+        {f.grossAllTime > 0 && (
+          <span title="Booked gross in the range / over every stored transaction">
+            spent {formatMoney(f.gross)} · all time {formatMoney(f.grossAllTime)}
+          </span>
+        )}
+        {(state === 'silent' || state === 'active') && <span>{f.fanMessages} fan msgs</span>}
+        {f.ppvSent > 0 && (
+          <span title="PPVs bought / sent (not mass)">
+            PPV {f.ppvOpened}/{f.ppvSent}
+          </span>
+        )}
+        {f.tips > 0 && <span>tips {formatMoney(f.tipCents)}</span>}
+      </div>
+    </>
+  );
+  return state === 'payer-only' ? (
+    <div className="border-b px-3 py-2 text-sm" title={`Fan ${f.chatId}: a payer of the range with no stored messages`}>
+      {body}
+    </div>
+  ) : (
+    <Link
+      from="/conversations"
+      to="/conversations"
+      search={(prev) => ({ ...prev, chatAccountId: f.accountId, chatId: f.chatId })}
+      aria-current={selected ? 'true' : undefined}
+      className={cn('block border-b px-3 py-2 text-sm hover:bg-accent/60', selected && 'bg-accent')}
+    >
+      {body}
+    </Link>
   );
 }

@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConversationLink, FanLabel } from '@/features/conversations/fan';
-import { fanFileName, fanName, formatMoney } from '@/features/conversations/format';
+import { fanFileName, fanName, fanRowState, formatMoney } from '@/features/conversations/format';
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { type StatsRange, statsFansQuery, statsMessagesCsvPath } from '@/lib/api';
 import { useCsvDownload } from '@/lib/download';
@@ -65,10 +65,10 @@ export function FansCard({ range }: { range?: StatsRange }) {
                   <TableRow key={`${f.accountId}:${f.chatId}`}>
                     <TableCell className="font-medium">
                       <FanLabel fan={f}>
-                        {f.hasChat ? (
-                          <ConversationLink fan={f} range={fans.data} />
-                        ) : (
+                        {fanRowState(f) === 'payer-only' ? (
                           <span title="A payer of the range with no stored messages">{fanName(f)}</span>
+                        ) : (
+                          <ConversationLink fan={f} range={fans.data} />
                         )}
                       </FanLabel>
                     </TableCell>
@@ -79,7 +79,7 @@ export function FansCard({ range }: { range?: StatsRange }) {
                     <TableCell className="text-right">{f.tips ? `${f.tips} · ${formatMoney(f.tipCents)}` : '—'}</TableCell>
                     <TableCell>{f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : '—'}</TableCell>
                     <TableCell className="text-right">
-                      {f.lastAt !== null && (
+                      {fanRowState(f) !== 'payer-only' && fanRowState(f) !== 'no-message-in-range' && (
                         <Button
                           size="sm"
                           variant="ghost"

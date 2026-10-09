@@ -1,6 +1,6 @@
 import type { StatsMessage } from '@api/contracts';
 import { describe, expect, it } from 'vitest';
-import { byDay, fanFileName, fanName, isHiddenMass, messageBadges, noTextLabel } from './format';
+import { byDay, fanFileName, fanName, fanRowState, isHiddenMass, messageBadges, noTextLabel } from './format';
 
 const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   accountId: 1,
@@ -38,6 +38,16 @@ describe('conversation format', () => {
       'Ann B',
     ]);
     expect([fanFileName({ fanUsername: 'Ann', chatId: 7 }), fanFileName({ fanUsername: null, chatId: 7 })]).toEqual(['Ann', 'chat-7']);
+  });
+
+  it('tells a payer without a chat, a chat quiet in the range, a silent fan and an active one apart', () => {
+    const at = '2026-09-01T10:00:00.000Z';
+    expect([
+      fanRowState({ hasChat: false, lastAt: null, lastFanAt: null }),
+      fanRowState({ hasChat: true, lastAt: null, lastFanAt: null }),
+      fanRowState({ hasChat: true, lastAt: at, lastFanAt: null }),
+      fanRowState({ hasChat: true, lastAt: at, lastFanAt: at }),
+    ]).toEqual(['payer-only', 'no-message-in-range', 'silent', 'active']);
   });
 
   it('labels a message without text by why', () => {

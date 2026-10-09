@@ -1,4 +1,4 @@
-import type { StatsMessage } from '@api/contracts';
+import type { StatsFan, StatsMessage } from '@api/contracts';
 
 /** OF amounts are US dollars. */
 export const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
@@ -11,6 +11,15 @@ export const fanName = (f: FanNamed) => (f.fanUsername ? `@${f.fanUsername}` : (
 
 /** The fan in a file name: `username`, else `chat-<id>`. */
 export const fanFileName = (f: FanNamed) => f.fanUsername ?? `chat-${f.chatId}`;
+
+/** A fan row of a range: a payer with no stored chat, a stored chat with no message in the range, a fan who wrote nothing in it, or one who did. */
+export type FanRowState = 'payer-only' | 'no-message-in-range' | 'silent' | 'active';
+
+export function fanRowState(f: Pick<StatsFan, 'hasChat' | 'lastAt' | 'lastFanAt'>): FanRowState {
+  if (!f.hasChat) return 'payer-only';
+  if (f.lastAt === null) return 'no-message-in-range';
+  return f.lastFanAt === null ? 'silent' : 'active';
+}
 
 const hasMedia = (m: StatsMessage) => m.mediaCount > 0 || m.gifs > 0;
 
