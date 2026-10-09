@@ -303,16 +303,13 @@ def test_the_pollers_run_with_the_pump_and_either_one_expires_the_session(evicte
     asyncio.run(main())
 
 
-def test_a_poller_that_dies_is_logged(evicted, caplog):
+def test_a_poller_that_dies_is_logged(evicted, caplog, monkeypatch):
     async def main():
-        class Broken:
-            account_id = 100001
+        def boom(*args):
+            raise OverflowError("boom")
 
-            @property
-            def interval(self):  # read by the loop outside its retry
-                raise OverflowError("boom")
-
-        sup, src = supervisor(pollers={"sent": lambda *args: Broken()})
+        sup, src = supervisor(pollers={"sent": lambda aid, *_: StubPoller(aid, "sent", refused=True, cancelled=[])})
+        monkeypatch.setattr(sup, "mark_expired", boom)
         make_account("100001")
         with caplog.at_level(logging.ERROR, logger="upstream.pump"):
             await sup.reconcile()

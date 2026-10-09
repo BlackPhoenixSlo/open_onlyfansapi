@@ -147,7 +147,7 @@ def sent_message(account_id: int, msg: Any, with_user: Any, now: datetime) -> di
 def chat_queue_finished(account_id: int, queue_id: int, entry: dict, now: datetime) -> dict:
     """`chat_queue.finished` for one of the account's mass-message history entries (mass_poller): the
     entry as OF returned it, `id` the queue id, `ts` its `date` (or `now` when unreadable)."""
-    return event("chat_queue.finished", account_id, queue_id, iso(parse_time(entry.get("date")) or now), entry)
+    return event("chat_queue.finished", account_id, queue_id, _ts(entry.get("date"), now), entry)
 
 
 MAPPED_KEYS = frozenset({"api2_chat_message", "post_expire", "chat_message_delete"})

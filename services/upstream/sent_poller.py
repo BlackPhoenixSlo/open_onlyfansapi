@@ -9,7 +9,8 @@ a mass message does not move a chat in OF's list) are skipped: DMs only.
 Limits, each a documented loss: OF's list puts unread chats first and returns 10-20 chats a page whatever
 `limit` asks, so with more than about 50 unread chats the read chats below them are not reached; a chat is read back
 at most CHAT_PAGES pages (about 30 messages) a poll; past PENDING_MAX queued chats the first queued (within
-one scan, the most recently active) are dropped.
+one scan, the most recently active) are dropped; a chat whose listed `lastMessage` the messages endpoint never
+returns is re-read, one page per poll, until it changes.
 
 State is in memory; a restart reads chats changed since `now - 2 * interval` and the gateway ledger's dedup key drops
 repeats.
