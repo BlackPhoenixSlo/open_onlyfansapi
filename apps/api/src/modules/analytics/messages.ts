@@ -51,8 +51,7 @@ const coverage = and(
 
 /**
  * One row per fan with a message in `[from, to)`: latest fan message first (fans who wrote nothing in the range
- * last), then latest message, at most `limit`; `total` counts them all. Deleted (unsent) messages count. The PPV and
- * tip counts read `raw` as `messageDetail` does.
+ * last), then latest message, at most `limit`; `total` counts them all. Deleted (unsent) messages count.
  */
 export async function scopedFans(scope: Scope, limit: number): Promise<{ total: number; items: StatsFan[] }> {
   const outbound = sql`${messageFact.direction} = 'outbound'`;
@@ -70,9 +69,9 @@ export async function scopedFans(scope: Scope, limit: number): Promise<{ total: 
       massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
       automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
       ppvSent: sql<number>`(count(*) filter (where ${ppv}))::int`,
-      ppvOpened: sql<number>`(count(*) filter (where ${ppv} and ${messageFact.raw}->>'isOpened' = 'true'))::int`,
+      ppvOpened: sql<number>`(count(*) filter (where ${ppv} and ${messageFact.isOpened}))::int`,
       tips: sql<number>`(count(*) filter (where ${tip}))::int`,
-      tipCents: sql<number>`coalesce(sum(case when jsonb_typeof(${messageFact.raw}->'tipAmount') = 'number' then round((${messageFact.raw}->>'tipAmount')::numeric * 100) end) filter (where ${tip}), 0)::int`,
+      tipCents: sql<number>`coalesce(sum(${messageFact.tipCents}) filter (where ${tip}), 0)::int`,
       firstAt: min(messageFact.createdAt),
       lastAt,
       lastFanAt,
@@ -114,6 +113,8 @@ async function messagePage(scope: MessageScope, after: Cursor | null, limit: num
       direction: messageFact.direction,
       priceCents: messageFact.priceCents,
       isTip: messageFact.isTip,
+      tipCents: messageFact.tipCents,
+      isOpened: messageFact.isOpened,
       mediaCount: messageFact.mediaCount,
       isMass: messageFact.isMass,
       isAutomated: messageFact.isAutomated,

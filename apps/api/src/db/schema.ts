@@ -176,6 +176,10 @@ export const messageFact = pgTable(
     automatedReason: text('automated_reason', { enum: ['welcome', 'automation'] }),
     priceCents: integer('price_cents').notNull(),
     isTip: boolean('is_tip').notNull(),
+    /** `tipAmount` in cents on a tip, else 0. */
+    tipCents: integer('tip_cents').notNull().default(0),
+    /** OF's `isOpened`: on a priced message, the fan bought it. */
+    isOpened: boolean('is_opened').notNull().default(false),
     mediaCount: integer('media_count').notNull(),
     /** Sorted media ids, comma-joined; null = no media. */
     mediaKey: text('media_key'),

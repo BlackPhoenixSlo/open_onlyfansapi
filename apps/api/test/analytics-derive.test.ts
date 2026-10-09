@@ -184,17 +184,21 @@ describe('analytics derived columns', () => {
     canPurchaseReason: '',
     ...over,
   });
-  const none = { isOpened: false, isFree: true, tipCents: 0, photos: 0, videos: 0, gifs: 0, audios: 0, hasPreview: false, isReply: false, isLiked: false };
+  const none = { isFree: true, photos: 0, videos: 0, gifs: 0, audios: 0, hasPreview: false, isReply: false, isLiked: false };
 
   it('reads PPV, tip, media types, preview, reply and like from the raw message', () => {
     const ppv = ofMsg({ isFree: false, price: 25, isOpened: true, canPurchaseReason: 'opened', mediaCount: 3, media: [media(1, 'photo'), media(2, 'photo'), media(3, 'video')], previews: [1] });
-    expect(messageDetail(ppv)).toEqual({ ...none, isFree: false, isOpened: true, photos: 2, videos: 1, hasPreview: true });
+    expect(messageDetail(ppv)).toEqual({ ...none, isFree: false, photos: 2, videos: 1, hasPreview: true });
+    expect(deriveMessage(ppv, 2001, ctx)).toMatchObject({ isOpened: true, tipCents: 0 });
     const unbought = ofMsg({ isFree: false, price: 25, canPurchase: true, mediaCount: 1, media: [media(4, 'video')] });
     expect(messageDetail(unbought)).toEqual({ ...none, isFree: false, videos: 1 });
+    expect(deriveMessage(unbought, 2001, ctx)!.isOpened).toBe(false);
     const tip = ofMsg({ fromUser: { id: 2001 }, isTip: true, tipAmount: 15, tipText: '', text: 'for you' });
-    expect(messageDetail(tip)).toEqual({ ...none, tipCents: 1500 });
-    expect(messageDetail(ofMsg({ tipAmount: 15 })).tipCents).toBe(0); // not a tip
-    expect(messageDetail(ofMsg({ isTip: true, tipAmount: '15' })).tipCents).toBe(0); // not a number
+    expect(messageDetail(tip)).toEqual(none);
+    expect(deriveMessage(tip, 2001, ctx)).toMatchObject({ isTip: true, tipCents: 1500 });
+    expect(deriveMessage(ofMsg({ tipAmount: 15 }), 2001, ctx)!.tipCents).toBe(0); // not a tip
+    expect(deriveMessage(ofMsg({ isTip: true, tipAmount: '15' }), 2001, ctx)!.tipCents).toBe(1500); // parsed like price
+    expect(deriveMessage(ofMsg({ isTip: true, tipAmount: 'x' }), 2001, ctx)!.tipCents).toBe(0); // not a number
     expect(messageDetail(ofMsg({ giphyId: 'abc123' }))).toEqual({ ...none, gifs: 1 }); // not in mediaCount
     expect(messageDetail(ofMsg({ mediaCount: 1, media: [media(5, 'gif')] }))).toEqual({ ...none, gifs: 1 });
     const reply = ofMsg({ mediaCount: 1, media: [media(6, 'audio')], isLiked: true, replyToMessage: ofMsg({ id: 0 }) });
@@ -203,7 +207,8 @@ describe('analytics derived columns', () => {
 
   it('reads absent or malformed raw fields as false and 0', () => {
     expect(messageDetail({})).toEqual({ ...none, isFree: false });
-    expect(messageDetail({ media: 'x', previews: null, replyToMessage: null, isOpened: 'true', giphyId: '' })).toEqual({ ...none, isFree: false });
+    expect(messageDetail({ media: 'x', previews: null, replyToMessage: null, giphyId: '' })).toEqual({ ...none, isFree: false });
+    expect(deriveMessage(msg({ isOpened: 'true' }), 2001, ctx)!.isOpened).toBe(false);
     expect(messageDetail({ media: [null, { type: 'other' }] })).toEqual({ ...none, isFree: false });
   });
 

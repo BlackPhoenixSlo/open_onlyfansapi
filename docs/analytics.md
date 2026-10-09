@@ -91,15 +91,16 @@ at a time.
 Each message carries, as JSON fields (CSV columns in snake_case, in this order): `accountId`, `chatId`, `fanUsername`,
 `messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text`, `priceCents`, `isFree`, `isOpened`, `isTip`,
 `tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `isReply`,
-`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). The detail fields are read from OF's stored message
-object (`raw`) when the export runs, so no backfill is needed for messages already stored:
+`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). `isOpened` and `tipCents` are stored columns (migration
+0013 filled them for messages already stored); the other detail fields are read from OF's stored message object
+(`raw`) when the export runs, so no backfill is needed for messages already stored:
 
 | Field | OF field | Notes |
 |---|---|---|
 | `priceCents` | `price` (dollars) | Stored column; a PPV is an outbound message with a price. |
 | `isFree` | `isFree` | |
-| `isOpened` | `isOpened` | On a priced message, the fan bought it (OF's `canPurchaseReason` is then `opened`). OF reports it false on free messages. |
-| `isTip`, `tipCents` | `isTip`, `tipAmount` (dollars) | A tip message has `price` 0 and the amount in `tipAmount`; `tipCents` is 0 when not a tip or `tipAmount` is not a number. |
+| `isOpened` | `isOpened` | Stored column. On a priced message, the fan bought it (OF's `canPurchaseReason` is then `opened`). OF reports it false on free messages. |
+| `isTip`, `tipCents` | `isTip`, `tipAmount` (dollars) | A tip message has `price` 0 and the amount in `tipAmount`; `tipCents` (stored column) is 0 when not a tip or `tipAmount` is not a number or numeric string, as for `price`. |
 | `mediaCount` | `mediaCount`, else `media` length | Stored column. |
 | `photos`, `videos`, `gifs`, `audios` | `media[].type` (`photo`, `video`, `gif`, `audio`) | Counts only; the files are not stored. A GIPHY gif (`giphyId` set) adds 1 to `gifs` and is not in `mediaCount`, as in OF. Other types count only in `mediaCount`. |
 | `hasPreview` | `previews` | Not empty: some media ids are shown free before purchase. |
@@ -282,6 +283,7 @@ curl -X PUT -H "Authorization: Bearer $API_KEY" -H "content-type: application/js
    `message_fact.normaliser_version`, `chat_coverage.fan_name` and `fan_custom_name`) and `0011_scripts_trim` (drops
    unused `script` columns). `0012_message_deleted_at` adds the nullable `message_fact.deleted_at`; existing rows
    stay not deleted, and rows a live `messages.deleted` removed before it are gone.
+   `0013_message_tip_opened` adds `message_fact.tip_cents` and `is_opened` and fills them once from `raw`.
 2. **Rehash once per account.** Rows stored before `0010` have a null `normaliser_version` and an older
    `text_hash`, so scripts leave them out. For each claimed account run
    `pnpm --filter @gateway/api analytics:rehash --account <id>`. It is safe to run again: a second run updates

@@ -108,11 +108,7 @@ export function mediaKey(media: unknown): string | null {
 }
 
 export type MessageDetail = {
-  /** OF's `isOpened`: on a priced message, the fan bought (unlocked) it. */
-  isOpened: boolean;
   isFree: boolean;
-  /** `tipAmount` in cents on a tip (`isTip`), else 0. */
-  tipCents: number;
   photos: number;
   videos: number;
   /** `media[].type` `gif`, plus 1 for a GIPHY gif (`giphyId`), which OF does not count in `mediaCount`. */
@@ -130,11 +126,8 @@ export type MessageDetail = {
 export function messageDetail(raw: Raw): MessageDetail {
   const media = Array.isArray(raw.media) ? (raw.media as unknown[]) : [];
   const ofType = (type: string) => media.filter((m) => (m as Raw | null)?.type === type).length;
-  const isTip = raw.isTip === true;
   return {
-    isOpened: raw.isOpened === true,
     isFree: raw.isFree === true,
-    tipCents: isTip && typeof raw.tipAmount === 'number' && Number.isFinite(raw.tipAmount) ? Math.round(raw.tipAmount * 100) : 0,
     photos: ofType('photo'),
     videos: ofType('video'),
     gifs: ofType('gif') + (typeof raw.giphyId === 'string' && raw.giphyId !== '' ? 1 : 0),
@@ -185,6 +178,10 @@ export type DerivedMessage = {
   automatedReason: 'welcome' | 'automation' | null;
   priceCents: number;
   isTip: boolean;
+  /** `tipAmount` in cents on a tip (`isTip`), else 0. */
+  tipCents: number;
+  /** OF's `isOpened`: on a priced message, the fan bought (unlocked) it. */
+  isOpened: boolean;
   mediaCount: number;
   mediaKey: string | null;
   /** The script hash (outbound, eligible text only). */
@@ -206,6 +203,7 @@ export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext, name
   const queueId = num(raw.queueId);
   const hash = textHash(raw.text);
   const media = mediaKey(raw.media);
+  const isTip = raw.isTip === true;
   let automatedReason: DerivedMessage['automatedReason'] = null;
   if (outbound) {
     const w = ctx.welcome;
@@ -222,7 +220,9 @@ export function deriveMessage(raw: Raw, chatId: number, ctx: DeriveContext, name
     isAutomated: automatedReason !== null,
     automatedReason,
     priceCents: cents(raw.price) ?? 0,
-    isTip: raw.isTip === true,
+    isTip,
+    tipCents: isTip ? (cents(raw.tipAmount) ?? 0) : 0,
+    isOpened: raw.isOpened === true,
     mediaCount: num(raw.mediaCount) ?? (Array.isArray(raw.media) ? raw.media.length : 0),
     mediaKey: media,
     textHash: outbound ? scriptHash(raw.text, [...names, ...messageFanNames(raw, chatId)]) : null,
