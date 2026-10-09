@@ -42,6 +42,7 @@ All notable changes to this project are documented here. The format is based on
 - Analytics backfill: a chat OF lists with `lastMessage: null` (its latest message deleted) is walked and counts as active; it was skipped, and its other messages in the range were missed (8 in a live week).
 - Analytics backfill: a chat walk that ends on OF's empty last page (`{"list":[],"hasMore":false}`, after a last page of messages that still says `hasMore`) records `reached_start`; it did not, so such chats counted as incomplete (1,224 of 1,347 in a live 90-day run) and their openers as kind `unknown`.
 - Analytics backfill: OF's chat list leaves some chats out while its offset counts them (pages of 20 places held 13 to 19 chats), so a fan with `isActive: false` who bought a PPV in the range was never walked. After the listed chats, a run now walks the range's payers and the chats with stored messages that the list did not name, and skips instead of failing the run a chat whose first messages page OF answers 404 (counted) or that the upstream answers another 4xx but 401 and 429 (its id printed). The chat list is read to its end, or to three pages in a row with no new chat; it stopped after two pages with no chat active in the range, but its order is not by last message (a mass message does not move a chat, and its tail is ordered by fan id). The CLI prints the seeded, 404, dropped (unreadable fan id) and failed counts.
+- A Postgres restart no longer crashes the API or an analytics CLI: an idle pool connection's error is logged and the next query reconnects.
 
 ### Changed
 - Analytics backfill: `messages.csv` `text_hash` is the script hash ([docs/analytics.md](docs/analytics.md#scripts)): the fan's names become `<name>` and it is empty for text too short to be a script. Automation matching still hashes the text without replacing names.
@@ -51,6 +52,10 @@ All notable changes to this project are documented here. The format is based on
 - `posts.expired` is documented as firing for any post in the account's feed, not only its own: a socket capture
   showed OF sends `post_expire` for other creators' posts.
 - `docs/webhooks.md`: `upstream.*` names and contents may change in any minor release.
+- Analytics backfill: five chats in a row failing with a 4xx (OF answers a dead session's chat reads 400 "Wrong user" or 403) now end the run as `session_expired` with "re-connect it in Accounts, then run the backfill again"; a walked chat resets the count. `GET /v1/stats/backfill` carries `failedChats` (chats skipped on a 4xx) and the Accounts page shows "Done · N chats failed" ([docs/analytics-backfill.md](docs/analytics-backfill.md#running-a-backfill)).
+- Analytics backfill: requests are spaced evenly, one every 3,600,000 / `ANALYTICS_REQUESTS_PER_HOUR` ms (6 s at the default 600), instead of up to the hourly cap at once and then an idle wait; the hourly total, page delay and 429 backoff are unchanged.
+- `analytics:backfill` prints a progress line to stderr every 5 minutes (phase, requests, chats done of total, ETA), and a run that fails prints its last counts and still writes the CSVs of what it stored, then exits 1.
+- Error texts name the next step: a 429 past its retries names the waits and the cap (`ANALYTICS_REQUESTS_PER_HOUR`) and says to run again with a lower cap; a 502/503/504 past its retries says to check the upstream at `UPSTREAM_URL` and its logs; `upstream_unavailable` and `upstream_timeout` messages name `UPSTREAM_URL` and `UPSTREAM_TIMEOUT_MS`.
 
 ### Removed
 
