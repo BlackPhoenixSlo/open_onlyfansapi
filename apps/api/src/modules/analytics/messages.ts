@@ -64,81 +64,99 @@ const coverage = and(
   eq(chatCoverage.chatId, messageFact.chatId),
 );
 
-/** `search` trimmed, a leading `@` dropped, lowercased; empty = no filter. */
-const needle = (search: string | undefined) => (search ?? '').trim().replace(/^@/, '').toLowerCase();
-/** The fan's username, name or custom name, or its chat id, contains `q` (a `needle`). */
-const matches = (q: string, chatId: number, names: (string | null)[]) => names.some((n) => n?.toLowerCase().includes(q)) || String(chatId).includes(q);
+/** One known fan's booked sales on an account (`fanSpends`). */
+export type FanSpend = {
+  accountId: number;
+  fanId: number;
+  /** Booked gross in the range, and over every stored transaction, in cents. */
+  gross: number;
+  grossAllTime: number;
+  /** A booked sale in the range. */
+  paidInRange: boolean;
+  /** OF's `user` name, username and `isDeleted` on the newest booked transaction in the range with a name (else the newest in the range); null / false with none. */
+  name: string | null;
+  username: string | null;
+  isDeleted: boolean;
+  /** A message of the fan's chat on the account is stored, any time. */
+  hasChat: boolean;
+};
 
 /**
- * One row per fan with a message in `[from, to)`, plus each payer of the range (a booked sale with a known fan) with
- * no stored chat at all (message counts 0, times null, `hasChat` false). Each carries `gross` (booked, in cents) in
- * the range and `grossAllTime`, and `isDeleted` (OF's `user.isDeleted` on the fan's newest booked transaction with a
- * name, else the newest, as in `GET /v1/stats/revenue`; false with none). Most gross in the range first, then the
- * latest fan message (fans who wrote nothing in the range last), then the latest message; at most `limit`; `total`
- * counts them all. `search` keeps the fans whose username, name, custom name or chat id contains it. Deleted (unsent)
- * messages count.
+ * Per (account, fan) with a booked sale on the accounts of `scope`, any time (the fan known): spend in the range and
+ * all time, the fan's details from the range's transactions, and whether the chat is stored. Shared by
+ * `GET /v1/stats/fans` and `GET /v1/stats/revenue`.
  */
-export async function scopedFans(scope: Scope, limit: number, search?: string): Promise<{ total: number; items: StatsFan[] }> {
+export async function fanSpends(scope: Scope): Promise<FanSpend[]> {
+  const user = sql`${purchaseFact.raw}->'user'`;
+  const inRange = sql`${purchaseFact.createdAt} >= ${scope.from} and ${purchaseFact.createdAt} < ${scope.to}`;
+  const unnamed = sql`coalesce(nullif(${user}->>'name', ''), nullif(${user}->>'username', '')) is null`;
+  const newest = (expr: SQL) => sql`(array_agg(${expr} order by ${unnamed}, ${purchaseFact.createdAt} desc) filter (where ${inRange}))[1]`;
+  const rows = await db
+    .select({
+      accountId: purchaseFact.accountId,
+      fanId: purchaseFact.fanId,
+      gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${inRange}), 0)::int`,
+      grossAllTime: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
+      paidInRange: sql<boolean>`coalesce(bool_or(${inRange}), false)`,
+      name: sql<string | null>`${newest(sql`nullif(${user}->>'name', '')`)}`,
+      username: sql<string | null>`${newest(sql`nullif(${user}->>'username', '')`)}`,
+      isDeleted: sql<boolean>`coalesce(${newest(sql`coalesce((${user}->>'isDeleted')::boolean, false)`)}, false)`,
+      hasChat: sql<boolean>`exists (select 1 from ${messageFact} where ${messageFact.teamId} = ${purchaseFact.teamId} and ${messageFact.accountId} = ${purchaseFact.accountId} and ${messageFact.chatId} = ${purchaseFact.fanId})`,
+    })
+    .from(purchaseFact)
+    .where(and(eq(purchaseFact.teamId, scope.teamId), scope.accountIds ? inArray(purchaseFact.accountId, scope.accountIds) : undefined, booked, isNotNull(purchaseFact.fanId)))
+    .groupBy(purchaseFact.teamId, purchaseFact.accountId, purchaseFact.fanId);
+  return rows.flatMap(({ fanId, ...r }) => (fanId !== null ? [{ ...r, fanId }] : []));
+}
+
+/** Per fan (chat) with a message in the range: the message counts and times, and the chat list's names. */
+async function fanMessages(scope: Scope) {
   const outbound = sql`${messageFact.direction} = 'outbound'`;
   const tip = sql`${messageFact.direction} = 'inbound' and ${messageFact.isTip}`;
-  const lastAt = max(messageFact.createdAt);
-  const lastFanAt = sql<Date | null>`max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound')`.mapWith(messageFact.createdAt);
-  // The fan's details from the newest booked transaction with a name, else the newest (revenue.ts's top payers).
-  const user = sql`${purchaseFact.raw}->'user'`;
-  const newest = (expr: SQL) => sql`(array_agg(${expr} order by coalesce(nullif(${user}->>'name', ''), nullif(${user}->>'username', '')) is null, ${purchaseFact.createdAt} desc))[1]`;
-  const inRange = sql`${purchaseFact.createdAt} >= ${scope.from} and ${purchaseFact.createdAt} < ${scope.to}`;
-  const [chats, spends] = await Promise.all([
-    db
-      .select({
-        accountId: messageFact.accountId,
-        chatId: messageFact.chatId,
-        fanUsername: chatCoverage.fanUsername,
-        fanName: chatCoverage.fanName,
-        fanCustomName: chatCoverage.fanCustomName,
-        fanMessages: sql<number>`(count(*) filter (where ${messageFact.direction} = 'inbound'))::int`,
-        dmMessages: sql<number>`(count(*) filter (where ${dm}))::int`,
-        massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
-        automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
-        ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
-        ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
-        tips: sql<number>`(count(*) filter (where ${tip}))::int`,
-        tipCents: sql<number>`coalesce(sum(${messageFact.tipCents}) filter (where ${tip}), 0)::int`,
-        firstAt: min(messageFact.createdAt),
-        lastAt,
-        lastFanAt,
-      })
-      .from(messageFact)
-      .leftJoin(chatCoverage, coverage)
-      .where(inScope(messageFact, scope))
-      .groupBy(messageFact.accountId, messageFact.chatId, chatCoverage.fanUsername, chatCoverage.fanName, chatCoverage.fanCustomName),
-    // Every known fan's booked sales on the accounts in scope, any time.
-    db
-      .select({
-        accountId: purchaseFact.accountId,
-        fanId: purchaseFact.fanId,
-        gross: sql<number>`coalesce(sum(${purchaseFact.grossCents}) filter (where ${inRange}), 0)::int`,
-        grossAllTime: sql<number>`coalesce(sum(${purchaseFact.grossCents}), 0)::int`,
-        paidInRange: sql<boolean>`bool_or(${inRange})`,
-        username: sql<string | null>`${newest(sql`nullif(${user}->>'username', '')`)}`,
-        name: sql<string | null>`${newest(sql`nullif(${user}->>'name', '')`)}`,
-        isDeleted: sql<boolean>`${newest(sql`coalesce((${user}->>'isDeleted')::boolean, false)`)}`,
-        hasChat: sql<boolean>`exists (select 1 from ${messageFact} where ${messageFact.teamId} = ${purchaseFact.teamId} and ${messageFact.accountId} = ${purchaseFact.accountId} and ${messageFact.chatId} = ${purchaseFact.fanId})`,
-      })
-      .from(purchaseFact)
-      .where(
-        and(eq(purchaseFact.teamId, scope.teamId), scope.accountIds ? inArray(purchaseFact.accountId, scope.accountIds) : undefined, booked, isNotNull(purchaseFact.fanId)),
-      )
-      .groupBy(purchaseFact.teamId, purchaseFact.accountId, purchaseFact.fanId),
-  ]);
-  // The where clause leaves out unknown fans.
-  const spend = new Map(spends.map((p) => [`${p.accountId}:${p.fanId}`, { ...p, fanId: p.fanId! }]));
-  const q = needle(search);
-  const items: StatsFan[] = [];
-  for (const { fanName, fanCustomName, ...r } of chats) {
-    if (q && !matches(q, r.chatId, [r.fanUsername, fanName, fanCustomName])) continue;
+  return db
+    .select({
+      accountId: messageFact.accountId,
+      chatId: messageFact.chatId,
+      fanUsername: chatCoverage.fanUsername,
+      fanName: chatCoverage.fanName,
+      fanCustomName: chatCoverage.fanCustomName,
+      fanMessages: sql<number>`(count(*) filter (where ${messageFact.direction} = 'inbound'))::int`,
+      dmMessages: sql<number>`(count(*) filter (where ${dm}))::int`,
+      massMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isMass}))::int`,
+      automatedMessages: sql<number>`(count(*) filter (where ${outbound} and ${messageFact.isAutomated} and not ${messageFact.isMass}))::int`,
+      ppvSent: sql<number>`(count(*) filter (where ${ppvDm}))::int`,
+      ppvOpened: sql<number>`(count(*) filter (where ${ppvDm} and ${messageFact.isOpened}))::int`,
+      tips: sql<number>`(count(*) filter (where ${tip}))::int`,
+      tipCents: sql<number>`coalesce(sum(${messageFact.tipCents}) filter (where ${tip}), 0)::int`,
+      firstAt: min(messageFact.createdAt),
+      lastAt: max(messageFact.createdAt),
+      lastFanAt: sql<Date | null>`max(${messageFact.createdAt}) filter (where ${messageFact.direction} = 'inbound')`.mapWith(messageFact.createdAt),
+    })
+    .from(messageFact)
+    .leftJoin(chatCoverage, coverage)
+    .where(inScope(messageFact, scope))
+    .groupBy(messageFact.accountId, messageFact.chatId, chatCoverage.fanUsername, chatCoverage.fanName, chatCoverage.fanCustomName);
+}
+
+const NO_MESSAGES = { fanMessages: 0, dmMessages: 0, massMessages: 0, automatedMessages: 0, ppvSent: 0, ppvOpened: 0, tips: 0, tipCents: 0 };
+/** Newest first by ISO time (they sort as strings); null (no fan message, or no message) last. */
+const newer = (a: string | null, b: string | null) => (a === b ? 0 : a === null ? 1 : b === null ? -1 : a < b ? 1 : -1);
+
+/**
+ * One row per fan with a message in `[from, to)`, plus each other payer of the range (a booked sale with a known fan;
+ * message counts 0, times null), with `fanSpends`'s spend and details. Most gross in the range first, then the latest
+ * fan message (fans who wrote nothing in the range last), then the latest message; at most `limit`; `total` counts
+ * them all. `search` (trimmed, a leading `@` dropped, any case) keeps the fans whose username, name, custom name or
+ * chat id contains it. Deleted (unsent) messages count.
+ */
+export async function scopedFans(scope: Scope, limit: number, search = ''): Promise<{ total: number; items: StatsFan[] }> {
+  const [chats, spends] = await Promise.all([fanMessages(scope), fanSpends(scope)]);
+  const spend = new Map(spends.map((p) => [`${p.accountId}:${p.fanId}`, p]));
+  const items: (StatsFan & { names: (string | null)[] })[] = chats.map(({ fanName, fanCustomName, ...r }) => {
     const p = spend.get(`${r.accountId}:${r.chatId}`);
-    items.push({
+    return {
       ...r,
+      name: fanName ?? p?.name ?? null,
       firstAt: r.firstAt!.toISOString(),
       lastAt: r.lastAt!.toISOString(),
       lastFanAt: r.lastFanAt?.toISOString() ?? null,
@@ -146,29 +164,20 @@ export async function scopedFans(scope: Scope, limit: number, search?: string): 
       grossAllTime: p?.grossAllTime ?? 0,
       isDeleted: p?.isDeleted ?? false,
       hasChat: true,
-    });
+      names: [r.fanUsername, fanName, fanCustomName],
+    };
+  });
+  const listed = new Set(items.map((f) => `${f.accountId}:${f.chatId}`));
+  for (const p of spends) {
+    if (!p.paidInRange || listed.has(`${p.accountId}:${p.fanId}`)) continue;
+    const { accountId, fanId, username, name, gross, grossAllTime, isDeleted, hasChat } = p;
+    const times = { firstAt: null, lastAt: null, lastFanAt: null };
+    items.push({ accountId, chatId: fanId, fanUsername: username, name, ...NO_MESSAGES, ...times, gross, grossAllTime, isDeleted, hasChat, names: [username, name] });
   }
-  for (const p of spend.values()) {
-    if (!p.paidInRange || p.hasChat || (q && !matches(q, p.fanId, [p.username, p.name]))) continue;
-    const none = { fanMessages: 0, dmMessages: 0, massMessages: 0, automatedMessages: 0, ppvSent: 0, ppvOpened: 0, tips: 0, tipCents: 0 };
-    items.push({
-      accountId: p.accountId,
-      chatId: p.fanId,
-      fanUsername: p.username,
-      ...none,
-      firstAt: null,
-      lastAt: null,
-      lastFanAt: null,
-      gross: p.gross,
-      grossAllTime: p.grossAllTime,
-      isDeleted: p.isDeleted,
-      hasChat: false,
-    });
-  }
-  // ISO times sort as strings, newest first; null (no fan message, or no message) last.
-  const newer = (a: string | null, b: string | null) => (a === b ? 0 : a === null ? 1 : b === null ? -1 : a < b ? 1 : -1);
-  items.sort((a, b) => b.gross - a.gross || newer(a.lastFanAt, b.lastFanAt) || newer(a.lastAt, b.lastAt) || a.accountId - b.accountId || a.chatId - b.chatId);
-  return { total: items.length, items: items.slice(0, limit) };
+  const q = search.trim().replace(/^@/, '').toLowerCase();
+  const shown = items.filter((f) => !q || f.names.some((n) => n?.toLowerCase().includes(q)) || String(f.chatId).includes(q));
+  shown.sort((a, b) => b.gross - a.gross || newer(a.lastFanAt, b.lastFanAt) || newer(a.lastAt, b.lastAt) || a.accountId - b.accountId || a.chatId - b.chatId);
+  return { total: shown.length, items: shown.slice(0, limit).map(({ names: _names, ...f }) => f) };
 }
 
 type MessageScope = Scope & { chatId?: number; direction: 'in' | 'out' | 'all' };

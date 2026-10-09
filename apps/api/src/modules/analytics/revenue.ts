@@ -1,8 +1,8 @@
-import { and, desc, isNotNull, max, sql } from 'drizzle-orm';
+import { and, max, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { messageFact, purchaseFact } from '../../db/schema.js';
 import type { StatsRevenue } from '../../contracts.js';
-import { booked, dm, inScope, ppvDm, txStatus, type Scope } from './messages.js';
+import { booked, dm, fanSpends, inScope, ppvDm, txStatus, type FanSpend, type Scope } from './messages.js';
 
 // Revenue (`GET /v1/stats/revenue`): the workspace's stored booked transactions (`purchase_fact`) and PPV sends
 // (`message_fact`) in a range.
@@ -31,7 +31,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   // Fans are counted only on accounts with a booked sale in the range: an account whose sales were never read would
   // count fans against no payers. DMs and PPVs count on every account.
   const salesAccount = sql`${messageFact.accountId} in (select distinct ${purchaseFact.accountId} from ${purchaseFact} where ${sales})`;
-  const [groups, [messages]] = await Promise.all([
+  const [groups, [messages], spends] = await Promise.all([
     // `day` is grouped by its output name: the timezone parameter would make a repeated expression differ.
     db
       .select({
@@ -59,6 +59,7 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
       })
       .from(messageFact)
       .where(inScope(messageFact, scope)),
+    fanSpends(scope),
   ]);
 
   const totals = zero();
@@ -85,23 +86,10 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
   }
 
   const top = [...payers.values()].sort((a, b) => b.gross - a.gross || a.accountId - b.accountId || a.fanId - b.fanId).slice(0, TOP_PAYERS);
-  // Per payer, the newest transaction with a name (else the newest), with OF's isDeleted on it, and whether the fan's
-  // chat is stored.
-  const user = sql`${purchaseFact.raw}->'user'`;
-  const name = sql<string | null>`coalesce(nullif(${user}->>'name', ''), nullif(${user}->>'username', ''))`;
-  const details = await db
-    .selectDistinctOn([purchaseFact.accountId, purchaseFact.fanId], {
-      accountId: purchaseFact.accountId,
-      fanId: purchaseFact.fanId,
-      name,
-      isDeleted: sql<boolean>`coalesce((${user}->>'isDeleted')::boolean, false)`,
-      hasChat: sql<boolean>`exists (select 1 from ${messageFact} where ${messageFact.teamId} = ${purchaseFact.teamId} and ${messageFact.accountId} = ${purchaseFact.accountId} and ${messageFact.chatId} = ${purchaseFact.fanId})`,
-    })
-    .from(purchaseFact)
-    .where(and(sales, isNotNull(purchaseFact.fanId)))
-    .orderBy(purchaseFact.accountId, purchaseFact.fanId, sql`${name} is null`, desc(purchaseFact.createdAt));
-  // Every payer has a detail row: both read the same transactions.
-  const detail = new Map(details.map((d) => [`${d.accountId}:${d.fanId}`, d]));
+  // Per payer, the name and isDeleted on the newest transaction of the range with a name (else the newest), and whether
+  // the fan's chat is stored: `fanSpends`, as on the fans list. Every payer has a row: both read the range's booked sales.
+  const detail = new Map<string, FanSpend>();
+  for (const d of spends) if (d.paidInRange) detail.set(`${d.accountId}:${d.fanId}`, d);
   const withoutChat = { payers: 0, gross: 0 };
   for (const [key, p] of payers) {
     if (detail.get(key)!.hasChat) continue;
@@ -127,8 +115,8 @@ export async function scopedRevenue(scope: Scope, days: string[], tz: string): P
     byDay: [...byDay].map(([day, s]) => ({ day, ...s })),
     ppv: { sent: ppvSent, opened: ppvOpened, rate: percent(ppvOpened, ppvSent) },
     topPayers: top.map(({ lastAt, ...p }) => {
-      const { name, isDeleted, hasChat } = detail.get(`${p.accountId}:${p.fanId}`)!;
-      return { ...p, name, isDeleted, lastAt: lastAt.toISOString(), hasChat };
+      const { name, username, isDeleted, hasChat } = detail.get(`${p.accountId}:${p.fanId}`)!;
+      return { ...p, name: name ?? username, isDeleted, lastAt: lastAt.toISOString(), hasChat };
     }),
     withoutChat,
   };

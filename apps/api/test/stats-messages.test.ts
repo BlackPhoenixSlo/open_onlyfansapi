@@ -139,6 +139,7 @@ describe('stats fans', () => {
         accountId,
         chatId,
         fanUsername,
+        name: null,
         fanMessages,
         dmMessages,
         massMessages,
@@ -168,7 +169,7 @@ describe('stats fans', () => {
     expect(await fans('from=2026-08-01&to=2026-08-31')).toEqual([[A1, 3001]]);
   });
 
-  it('carries booked spend in the range and all time, most in the range first; lists payers with no stored chat; searches', async () => {
+  it('carries booked spend in the range and all time, most in the range first; lists the payers without a message in the range; searches', async () => {
     const tx = (txId: string, accountId: number, fanId: number | null, gross: number, at: string, status: string, user?: Record<string, unknown>) => ({
       teamId: teamA,
       accountId,
@@ -191,6 +192,7 @@ describe('stats fans', () => {
       tx('s6', A1, 3010, 400, '08-20T12:00', 'done', { id: 3010, username: 'old_payer' }), // no chat, paid before the range only: not listed
       tx('s7', A1, null, 800, '09-02T14:00', 'done'), // unknown fan
       tx('s8', A2, 4009, 50, '09-03T12:00', 'done', { id: 4009, username: 'other' }), // no chat, on account A2
+      tx('s9', A1, 3002, 300, '08-25T12:00', 'done', { id: 3002, username: 'fan_b' }), // a stored chat, no message in August
     ]);
     try {
       const body = (await get(`/v1/stats/fans?${RANGE}`)).json();
@@ -209,10 +211,18 @@ describe('stats fans', () => {
         [A1, 3009, 600, 600, true, false],
         [A1, 3001, 500, 500, false, true],
         [A2, 4009, 50, 50, false, false],
-        [A1, 3002, 0, 0, false, true],
+        [A1, 3002, 0, 300, false, true],
         [A2, 4001, 0, 0, false, true],
       ]);
-      expect(body.items[1]).toMatchObject({ fanUsername: 'gone', fanMessages: 0, dmMessages: 0, ppvSent: 0, firstAt: null, lastAt: null, lastFanAt: null });
+      expect(body.items[1]).toMatchObject({ fanUsername: 'gone', name: 'Gone Fan', fanMessages: 0, dmMessages: 0, ppvSent: 0, firstAt: null, lastAt: null, lastFanAt: null });
+      // A payer of the range is listed even when its chat is stored but has no message in the range (hasChat true).
+      const august = (await get('/v1/stats/fans?from=2026-08-01&to=2026-08-31')).json();
+      expect(august.items.map(spend)).toEqual([
+        [A1, 3003, 900, 1600, false, true],
+        [A1, 3010, 400, 400, false, false],
+        [A1, 3002, 300, 300, false, true],
+        [A1, 3001, 0, 500, false, true],
+      ]);
 
       // Search: trimmed, any case, a leading @; username (chat list or the payer's transaction), name or chat id.
       expect(await fans(`${RANGE}&search=${encodeURIComponent('  @FAN_A ')}`)).toEqual([[A1, 3001]]);

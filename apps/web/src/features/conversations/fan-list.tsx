@@ -13,23 +13,26 @@ const SEARCH_DELAY_MS = 300;
 /**
  * The fans of `fans`, most spend in the range first; each with a stored chat links to its thread, `selected`
  * highlighted. A payer without a stored chat has no link. The search box sends its text to `onSearch` (the API
- * matches it) once typing pauses.
+ * trims and matches it) once typing pauses; `search` is the text `fans` was asked for.
  */
 export function FanList({
   fans,
+  search,
   selected,
   onSearch,
 }: {
   fans: UseQueryResult<StatsFans>;
+  search: string;
   selected: { accountId?: number; chatId?: number };
   onSearch: (search: string) => void;
 }) {
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState(search);
   useEffect(() => {
-    const timer = setTimeout(() => onSearch(filter.trim()), SEARCH_DELAY_MS);
+    const timer = setTimeout(() => onSearch(filter), SEARCH_DELAY_MS);
     return () => clearTimeout(timer);
   }, [filter, onSearch]);
-  const searched = filter.trim();
+  // Labels name the search the shown list answers; while a new one loads, the previous list stays up (placeholder).
+  const searched = fans.isPlaceholderData ? '' : search.trim();
   const cut = fans.data && fans.data.total > fans.data.items.length;
   const listed = fans.data ? (cut ? `${fans.data.items.length} of ${fans.data.total} fans` : `${fans.data.total} fans`) : '';
 
@@ -39,7 +42,7 @@ export function FanList({
         <Input type="search" placeholder="Search username, name or chat id" aria-label="Search fans" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {fans.data && (
           <p className="text-xs text-muted-foreground">
-            {searched ? 'matching: ' : ''}
+            {fans.isPlaceholderData ? 'searching… ' : searched ? `matching “${searched}”: ` : ''}
             {listed}, most spend in the range first
           </p>
         )}
@@ -72,7 +75,7 @@ export function FanList({
                     {f.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground" title={f.lastFanAt ? new Date(f.lastFanAt).toLocaleString() : undefined}>
-                    {!f.hasChat ? 'no stored chat' : f.lastFanAt ? formatAgo(f.lastFanAt) : 'fan silent'}
+                    {!f.hasChat ? 'no stored chat' : f.lastAt === null ? 'no message in range' : f.lastFanAt ? formatAgo(f.lastFanAt) : 'fan silent'}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -81,7 +84,7 @@ export function FanList({
                       spent {formatMoney(f.gross)} · all time {formatMoney(f.grossAllTime)}
                     </span>
                   )}
-                  {f.hasChat && <span>{f.fanMessages} fan msgs</span>}
+                  {f.lastAt !== null && <span>{f.fanMessages} fan msgs</span>}
                   {f.ppvSent > 0 && (
                     <span title="PPVs bought / sent (not mass)">
                       PPV {f.ppvOpened}/{f.ppvSent}

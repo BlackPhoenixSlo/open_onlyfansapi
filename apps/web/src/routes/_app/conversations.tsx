@@ -55,7 +55,7 @@ function Conversations() {
 
       <div className="grid gap-4 lg:h-[calc(100vh-12rem)] lg:min-h-[32rem] lg:grid-cols-[22rem_minmax(0,1fr)]">
         <div className="flex h-[28rem] min-h-0 flex-col rounded-xl border bg-card lg:h-auto">
-          <FanList fans={fans} selected={{ accountId: chatAccountId, chatId }} onSearch={setFanSearch} />
+          <FanList fans={fans} search={fanSearch} selected={{ accountId: chatAccountId, chatId }} onSearch={setFanSearch} />
         </div>
 
         <div className="flex h-[36rem] min-h-0 flex-col rounded-xl border bg-card lg:h-auto">

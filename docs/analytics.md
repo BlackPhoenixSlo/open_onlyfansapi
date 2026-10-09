@@ -24,7 +24,7 @@ All routes are under `/v1` and take an API key (`Authorization: Bearer ...`) or 
 | `GET /v1/stats/config` | The workspace's windows and timezone, and `freshness` ([Live updates](#live-updates)). The first read creates the default row |
 | `PUT /v1/stats/config` | Changes the given fields only and bumps `version`. Needs a `write` key |
 | `GET /v1/stats/scripts` | Script candidates sent in the range, most sent first, with sends, reply rate and exact variants |
-| `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, and per payer of the range with no stored chat, most spend in the range first, then the latest fan message (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), `ppvSent`, `ppvOpened`, `tips`, `tipCents`, and `gross`, `grossAllTime`, `isDeleted`, `hasChat` ([below](#stored-messages-and-export)). `search` keeps the fans whose username, name, custom name or chat id contains it. `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
+| `GET /v1/stats/fans` | One row per fan (chat) with a stored message in the range, and per payer of the range without one, most spend in the range first, then the latest fan message (fans who wrote nothing in the range last), then the latest message: `accountId`, `chatId` (the fan's user id), `fanUsername` (from the chat list; null when not seen), `fanMessages`, `dmMessages` (outbound, not mass, not automated), `massMessages`, `automatedMessages` (outbound, automated, not mass; the four counts sum to all the fan's messages in the range), `firstAt`, `lastAt`, `lastFanAt` (null when the fan wrote nothing in the range), `ppvSent`, `ppvOpened`, `tips`, `tipCents`, and `name`, `gross`, `grossAllTime`, `isDeleted`, `hasChat` ([below](#stored-messages-and-export)). `search` keeps the fans whose username, name, custom name or chat id contains it. `total` is the number of fans before `limit` ([Stored messages and export](#stored-messages-and-export)) |
 | `GET /v1/stats/messages` | The stored messages, by account, chat, time and message id, each with the fields listed in [Stored messages and export](#stored-messages-and-export); `truncated` is true when `limit` cut the list, and then `nextCursor`, passed as `cursor`, returns the next page (`400 invalid_cursor` for a malformed one). `format=csv` streams every message in the range as `text/csv` (snake_case columns) |
 | `GET /v1/stats/revenue` | Gross and net by kind and by day, payers, fan CVR, the golden ratio, DM PPV unlocks, and the top 50 payers, from the stored transactions and messages ([Revenue](#revenue)) |
 | `POST /v1/stats/backfill` | Body `{ accountId, days? }` (`days` 1 to 366, default 30). Claims the account for the workspace and backfills `now - days` to now in the background, without CSVs; `202 { runId }`. Needs a `write` key or the dashboard session |
@@ -117,15 +117,16 @@ a PPV bought or a tip sent outside the stored messages is not in them.
 
 Spend comes from the stored transactions (`purchase_fact`), booked only, as in [Revenue](#revenue) (OF's status `done`
 or `loading`), in cents: `gross` in the range and `grossAllTime` over every stored transaction of the fan on that
-account; `isDeleted` is OF's `user.isDeleted` on the fan's newest booked transaction with a name (else the newest), as
-in `topPayers`, false with none. The list is sorted by `gross` first. A payer of the range (a booked sale with a known
-fan) with no stored message of that chat at any time is listed too, with `hasChat` false, `fanUsername` from the
-transaction's `user`, every count 0 and `firstAt`/`lastAt` null; a payer whose chat is stored but has no message in the
-range is not listed. `search` (trimmed, a leading `@` dropped, any case; empty = all) keeps the fans whose username,
-name or custom name (from the chat list; for a payer row, from the transaction) or chat id contains it; `total` counts
-the matches. The Conversations page lists them with their spend, "deleted account" and, for a payer without a chat,
-"no stored chat" and no thread link; its search box sends `search`. The Stats page's Fans card shows the same rows
-with a Spend column.
+account. `isDeleted` and, for a fan the chat list gives no name, `name` come from the newest booked transaction in the
+range with a name (else the newest in the range), as in `GET /v1/stats/revenue`'s `topPayers` (one shared query);
+false and null when the fan bought nothing in the range. The list is sorted by `gross` first. Every payer of the range
+(a booked sale with a known fan) without a message in the range is listed too, with `fanUsername` and `name` from the
+transaction's `user`, every count 0, `firstAt`/`lastAt` null, and `hasChat` true when the chat has stored messages at
+another time (false when none). `search` (trimmed, a leading `@` dropped, any case; empty = all) keeps the fans whose
+username, name or custom name (from the chat list; for a payer row, from the transaction) or chat id contains it;
+`total` counts the matches. The Conversations page lists them with their spend, "deleted account", the name when there
+is no username, and "no stored chat" without a thread link when `hasChat` is false; its search box sends `search`. The
+Stats page's Fans card shows the same rows with a Spend column.
 
 ### Revenue
 

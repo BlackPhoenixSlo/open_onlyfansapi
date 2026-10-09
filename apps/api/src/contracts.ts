@@ -641,16 +641,18 @@ export const statsFansQuery = z.object({
 export type StatsFansQuery = z.input<typeof statsFansQuery>;
 
 /**
- * One fan (chat) with a stored message in the range, or a payer of the range with no stored chat (`hasChat` false:
- * counts 0, times null); the counts split the range's messages, so they sum to all of them. Times are ISO; money is
- * booked sales (as `GET /v1/stats/revenue`), in cents.
+ * One fan (chat) with a stored message in the range, or a payer of the range without one (counts 0, times null); the
+ * counts split the range's messages, so they sum to all of them. Times are ISO; money is booked sales (as
+ * `GET /v1/stats/revenue`), in cents.
  */
 export const statsFan = z.object({
   accountId: z.number().int(),
   /** The fan's user id (OF's chat id). */
   chatId: z.number().int(),
-  /** From the chat list; null when not seen. */
+  /** From the chat list; null when not seen. On a payer row without a message in the range, from the transaction (below). */
   fanUsername: z.string().nullable(),
+  /** The fan's name from the chat list, else OF's `user.name` on the fan's newest booked transaction in the range with a name; null when neither has one. */
+  name: z.string().nullable(),
   fanMessages: z.number().int(),
   /** Outbound, not mass, not automated. */
   dmMessages: z.number().int(),
@@ -665,7 +667,7 @@ export const statsFan = z.object({
   tips: z.number().int(),
   /** Their amounts (OF's `tipAmount`), in cents. */
   tipCents: z.number().int(),
-  /** Null on a payer without a stored chat. */
+  /** Null on a payer without a message in the range. */
   firstAt: z.string().nullable(),
   lastAt: z.string().nullable(),
   /** The fan's newest message in the range; null when the fan wrote nothing in it. */
@@ -674,9 +676,9 @@ export const statsFan = z.object({
   gross: z.number().int(),
   /** The fan's booked gross over every stored transaction. */
   grossAllTime: z.number().int(),
-  /** OF's `user.isDeleted` on the fan's newest booked transaction with a name (else the newest): the fan deleted their OF account. False with no transaction. */
+  /** OF's `user.isDeleted` on the fan's newest booked transaction in the range with a name (else the newest in the range), as in `GET /v1/stats/revenue`: the fan deleted their OF account. False with none. */
   isDeleted: z.boolean(),
-  /** A message of the fan's chat is stored; false only on a payer of the range with none, any time. */
+  /** A message of the fan's chat is stored, any time (a payer row can have one outside the range). */
   hasChat: z.boolean(),
 });
 export type StatsFan = z.infer<typeof statsFan>;
