@@ -80,7 +80,7 @@ openers and scripts (the message was sent and seen); the export shows `deletedAt
 The owner reports Infloww's fan-reply export is poor. To export the fans' own messages, call
 `GET /v1/stats/messages?from=2026-09-01&to=2026-09-30&direction=in&format=csv`, with `accountId` and `chatId` to narrow
 it; `direction=all` gives the whole conversation. The Stats page's Fans card has the same downloads, for the page's
-account and range and per fan, and the Conversations page shows one fan's thread (up to 366 days ending at the range's end) with that fan's CSV. The CSV is plain UTF-8 with LF line endings, like the metric CSV; fields are quoted
+account and range and per fan, and the Conversations page shows one fan's thread (up to 366 days ending at the range's end) with that fan's CSV; it hides by default the mass messages not bought as of the last read (`isMass`, unless priced and `isOpened`; both flags as stored by the last backfill that read the message, or by the live event that stored it). The CSV is plain UTF-8 with LF line endings, like the metric CSV; fields are quoted
 only when they hold a comma, quote or line break, and the text is not otherwise altered. pandas reads it directly
 (`pd.read_csv`); in Excel, open it with Data > From Text/CSV and pick UTF-8, so emoji and accents show. `text` is the
 message as plain text: block and break tags (`p`, `div`, `br`, `li`, `tr`, `h1` to `h6`) become a space, other tags
@@ -90,9 +90,9 @@ at a time.
 
 Each message carries, as JSON fields (CSV columns in snake_case, in this order): `accountId`, `chatId`, `fanUsername`,
 `messageId`, `createdAt`, `direction` (`inbound` = the fan's), `text`, `priceCents`, `isFree`, `isOpened`, `isTip`,
-`tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `isReply`,
-`isLiked`, `deletedAt` (ISO time, or null; empty in the CSV). JSON also carries `automatedReason` (`welcome`, `automation`, or
-null when not automated; not a CSV column). `isOpened` and `tipCents` are stored columns (the one-time fill
+`tipCents`, `mediaCount`, `photos`, `videos`, `gifs`, `audios`, `hasPreview`, `isMass`, `isAutomated`, `automatedReason`
+(`welcome`, `automation`, or null when not automated; empty in the CSV), `isReply`, `isLiked`, `deletedAt` (ISO time, or
+null; empty in the CSV). `isOpened` and `tipCents` are stored columns (the one-time fill
 of migration 0013 handles JSON numbers; rows are re-derived by the next backfill that reads them); the other detail fields are read from OF's stored message object
 (`raw`) when the export runs, so no backfill is needed for messages already stored:
 
@@ -126,7 +126,7 @@ and a row already stored is kept. The live mapper has no mass history, so a live
 `isFromQueue` is true. That is right on every broadcast copy (6,512 of 6,512 stored mass rows, 2026-10-09) and wrong
 on single-chat queued sends: of the 733 stored non-mass outbound rows with `isFromQueue` true, 683 share a queue id
 across 2 to 321 chats (broadcasts outside the mass history a run read) and 50 (0.19% of 26,133 DMs) are queued single DMs, which
-count as mass until a backfill over their range re-derives the row from the mass history. The live mapper has no
+count as mass until a backfill over their range re-derives the row from the mass history; until then the Conversations page hides such a DM with the mass messages not bought. A live row's `isOpened` is OF's flag when the event arrived (false on a PPV just sent) and no purchase event updates it, so a PPV bought since reads not bought until a backfill reads the message again. The live mapper has no
 welcome message or automation texts either, so no live message counts as automated until then. Scripts (the `script` table) and `chat_coverage` are backfill-only; the metrics read the new rows
 on the next request. `GET /v1/stats/config` returns `freshness`: `lastLiveAt` (the newest message event's time, from
 the event ledger) and `liveEvents24h`, over the claimed accounts in the key's scope; the Stats page shows both under

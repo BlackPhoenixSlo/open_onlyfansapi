@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ApiError } from '@/lib/api';
 
 export function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-muted ${className}`} />;
@@ -135,13 +136,17 @@ export function Empty({ title, children }: { title: string; children: ReactNode 
   );
 }
 
-/** A stats page for a workspace not linked to its upstream team: `children` says what the page reads. */
-export function WorkspaceNotLinked({ title, children }: { title: string; children: ReactNode }) {
+/** Whether any of `queries` failed because the workspace is not linked to its upstream team. */
+export const isTeamNotLinked = (queries: { error: Error | null }[]) =>
+  queries.some((q) => q.error instanceof ApiError && q.error.code === 'team_not_linked');
+
+/** A stats page for a workspace not linked to its upstream team; the page shows `subject`, e.g. "each fan's messages". */
+export function WorkspaceNotLinked({ title, subject }: { title: string; subject: string }) {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">{title}</h1>
       <Empty title="Workspace not linked">
-        {children} Link the workspace (
+        This page shows {subject} from what the analytics backfill stored for this workspace. Link the workspace (
         <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>
         ), then connect the account in{' '}
         <Link to="/accounts" className="underline">

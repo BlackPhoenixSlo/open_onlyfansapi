@@ -254,6 +254,12 @@ describe('webhooks API', () => {
       headers: bearer(readKey),
     });
     expect(page2.json()).toMatchObject({ items: [{ id: first, eventType: 'webhook.test', status: 'pending', attempts: 0 }], nextCursor: null });
+    const forged = await app.inject({
+      method: 'GET',
+      url: `/v1/webhooks/${endpoint.id}/deliveries?cursor=${Buffer.from('["1","whd_x"]').toString('base64url')}`,
+      headers: bearer(readKey),
+    });
+    expect([forged.statusCode, forged.json().error.code]).toEqual([400, 'invalid_cursor']);
     const none = await app.inject({ method: 'GET', url: `/v1/webhooks/${endpoint.id}/deliveries?status=failed`, headers: bearer(readKey) });
     expect(none.json().items).toEqual([]);
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { chatCoverage, messageFact } from '../../db/schema.js';
 import type { StatsFan, StatsMessage } from '../../contracts.js';
-import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
+import { cursorTime, keysetCursor } from '../../lib/cursor.js';
 import { messageDetail, plainText } from './derive.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`, `GET /v1/stats/messages`): read from `message_fact` of the
@@ -30,6 +30,7 @@ export const MESSAGE_EXPORT_COLUMNS = [
   'has_preview',
   'is_mass',
   'is_automated',
+  'automated_reason',
   'is_reply',
   'is_liked',
   'deleted_at',
@@ -150,30 +151,29 @@ const toMessage = ({ createdAt, deletedAt, raw, ...r }: Awaited<ReturnType<typeo
 });
 
 /** The `cursor` of `GET /v1/stats/messages`: account, chat, time and message id of the last row. */
-const cursorKey = z.tuple([z.number().int(), z.number().int(), cursorTime, z.number().int()]);
-
-/** A row's `nextCursor`. */
-const cursorOf = (c: Cursor) => encodeCursor([c.accountId, c.chatId, c.createdAt.toISOString(), c.messageId]);
-
-/** Parses a `cursor`; 400 `invalid_cursor` when it is not one. */
-export function messageCursor(cursor: string): Cursor {
-  const [accountId, chatId, at, messageId] = decodeCursor(cursor, cursorKey);
-  return { accountId, chatId, createdAt: new Date(at), messageId };
-}
+const messageCursor = keysetCursor(
+  z.tuple([z.number().int(), z.number().int(), cursorTime, z.number().int()]),
+  (c: Cursor) => [c.accountId, c.chatId, c.createdAt.toISOString(), c.messageId] as const,
+);
 
 /**
- * The first `limit` messages in `[from, to)` after `after`, by account, chat, time and message id; `truncated` when
- * more match, and then `nextCursor` continues after the last item.
+ * The first `limit` messages in `[from, to)` after `cursor` (a previous page's `nextCursor`; 400 `invalid_cursor` when
+ * it is not one), by account, chat, time and message id; `truncated` when more match, and then `nextCursor` continues
+ * after the last item.
  */
 export async function scopedMessages(
   scope: MessageScope,
   limit: number,
-  after: Cursor | null = null,
+  cursor: string | undefined,
 ): Promise<{ truncated: boolean; nextCursor: string | null; items: StatsMessage[] }> {
+  let after: Cursor | null = null;
+  if (cursor) {
+    const [accountId, chatId, at, messageId] = messageCursor.decode(cursor);
+    after = { accountId, chatId, createdAt: new Date(at), messageId };
+  }
   const { rows } = await messagePage(scope, after, limit + 1);
-  const page = rows.slice(0, limit);
-  const truncated = rows.length > limit;
-  return { truncated, nextCursor: truncated ? cursorOf(page.at(-1)!) : null, items: page.map(toMessage) };
+  const { items, nextCursor } = messageCursor.page(rows, limit);
+  return { truncated: nextCursor !== null, nextCursor, items: items.map(toMessage) };
 }
 
 /** Every message in `[from, to)` in the same order, `messageExport.batchSize` rows per query. */

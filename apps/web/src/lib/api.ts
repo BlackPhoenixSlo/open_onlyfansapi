@@ -200,6 +200,9 @@ export const statsScriptsQuery = (params: StatsRange) =>
     queryFn: () => api<StatsScripts>(`/v1/stats/scripts?${qs(params)}`),
   });
 
+/** The most fans `GET /v1/stats/fans` returns (contracts.ts `statsFansQuery`, `limit` `.max(1000)`). */
+export const FAN_LIMIT = 1000;
+
 /** `limit` defaults to the API's 200. */
 export const statsFansQuery = (params: StatsRange & { limit?: number }) =>
   queryOptions({
@@ -211,28 +214,38 @@ export const statsFansQuery = (params: StatsRange & { limit?: number }) =>
 export const statsMessagesCsvPath = (params: StatsRange & { chatId?: number; direction: 'in' | 'all' }) =>
   `/v1/stats/messages?${qs({ ...params, format: 'csv' })}`;
 
-/** Rows per page when reading a whole conversation: the API's JSON maximum. */
+/** Rows per page when reading a whole conversation (contracts.ts `statsMessagesQuery`, `limit` `.max(5000)`). */
 const CONVERSATION_PAGE = 5000;
+
+/** The longest range a conversation is read over, in days (the API's `MAX_DAYS`, modules/stats/scope.ts). */
+export const THREAD_DAYS = 366;
+
+/** One fan's chat: `from`/`to` days (API defaults when absent), the account and the chat. */
+export type ConversationParams = { from?: string; to?: string; accountId: number; chatId: number };
+
+/** A whole conversation: the messages response without the paging fields. */
+export type Conversation = Omit<StatsMessages, 'truncated' | 'nextCursor'>;
 
 /**
  * One fan's messages in the range, oldest first: every page of `GET /v1/stats/messages` (`cursor` = `nextCursor`).
  * Not refetched on focus, which would re-run every page.
  */
-export const statsConversationQuery = (params: StatsRange & { chatId: number }) =>
+export const statsConversationQuery = (params: ConversationParams) =>
   queryOptions({
     queryKey: ['stats', 'conversation', params],
-    queryFn: async ({ signal }): Promise<StatsMessages> => {
+    queryFn: async ({ signal }): Promise<Conversation> => {
       const items: StatsMessages['items'] = [];
       let cursor: string | undefined;
       for (;;) {
         const path = `/v1/stats/messages?${qs({ ...params, direction: 'all', limit: CONVERSATION_PAGE, cursor })}`;
-        const page = await api<StatsMessages>(path, { signal });
+        const { truncated: _truncated, nextCursor, ...page } = await api<StatsMessages>(path, { signal });
         items.push(...page.items);
-        if (!page.nextCursor) return { ...page, items };
-        cursor = page.nextCursor;
+        if (!nextCursor) return { ...page, items };
+        cursor = nextCursor;
       }
     },
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
 /** The account's last analytics backfill run (`POST /v1/stats/backfill`), or `idle`. */

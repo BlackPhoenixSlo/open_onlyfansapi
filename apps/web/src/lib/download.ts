@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 /** Saves a CSV from the API as `filename`. A plain link would not send `x-dashboard`, so the session would not authorise it. */
-export async function downloadCsv(path: string, filename: string) {
+async function downloadCsv(path: string, filename: string) {
   let blob: Blob;
   try {
     const res = await fetch(path, { headers: { 'x-dashboard': '1' }, credentials: 'include' });
@@ -23,7 +23,7 @@ export async function downloadCsv(path: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url));
 }
 
-/** `downloadCsv` with a `downloading` flag, to disable the buttons while one runs. */
+/** `download(path, filename)` saves a CSV from the API; `downloading` is set while one runs, to disable the buttons. */
 export function useCsvDownload() {
   const [downloading, setDownloading] = useState(false);
   async function download(path: string, filename: string) {

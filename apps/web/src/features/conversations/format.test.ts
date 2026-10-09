@@ -1,6 +1,6 @@
-import type { StatsFan, StatsMessage } from '@api/contracts';
+import type { StatsMessage } from '@api/contracts';
 import { describe, expect, it } from 'vitest';
-import { byDay, fanName, isHiddenMass, matchesFan, messageBadges, noTextLabel } from './format';
+import { byDay, isHiddenMass, matchesFan, messageBadges, noTextLabel } from './format';
 
 const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   accountId: 1,
@@ -30,11 +30,10 @@ const msg = (over: Partial<StatsMessage> = {}): StatsMessage => ({
   ...over,
 });
 
-const fan = (fanUsername: string | null, chatId: number) => ({ fanUsername, chatId }) as StatsFan;
+const fan = (fanUsername: string | null, chatId: number) => ({ fanUsername, chatId });
 
 describe('conversation format', () => {
-  it('names and filters fans by username or chat id', () => {
-    expect([fanName(fan('Ann', 7)), fanName(fan(null, 7))]).toEqual(['@Ann', 'chat 7']);
+  it('filters fans by username or chat id', () => {
     expect(matchesFan(fan('Ann_B', 123), '@ann')).toBe(true);
     expect(matchesFan(fan(null, 123), '12')).toBe(true);
     expect(matchesFan(fan(null, 123), 'ann')).toBe(false);
@@ -51,8 +50,8 @@ describe('conversation format', () => {
   it('badges PPV, tip, media, mass, automated and unsent', () => {
     const labels = (m: StatsMessage) => messageBadges(m).map((b) => b.label);
     expect(labels(msg())).toEqual([]);
-    expect(labels(msg({ priceCents: 1250, isOpened: true, mediaCount: 3, photos: 1, videos: 2 }))).toEqual(['PPV $12.50 · opened', '1 photo · 2 videos']);
-    expect(labels(msg({ priceCents: 300, mediaCount: 2 }))).toEqual(['PPV $3.00 · unopened', '2 media']);
+    expect(labels(msg({ priceCents: 1250, isOpened: true, mediaCount: 3, photos: 1, videos: 2 }))).toEqual(['PPV $12.50 · bought', '1 photo · 2 videos']);
+    expect(labels(msg({ priceCents: 300, mediaCount: 2 }))).toEqual(['PPV $3.00 · not bought', '2 media']);
     expect(labels(msg({ isTip: true, tipCents: 500 }))).toEqual(['Tip $5.00']);
     expect(labels(msg({ isMass: true, isAutomated: true, automatedReason: 'welcome', deletedAt: '2026-09-02T00:00:00.000Z' }))).toEqual([
       'Mass',

@@ -1,11 +1,8 @@
 import type { StatsFan, StatsMessage } from '@api/contracts';
 import { formatMoney } from '@/lib/utils';
 
-/** `@username`, else `chat <id>` when the chat list never named the fan. */
-export const fanName = (f: { fanUsername: string | null; chatId: number }) => (f.fanUsername ? `@${f.fanUsername}` : `chat ${f.chatId}`);
-
 /** The fan list filter: `q` (a leading `@` ignored, any case) in the username or the chat id. */
-export function matchesFan(f: StatsFan, q: string): boolean {
+export function matchesFan(f: Pick<StatsFan, 'fanUsername' | 'chatId'>, q: string): boolean {
   const needle = q.trim().replace(/^@/, '').toLowerCase();
   return !needle || (f.fanUsername?.toLowerCase().includes(needle) ?? false) || String(f.chatId).includes(needle);
 }
@@ -39,7 +36,7 @@ export type MessageBadge = { label: string; variant: 'secondary' | 'outline' | '
 /** A message's money, media and kind badges, in reading order. */
 export function messageBadges(m: StatsMessage): MessageBadge[] {
   const badges: MessageBadge[] = [];
-  if (m.priceCents > 0) badges.push({ label: `PPV ${formatMoney(m.priceCents)} · ${m.isOpened ? 'opened' : 'unopened'}`, variant: 'secondary' });
+  if (m.priceCents > 0) badges.push({ label: `PPV ${formatMoney(m.priceCents)} · ${m.isOpened ? 'bought' : 'not bought'}`, variant: 'secondary' });
   if (m.isTip) badges.push({ label: m.tipCents > 0 ? `Tip ${formatMoney(m.tipCents)}` : 'Tip', variant: 'secondary' });
   if (hasMedia(m)) badges.push({ label: mediaLabel(m), variant: 'outline' });
   if (m.isMass) badges.push({ label: 'Mass', variant: 'outline' });
@@ -48,7 +45,10 @@ export function messageBadges(m: StatsMessage): MessageBadge[] {
   return badges;
 }
 
-/** A mass message the "Hide mass" toggle hides: all but those the fan bought. */
+/**
+ * A mass message the "Hide mass not bought" toggle hides: all but those the fan bought. Both flags are as of the last
+ * read (backfill or live event), so a PPV bought since reads not bought, and a live queued DM may read as mass.
+ */
 export const isHiddenMass = (m: StatsMessage) => m.isMass && !(m.priceCents > 0 && m.isOpened);
 
 /** Consecutive messages grouped by their day (`YYYY-MM-DD`) in the IANA timezone `tz`, keeping order. */

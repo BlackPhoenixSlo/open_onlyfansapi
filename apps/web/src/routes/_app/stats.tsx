@@ -2,15 +2,15 @@ import type { StatsGroupBy } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChartCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked } from '@/features/stats/cards';
+import { ChartCard, ErrorCard, Kpi, NoData, Skeleton, WorkspaceNotLinked, isTeamNotLinked } from '@/features/stats/cards';
 import { COLORS, Chart } from '@/features/stats/chart';
 import { BackfillNotice } from '@/features/stats/BackfillNotice';
 import { HowToRead } from '@/features/stats/explainers';
 import { FansCard } from '@/features/stats/fans';
-import { RangeControls, type RangeSearch, rangeSearch, searchRange } from '@/features/stats/range';
+import { RangeControls, type RangeSearch, rangeSearch, useStatsRange } from '@/features/stats/range';
 import { RawData } from '@/features/stats/raw-data';
 import { ScriptCard } from '@/features/stats/scripts';
 import {
@@ -20,28 +20,21 @@ import {
   formatWait,
   formatWindow,
   hourSeries,
-  liveLine,
   openerSeries,
   percent,
   replySeries,
   slaSeries,
   sum,
 } from '@/features/stats/series';
-import {
-  ApiError,
-  type StatsRange,
-  statsConfigQuery,
-  statsMetricQuery,
-  statsMetricsQuery,
-  statsScriptsQuery,
-} from '@/lib/api';
+import { type StatsRange, statsMetricQuery, statsMetricsQuery, statsScriptsQuery } from '@/lib/api';
+import { nonEmpty } from '@/lib/search';
 
 type Search = RangeSearch & { metric?: string };
 
 export const Route = createFileRoute('/_app/stats')({
   validateSearch: (s: Record<string, unknown>): Search => ({
     ...rangeSearch(s),
-    metric: typeof s.metric === 'string' && s.metric ? s.metric : undefined,
+    metric: nonEmpty(s.metric),
   }),
   component: Stats,
 });
@@ -59,17 +52,10 @@ function useMetric(id: string, groupBy: StatsGroupBy, range: StatsRange | undefi
 function Stats() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const preset = search.range ?? '30d';
   const [showRaw, setShowRaw] = useState(false);
-
-  const config = useQuery(statsConfigQuery);
+  const stats = useStatsRange(search);
+  const { config, tz, range } = stats;
   const catalogue = useQuery(statsMetricsQuery);
-  const tz = config.data?.config.timezone;
-
-  const range = useMemo(
-    () => searchRange({ range: preset, from: search.from, to: search.to, accountId: search.accountId }, tz, config.isError),
-    [preset, search.from, search.to, search.accountId, tz, config.isError],
-  );
 
   const replyDay = useMetric('reply_time', 'day', range);
   const p90Day = useMetric('reply_time_p90', 'day', range);
@@ -80,9 +66,7 @@ function Stats() {
   const scripts = useQuery({ ...statsScriptsQuery(range ?? {}), enabled: range !== undefined });
 
   const queries = [config, catalogue, replyDay, p90Day, slaDay, openersDay, replyHour, replyAccount, scripts];
-  const unlinked = queries.some((q) => q.error instanceof ApiError && q.error.code === 'team_not_linked');
-
-  if (unlinked) return <WorkspaceNotLinked title="Stats">Stats read what the analytics backfill stored for this workspace.</WorkspaceNotLinked>;
+  if (isTeamNotLinked(queries)) return <WorkspaceNotLinked title="Stats" subject="reply times, openers and scripts" />;
 
   const cfg = config.data?.config;
   const verified = (id: string) => catalogue.data?.items.find((m) => m.id === id)?.verified;
@@ -103,26 +87,15 @@ function Stats() {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <RangeControls
-          title="Stats"
-          search={search}
-          range={range}
-          served={replyDay.data}
-          onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
-        />
-        <p className="text-xs text-muted-foreground">
-          {replyDay.data ? `${replyDay.data.from} to ${replyDay.data.to} · ` : ''}
-          {cfg ? `timezone ${cfg.timezone} · config v${cfg.version}` : 'loading config…'}
-          {replyDay.data && ` · as of ${new Date(replyDay.data.asOf).toLocaleString()}`}
-        </p>
-        {config.data && (
-          <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
-            {liveLine(config.data.freshness)}
-          </p>
-        )}
+      <RangeControls
+        title="Stats"
+        search={search}
+        stats={stats}
+        served={replyDay.data}
+        onChange={(next) => navigate({ search: (prev) => ({ ...prev, ...next }) })}
+      >
         {search.accountId !== undefined && <BackfillNotice accountId={search.accountId} />}
-      </div>
+      </RangeControls>
 
       {config.isError && <ErrorCard message={config.error.message} />}
 

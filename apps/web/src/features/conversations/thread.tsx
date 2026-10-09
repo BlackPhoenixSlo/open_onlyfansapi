@@ -1,20 +1,22 @@
-import type { StatsFan, StatsMessage } from '@api/contracts';
+import type { StatsMessage } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { byDay, fanName, isHiddenMass, messageBadges, noTextLabel } from '@/features/conversations/format';
+import { byDay, isHiddenMass, messageBadges, noTextLabel } from '@/features/conversations/format';
 import { Skeleton } from '@/features/stats/cards';
-import { type StatsRange, statsConversationQuery, statsMessagesCsvPath } from '@/lib/api';
+import { type ConversationParams, statsConversationQuery, statsMessagesCsvPath } from '@/lib/api';
 import { useCsvDownload } from '@/lib/download';
-import { cn } from '@/lib/utils';
+import { cn, fanFileName, fanName } from '@/lib/utils';
+
+const HIDE_MASS_TITLE = 'Mass messages the fan had not bought when they were last read: by the backfill, or by the live event that stored them';
 
 /**
  * One fan's conversation over `params`, oldest first and opened at the newest: fan messages left, the creator's
- * right, by day in the stats timezone; mass messages the fan did not buy hidden unless untoggled. Mount it with a
- * `key` per chat and range so it scrolls down again.
+ * right, by day in the stats timezone; mass messages not bought as of the last read hidden unless untoggled. Mount it
+ * with a `key` per chat and range so it scrolls down again.
  */
-export function Thread({ params, fan }: { params: StatsRange & { chatId: number }; fan: StatsFan | undefined }) {
+export function Thread({ params }: { params: ConversationParams }) {
   const thread = useQuery(statsConversationQuery(params));
   const csv = useCsvDownload();
   const [hideMass, setHideMass] = useState(true);
@@ -34,47 +36,39 @@ export function Thread({ params, fan }: { params: StatsRange & { chatId: number 
     if (el) el.scrollTop = el.scrollHeight;
   }, [hideMass]);
 
-  const view = useMemo(() => {
-    if (!data) return undefined;
-    const shown = hideMass ? data.items.filter((m) => !isHiddenMass(m)) : data.items;
-    const day = new Intl.DateTimeFormat(undefined, { timeZone: data.timezone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-    const time = new Intl.DateTimeFormat(undefined, { timeZone: data.timezone, hour: '2-digit', minute: '2-digit' });
-    return {
-      groups: byDay(shown, data.timezone).map((g) => ({ ...g, label: day.format(new Date(g.items[0]!.createdAt)) })),
-      hidden: data.items.length - shown.length,
-      time: (iso: string) => time.format(new Date(iso)),
-    };
+  const shown = useMemo(() => {
+    const items = data?.items ?? [];
+    return hideMass ? items.filter((m) => !isHiddenMass(m)) : items;
   }, [data, hideMass]);
-
-  const name = fanName({ fanUsername: fan?.fanUsername ?? data?.items[0]?.fanUsername ?? null, chatId: params.chatId });
+  const fan = { fanUsername: data?.items[0]?.fanUsername ?? null, chatId: params.chatId };
   const count = data?.items.length ?? 0;
+  const hidden = count - shown.length;
 
   return (
     <>
       <div className="flex items-center justify-between gap-3 border-b p-3">
         <div className="min-w-0">
-          <div className="truncate font-medium">{name}</div>
+          <div className="truncate font-medium">{fanName(fan)}</div>
           <div className="text-xs text-muted-foreground">
             chat {params.chatId}
             {data && ` · ${count.toLocaleString()} messages · ${data.from} to ${data.to} · times in ${data.timezone}`}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs">
+          <label className="flex items-center gap-1.5 text-xs" title={HIDE_MASS_TITLE}>
             <input type="checkbox" checked={hideMass} onChange={(e) => setHideMass(e.target.checked)} />
-            Hide mass
+            Hide mass not bought
           </label>
-          {hideMass && view && view.hidden > 0 && <span className="text-xs text-muted-foreground">{view.hidden} mass hidden</span>}
+          {hidden > 0 && (
+            <span className="text-xs text-muted-foreground" title={HIDE_MASS_TITLE}>
+              {hidden} mass not bought hidden
+            </span>
+          )}
           <Button
             size="sm"
             variant="outline"
             disabled={csv.downloading || !count}
-            onClick={() =>
-              csv.download(
-                statsMessagesCsvPath({ ...params, direction: 'all' }),
-                `messages-${fan?.fanUsername ?? params.chatId}-${data?.from}-${data?.to}.csv`,
-              )
-            }
+            onClick={() => csv.download(statsMessagesCsvPath({ ...params, direction: 'all' }), `messages-${fanFileName(fan)}-${data?.from}-${data?.to}.csv`)}
           >
             Download CSV
           </Button>
@@ -89,28 +83,44 @@ export function Thread({ params, fan }: { params: StatsRange & { chatId: number 
           </div>
         ) : thread.isError ? (
           <p className="text-destructive">{thread.error.message}</p>
-        ) : !view || count === 0 ? (
+        ) : count === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No messages with this fan stored from {data?.from ?? params.from} to {data?.to ?? params.to}.
+            No messages with this fan stored from {thread.data.from} to {thread.data.to}.
           </p>
-        ) : view.groups.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Only mass messages the fan did not buy; untick Hide mass to see them.</p>
+        ) : shown.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Only mass messages not bought; untick Hide mass not bought to see them.</p>
         ) : (
-          <div className="space-y-4">
-            {view.groups.map((g) => (
-              <section key={g.day} className="space-y-2">
-                <div className="sticky top-0 z-10 flex justify-center">
-                  <span className="rounded-full border bg-background px-3 py-0.5 text-xs text-muted-foreground">{g.label}</span>
-                </div>
-                {g.items.map((m) => (
-                  <Bubble key={`${m.accountId}:${m.messageId}`} m={m} time={view.time(m.createdAt)} />
-                ))}
-              </section>
-            ))}
-          </div>
+          <Messages items={shown} timezone={thread.data.timezone} />
         )}
       </div>
     </>
+  );
+}
+
+/** `items` as bubbles under day separators in the IANA timezone `timezone`. */
+function Messages({ items, timezone }: { items: StatsMessage[]; timezone: string }) {
+  const view = useMemo(() => {
+    const day = new Intl.DateTimeFormat(undefined, { timeZone: timezone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    const time = new Intl.DateTimeFormat(undefined, { timeZone: timezone, hour: '2-digit', minute: '2-digit' });
+    return {
+      groups: byDay(items, timezone).map((g) => ({ ...g, label: day.format(new Date(g.items[0]!.createdAt)) })),
+      time: (iso: string) => time.format(new Date(iso)),
+    };
+  }, [items, timezone]);
+
+  return (
+    <div className="space-y-4">
+      {view.groups.map((g) => (
+        <section key={g.day} className="space-y-2">
+          <div className="sticky top-0 z-10 flex justify-center">
+            <span className="rounded-full border bg-background px-3 py-0.5 text-xs text-muted-foreground">{g.label}</span>
+          </div>
+          {g.items.map((m) => (
+            <Bubble key={`${m.accountId}:${m.messageId}`} m={m} time={view.time(m.createdAt)} />
+          ))}
+        </section>
+      ))}
+    </div>
   );
 }
 

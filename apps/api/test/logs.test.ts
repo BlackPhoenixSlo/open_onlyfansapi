@@ -144,6 +144,8 @@ describe('request logs', () => {
     expect(seen).toEqual(all);
     expect([...seen].sort()).toEqual([...reqIds].sort());
     expect((await logs('?cursor=garbage')).statusCode).toBe(400);
+    // A non-ISO cursor time is the caller's error, not a 500.
+    expect((await logs(`?cursor=${Buffer.from('["1","req_x"]').toString('base64url')}`)).statusCode).toBe(400);
   });
 
   it("another workspace cannot see this workspace's logs", async () => {

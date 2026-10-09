@@ -1,11 +1,10 @@
 import { and, arrayOverlaps, desc, eq, or, sql, type SQL } from 'drizzle-orm';
-import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { webhookDelivery, webhookEndpoint } from '../../db/schema.js';
 import { webhookEventType, type DeliveryStatus, type WebhookDelivery, type WebhookEndpoint, type WebhookEventType } from '../../contracts.js';
 import { env } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
-import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
+import { timeIdCursor } from '../../lib/cursor.js';
 import { newId } from '../../lib/ids.js';
 import { limiter } from '../../lib/limiter.js';
 import { newWebhookSecret } from '../../lib/signature.js';
@@ -183,9 +182,6 @@ export async function redeliver(teamId: string, endpointId: string, deliveryId: 
   return toDelivery(row!);
 }
 
-/** Keyset cursor over (created_at desc, id desc). */
-const cursorKey = z.tuple([cursorTime, z.string()]);
-
 export async function listDeliveries(
   teamId: string,
   endpointId: string,
@@ -196,7 +192,7 @@ export async function listDeliveries(
   if (f.status) where.push(eq(webhookDelivery.status, f.status));
   if (f.event) where.push(eq(webhookDelivery.eventType, f.event));
   if (f.cursor) {
-    const [ts, id] = decodeCursor(f.cursor, cursorKey);
+    const [ts, id] = timeIdCursor.decode(f.cursor);
     where.push(sql`(${webhookDelivery.createdAt}, ${webhookDelivery.id}) < (${ts}::timestamptz, ${id})`);
   }
   const rows = await db
@@ -205,12 +201,8 @@ export async function listDeliveries(
     .where(and(...where))
     .orderBy(desc(webhookDelivery.createdAt), desc(webhookDelivery.id))
     .limit(f.limit + 1);
-  const page = rows.slice(0, f.limit);
-  const last = page.at(-1);
-  return {
-    items: page.map(toDelivery),
-    nextCursor: rows.length > f.limit && last ? encodeCursor([last.createdAt.toISOString(), last.id]) : null,
-  };
+  const { items, nextCursor } = timeIdCursor.page(rows, f.limit);
+  return { items: items.map(toDelivery), nextCursor };
 }
 
 // emit() writes share the pg.Pool with the proxy and dashboard: an upstream burst queues here instead of

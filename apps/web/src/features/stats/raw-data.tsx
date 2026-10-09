@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { NoData, Skeleton } from '@/features/stats/cards';
-import { downloadCsv } from '@/lib/download';
+import { useCsvDownload } from '@/lib/download';
 import { formatPercent, formatWait } from '@/features/stats/series';
 import { type StatsRange, statsMetricPath, statsMetricQuery } from '@/lib/api';
 
@@ -54,11 +54,12 @@ export function RawData({
     enabled: metric !== undefined && range !== undefined,
   });
   const columns = COUNT_COLUMNS.filter(([key]) => series.data?.rows.some((r) => r[key] !== undefined));
+  const csv = useCsvDownload();
 
   function exportCsv() {
     if (!metric || !range) return;
     const name = `${metric}-${series.data?.from ?? range.from}-${series.data?.to ?? range.to}-by-day.csv`;
-    void downloadCsv(statsMetricPath(metric, { ...range, groupBy: 'day' }, 'csv'), name);
+    void csv.download(statsMetricPath(metric, { ...range, groupBy: 'day' }, 'csv'), name);
   }
 
   return (
@@ -82,7 +83,7 @@ export function RawData({
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline" disabled={!series.data?.rows.length} onClick={exportCsv}>
+            <Button variant="outline" disabled={csv.downloading || !series.data?.rows.length} onClick={exportCsv}>
               Export CSV
             </Button>
           </div>

@@ -1,20 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import type { FormEvent } from 'react';
+import { type FormEvent, type ReactNode, useMemo } from 'react';
 import { FilterSelect } from '@/components/filter-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { addDays, todayIn } from '@/features/stats/series';
-import { type StatsRange, accountsQuery } from '@/lib/api';
-
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** `v` when it is a `YYYY-MM-DD` day, else undefined. */
-export const day = (v: unknown) => (typeof v === 'string' && DAY.test(v) ? v : undefined);
-
-/** `v` when it is (a string of) a positive integer, else undefined. */
-export const positiveInt = (v: unknown) => {
-  const n = Number(v);
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-};
+import { addDays, liveLine, todayIn } from '@/features/stats/series';
+import { type StatsRange, accountsQuery, statsConfigQuery } from '@/lib/api';
+import { day, positiveInt } from '@/lib/search';
 
 const PRESET_DAYS = { '7d': 7, '30d': 30 } as const;
 export type Preset = keyof typeof PRESET_DAYS | 'custom';
@@ -31,17 +22,33 @@ export const rangeSearch = (s: Record<string, unknown>): RangeSearch => ({
 });
 
 /**
- * The API range for the search params: a preset (default 30d) ends today in the stats timezone `tz`; a custom range
- * without days falls back to the API default (30 days). Undefined while `tz` loads; without the config
- * (`configFailed`, an error the page shows) the API picks its default range.
+ * The preset (default 30d) and API range for the search params: a preset ends today in the stats timezone `tz`; a
+ * custom range without days falls back to the API default (30 days). `tz` is undefined while the config loads (no
+ * range yet) and null when it failed (the API picks its default range).
  */
-export function searchRange(search: RangeSearch, tz: string | undefined, configFailed: boolean): StatsRange | undefined {
+export function searchRange(search: RangeSearch, tz: string | null | undefined): { preset: Preset; range: StatsRange | undefined } {
   const preset = search.range ?? '30d';
-  if (preset === 'custom') return { from: search.from, to: search.to, accountId: search.accountId };
-  if (!tz) return configFailed ? { accountId: search.accountId } : undefined;
-  const to = todayIn(tz);
-  return { from: addDays(to, -(PRESET_DAYS[preset] - 1)), to, accountId: search.accountId };
+  const { from, to, accountId } = search;
+  if (preset === 'custom') return { preset, range: { from, to, accountId } };
+  if (tz === undefined) return { preset, range: undefined };
+  if (tz === null) return { preset, range: { accountId } };
+  const end = todayIn(tz);
+  return { preset, range: { from: addDays(end, -(PRESET_DAYS[preset] - 1)), to: end, accountId } };
 }
+
+/** A stats page's config query, timezone, preset and API range for its search params (see `searchRange`). */
+export function useStatsRange(search: RangeSearch) {
+  const config = useQuery(statsConfigQuery);
+  const tz = config.data?.config.timezone;
+  // A failed background refetch keeps the timezone already known.
+  const zone = tz ?? (config.isError ? null : undefined);
+  const { range, from, to, accountId } = search;
+  const resolved = useMemo(() => searchRange({ range, from, to, accountId }, zone), [range, from, to, accountId, zone]);
+  return { config, tz, ...resolved };
+}
+
+/** What `useStatsRange` returns. */
+export type StatsRangeState = ReturnType<typeof useStatsRange>;
 
 export function Segmented<T extends string>({ options, value, onChange }: { options: readonly T[]; value: T; onChange: (value: T) => void }) {
   return (
@@ -75,27 +82,30 @@ export function CustomRange({ from, to, onApply }: { from?: string; to?: string;
 }
 
 /**
- * A stats page's title row with the account filter and range presets, and the day inputs for a custom range.
- * `onChange` gets the search params to change; choosing custom seeds the days shown (`range`, else `served`, the
- * days the API answered for).
+ * A stats page's title row with the account filter and range presets, the day inputs for a custom range, the days
+ * `served` (the API's answer) with the config and the live-event line, then `children`. `stats` is the page's
+ * `useStatsRange`. `onChange` gets the search params to change; choosing custom seeds the days shown (`range`, else
+ * `served`).
  */
 export function RangeControls({
   title,
   search,
-  range,
+  stats: { config, preset, range },
   served,
   onChange,
+  children,
 }: {
   title: string;
   search: RangeSearch;
-  range: StatsRange | undefined;
-  served: { from: string; to: string } | undefined;
+  stats: Pick<StatsRangeState, 'config' | 'preset' | 'range'>;
+  served: { from: string; to: string; asOf: string } | undefined;
   onChange: (next: RangeSearch) => void;
+  children?: ReactNode;
 }) {
   const accounts = useQuery(accountsQuery);
-  const preset = search.range ?? '30d';
+  const cfg = config.data?.config;
   return (
-    <>
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">{title}</h1>
         <div className="flex flex-wrap items-center gap-2">
@@ -125,6 +135,17 @@ export function RangeControls({
       {preset === 'custom' && (
         <CustomRange from={range?.from} to={range?.to} onApply={(from, to) => onChange({ range: 'custom', from, to })} />
       )}
-    </>
+      <p className="text-xs text-muted-foreground">
+        {served ? `${served.from} to ${served.to} · ` : ''}
+        {cfg ? `timezone ${cfg.timezone} · config v${cfg.version}` : 'loading config…'}
+        {served && ` · as of ${new Date(served.asOf).toLocaleString()}`}
+      </p>
+      {config.data && (
+        <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
+          {liveLine(config.data.freshness)}
+        </p>
+      )}
+      {children}
+    </div>
   );
 }

@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { NoData, Skeleton } from '@/features/stats/cards';
 import { type StatsRange, statsFansQuery, statsMessagesCsvPath } from '@/lib/api';
 import { useCsvDownload } from '@/lib/download';
-import { formatMoney } from '@/lib/utils';
+import { fanFileName, fanName, formatMoney } from '@/lib/utils';
 
 /** The fans with messages in the range, latest fan message first, and their stored messages as CSV. */
 export function FansCard({ range }: { range?: StatsRange }) {
@@ -66,7 +66,7 @@ export function FansCard({ range }: { range?: StatsRange }) {
                         className="underline-offset-4 hover:underline"
                         title="Read the conversation"
                       >
-                        {f.fanUsername ? `@${f.fanUsername}` : f.chatId}
+                        {fanName(f)}
                       </Link>
                     </TableCell>
                     <TableCell className="text-right">{f.fanMessages}</TableCell>
@@ -79,7 +79,7 @@ export function FansCard({ range }: { range?: StatsRange }) {
                         size="sm"
                         variant="ghost"
                         disabled={csv.downloading}
-                        onClick={() => download('all', `messages-${f.fanUsername ?? f.chatId}`, { accountId: f.accountId, chatId: f.chatId })}
+                        onClick={() => download('all', `messages-${fanFileName(f)}`, { accountId: f.accountId, chatId: f.chatId })}
                       >
                         CSV
                       </Button>

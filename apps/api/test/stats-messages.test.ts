@@ -79,7 +79,7 @@ let keyB: string;
 const get = (url: string, key = keyA) => app.inject({ method: 'GET', url, headers: bearer(key) });
 const RANGE = 'from=2026-09-01&to=2026-09-04';
 const HEADER =
-  'account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_free,is_opened,is_tip,tip_cents,media_count,photos,videos,gifs,audios,has_preview,is_mass,is_automated,is_reply,is_liked,deleted_at\n';
+  'account_id,chat_id,fan_username,message_id,created_at,direction,text,price_cents,is_free,is_opened,is_tip,tip_cents,media_count,photos,videos,gifs,audios,has_preview,is_mass,is_automated,automated_reason,is_reply,is_liked,deleted_at\n';
 const DELETED_AT = '2026-09-03T12:00:00.000Z';
 const ALL_IDS = [1, 2, 3, 4, 8, 6, 7, 31, 32, 21, 22];
 const fans = async (q: string, key = keyA) => {
@@ -253,9 +253,9 @@ describe('stats messages', () => {
     expect(res.headers['content-disposition']).toBe('attachment; filename="messages_3001_in_2026-09-01_2026-09-04.csv"');
     expect(res.body).toBe(
       HEADER +
-        '1001,3001,fan_a,1,2026-09-01T10:00:00.000Z,inbound,Hey & hi 😊,0,true,false,false,0,0,0,0,0,0,false,false,false,false,false,\n' +
-        '1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"-_- @name +1, ""quoted""",0,true,false,true,500,0,0,0,0,0,false,false,false,false,false,\n' +
-        `1001,3001,fan_a,8,2026-09-02T10:00:00.000Z,inbound,love 'u',0,true,false,false,0,0,0,0,1,0,false,false,false,true,true,${DELETED_AT}\n`,
+        '1001,3001,fan_a,1,2026-09-01T10:00:00.000Z,inbound,Hey & hi 😊,0,true,false,false,0,0,0,0,0,0,false,false,false,,false,false,\n' +
+        '1001,3001,fan_a,4,2026-09-02T10:00:00.000Z,inbound,"-_- @name +1, ""quoted""",0,true,false,true,500,0,0,0,0,0,false,false,false,,false,false,\n' +
+        `1001,3001,fan_a,8,2026-09-02T10:00:00.000Z,inbound,love 'u',0,true,false,false,0,0,0,0,1,0,false,false,false,,true,true,${DELETED_AT}\n`,
     );
   });
 

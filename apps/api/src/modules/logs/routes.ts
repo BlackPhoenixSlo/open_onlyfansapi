@@ -6,7 +6,7 @@ import { db } from '../../db/index.js';
 import { apiKey, requestLog } from '../../db/schema.js';
 import { logDetail, logList, logStatus, type LogDetail, type LogSummary } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
-import { cursorTime, decodeCursor, encodeCursor } from '../../lib/cursor.js';
+import { timeIdCursor } from '../../lib/cursor.js';
 
 const listQuery = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
@@ -41,9 +41,6 @@ const summaryColumns = {
   userId: requestLog.userId,
   accountId: requestLog.accountId,
 };
-
-/** Keyset cursor over (created_at desc, id desc). */
-const cursorKey = z.tuple([cursorTime, z.string()]);
 
 /** ILIKE pattern matching `text` anywhere, with LIKE wildcards escaped. */
 const contains = (text: string) => `%${text.replace(/[\\%_]/g, '\\$&')}%`;
@@ -81,7 +78,7 @@ export default async function logsRoutes(app: FastifyInstance) {
       );
     }
     if (f.cursor) {
-      const [ts, id] = decodeCursor(f.cursor, cursorKey);
+      const [ts, id] = timeIdCursor.decode(f.cursor);
       where.push(sql`(${requestLog.createdAt}, ${requestLog.id}) < (${ts}::timestamptz, ${id})`);
     }
 
@@ -92,12 +89,8 @@ export default async function logsRoutes(app: FastifyInstance) {
       .where(and(...where))
       .orderBy(desc(requestLog.createdAt), desc(requestLog.id))
       .limit(f.limit + 1);
-    const page = rows.slice(0, f.limit);
-    const last = page.at(-1);
-    return {
-      items: page.map((row): LogSummary => withIso(row)),
-      nextCursor: rows.length > f.limit && last ? encodeCursor([last.createdAt.toISOString(), last.id]) : null,
-    };
+    const { items, nextCursor } = timeIdCursor.page(rows, f.limit);
+    return { items: items.map((row): LogSummary => withIso(row)), nextCursor };
   });
 
   r.get(
