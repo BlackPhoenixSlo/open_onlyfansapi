@@ -92,7 +92,7 @@ beforeAll(async () => {
     purchase(teamA, A1, 't9', 3001, 'message', 5000, 4000, '09-02T10:00', { id: 3001, name: 'Refunded' }, 'undo'),
     purchase(teamA, A1, 't10', 3009, 'tips', 2000, 1600, '09-02T11:00', { id: 3009, name: 'Reversed' }, 'pending_return'),
     purchase(teamA, A1, 't4', null, null, 300, 240, '09-03T13:00'),
-    purchase(teamA, A1, 't5', 3008, 'post', 100, 80, '09-03T14:00', { id: 3008, name: 'Hal' }),
+    purchase(teamA, A1, 't5', 3008, 'post', 100, 80, '09-03T14:00', { id: 3008, name: 'Hal', isDeleted: true }),
     purchase(teamA, A1, 't6', 3001, 'message', 999, 799, '09-05T10:00', { id: 3001, name: 'Ann' }),
     purchase(teamA, A2, 't7', 4001, 'message', 700, 560, '09-03T09:00', { id: 4001, name: 'Cy' }),
     purchase(b.teamId, B1, 't8', 5001, 'tips', 4000, 3200, '09-02T10:00', { id: 5001, name: 'Bo' }),
@@ -158,13 +158,15 @@ describe('stats revenue', () => {
     expect((await get(RANGE)).ppv).toEqual({ sent: 3, opened: 2, rate: (2 / 3) * 100 });
   });
 
-  it('lists the top payers by gross with the newest name and whether their chat is stored', async () => {
-    expect((await get(RANGE, dashboard(cookieA))).topPayers).toEqual([
-      { accountId: A1, fanId: 3002, name: null, gross: 2000, net: 1600, transactions: 1, lastAt: '2026-09-01T11:00:00.000Z', hasChat: true },
-      { accountId: A1, fanId: 3001, name: 'ann2', gross: 1500, net: 1200, transactions: 2, lastAt: '2026-09-03T12:00:00.000Z', hasChat: true },
-      { accountId: A2, fanId: 4001, name: 'Cy', gross: 700, net: 560, transactions: 1, lastAt: '2026-09-03T09:00:00.000Z', hasChat: true },
-      { accountId: A1, fanId: 3008, name: 'Hal', gross: 100, net: 80, transactions: 1, lastAt: '2026-09-03T14:00:00.000Z', hasChat: false },
+  it('lists the top payers by gross with the newest name, a deleted account and whether their chat is stored', async () => {
+    const body = await get(RANGE, dashboard(cookieA));
+    expect(body.topPayers).toEqual([
+      { accountId: A1, fanId: 3002, name: null, isDeleted: false, gross: 2000, net: 1600, transactions: 1, lastAt: '2026-09-01T11:00:00.000Z', hasChat: true },
+      { accountId: A1, fanId: 3001, name: 'ann2', isDeleted: false, gross: 1500, net: 1200, transactions: 2, lastAt: '2026-09-03T12:00:00.000Z', hasChat: true },
+      { accountId: A2, fanId: 4001, name: 'Cy', isDeleted: false, gross: 700, net: 560, transactions: 1, lastAt: '2026-09-03T09:00:00.000Z', hasChat: true },
+      { accountId: A1, fanId: 3008, name: 'Hal', isDeleted: true, gross: 100, net: 80, transactions: 1, lastAt: '2026-09-03T14:00:00.000Z', hasChat: false },
     ]);
+    expect(body.withoutChat).toEqual({ payers: 1, gross: 100 });
   });
 
   it('has no fan CVR, golden ratio or PPV rate when nothing was sent', async () => {
@@ -186,6 +188,7 @@ describe('stats revenue', () => {
     const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
     expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
     expect(none.topPayers).toEqual([]);
+    expect(none.withoutChat).toEqual({ payers: 0, gross: 0 });
   });
 
   it('buckets the range and its days in the stats timezone', async () => {

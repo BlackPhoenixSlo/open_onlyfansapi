@@ -139,7 +139,11 @@ Rates are percent, null when the denominator is 0.
   OF's flag as of the last read, so the rate is an upper bound: opened counts as bought.
 - `topPayers`: the 50 (account, fan) pairs with the most gross, with `accountId`, `fanId`, `name` (OF's display name,
   else username, on the fan's newest transaction that has one; null when none does), `gross`, `net`,
-  `transactions`, `lastAt` and `hasChat` (a message of the fan's chat on that account is stored, at any time).
+  `transactions`, `lastAt`, `isDeleted` (OF's `user.isDeleted` on that same transaction: the fan deleted their OF
+  account, as of the backfill that stored it; the dashboard shows "deleted account") and `hasChat` (a message of the
+  fan's chat on that account is stored, at any time).
+- `withoutChat`: `payers` and `gross` of every payer of the range (not only the top 50) with no stored chat; the
+  dashboard shows it above the top payers. On the live account most of them are deleted accounts.
 
 ## Live updates
 

@@ -797,6 +797,8 @@ export const statsRevenue = z.object({
       fanId: z.number().int(),
       /** The OF display name (else username) on the fan's newest transaction that has one; null when none does. */
       name: z.string().nullable(),
+      /** OF's `user.isDeleted` on that transaction: the fan deleted their OF account (as of the backfill that stored it). */
+      isDeleted: z.boolean(),
       ...revenueSums,
       /** The newest transaction, ISO. */
       lastAt: z.string(),
@@ -804,5 +806,7 @@ export const statsRevenue = z.object({
       hasChat: z.boolean(),
     }),
   ),
+  /** All payers of the range (not only the top 50) with no stored chat (`hasChat` false), and their gross. */
+  withoutChat: z.object({ payers: z.number().int(), gross: z.number().int() }),
 });
 export type StatsRevenue = z.infer<typeof statsRevenue>;

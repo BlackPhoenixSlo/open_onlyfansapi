@@ -122,6 +122,11 @@ function Revenue() {
       </DataCard>
 
       <DataCard title="Top payers" description="The 50 fans who paid the most in this range." state={revenue} empty={!data?.topPayers.length} {...TABLE_CARD}>
+        {data?.withoutChat.payers ? (
+          <p className="mb-2 text-sm text-muted-foreground">
+            {data.withoutChat.payers} of {totals?.payers ?? 0} payers in this range without a stored chat ({formatMoney(data.withoutChat.gross)})
+          </p>
+        ) : null}
         <Table>
           <TableHeader>
             <TableRow>
@@ -138,6 +143,7 @@ function Revenue() {
               <TableRow key={`${p.accountId}:${p.fanId}`}>
                 <TableCell className="font-medium" title={`Fan ${p.fanId}`}>
                   {p.name ?? `fan ${p.fanId}`}
+                  {p.isDeleted && <span className="ml-2 text-xs font-normal text-muted-foreground">deleted account</span>}
                 </TableCell>
                 <TableCell className="text-right">{formatMoney(p.gross)}</TableCell>
                 <TableCell className="text-right">{formatMoney(p.net)}</TableCell>

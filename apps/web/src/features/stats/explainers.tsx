@@ -249,7 +249,7 @@ const REVENUE_TERMS: [string, string][] = [
   ],
   [
     'Top payers',
-    "The 50 fans who paid the most in the range, with the name on their newest transaction. Chat says whether any message of theirs is stored; open it in Conversations.",
+    "The 50 fans who paid the most in the range, with the name on their newest transaction; deleted account when OF marked the fan's account deleted. Chat says whether any message of theirs is stored; open it in Conversations. The line above the table counts every payer of the range without a stored chat; many are deleted accounts.",
   ],
 ];
 
