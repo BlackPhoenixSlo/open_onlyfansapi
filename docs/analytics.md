@@ -310,7 +310,9 @@ show the script caused it. There is no money in this step.
 
 `PUT /v1/stats/config` takes any of the JSON fields above except `version`. Windows are whole seconds from 1 to 90
 days; `minReplyChars` is 0 to 10000. `sla` may not exceed `reply_cap` (`400 invalid_config`). An unknown timezone is
-`400 validation_error`; a known one is stored by its canonical IANA name.
+`400 validation_error`, and so is a UTC offset like `+02:00` (Node reads it as two hours east of UTC, Postgres as two
+hours west, which would shift every day by four hours; use an IANA name like `Europe/Ljubljana`); a known one is
+stored by its canonical IANA name.
 
 ```sh
 curl -X PUT -H "Authorization: Bearer $API_KEY" -H "content-type: application/json" \

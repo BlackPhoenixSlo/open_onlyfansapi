@@ -367,6 +367,12 @@ describe('stats config', () => {
     };
     expect(await code({ slaSeconds: 60 }, keyA)).toEqual([403, 'insufficient_scope']);
     expect(await code({ timezone: 'Mars/Olympus' })).toEqual([400, 'validation_error']);
+    // An offset: Node and Postgres read its sign oppositely.
+    for (const timezone of ['+02:00', '-0400']) {
+      const r = await put({ timezone });
+      expect([r.statusCode, r.json().error.code]).toEqual([400, 'validation_error']);
+      expect(r.json().error.message).toMatch(/IANA.*Europe\/Ljubljana/);
+    }
     expect(await code({ replyCapSeconds: 0 })).toEqual([400, 'validation_error']);
     expect(await code({ slaSeconds: 13 * 3600 })).toEqual([400, 'invalid_config']);
     expect((await get('/v1/stats/config')).json().config.version).toBe(3);

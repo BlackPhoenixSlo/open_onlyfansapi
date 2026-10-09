@@ -8,13 +8,21 @@ type Row = typeof statsConfigTable.$inferSelect;
 
 const toWire = ({ teamId: _teamId, updatedAt, ...rest }: Row): StatsConfig => ({ ...rest, updatedAt: updatedAt.toISOString() });
 
-/** The IANA name Intl resolves `tz` to; 400 when it knows no such zone. */
+/**
+ * The IANA name Intl resolves `tz` to; 400 when it knows no such zone or `tz` is an offset like `+02:00`, which Node
+ * and Postgres read with opposite signs (Postgres takes `+02:00` as POSIX, two hours west of UTC).
+ */
 export function resolveTimezone(tz: string): string {
+  let resolved: string;
   try {
-    return new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+    resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
     throw new AppError(400, 'validation_error', `\`timezone\` ${JSON.stringify(tz)} is not a known time zone`);
   }
+  if (/^[+-]/.test(resolved)) {
+    throw new AppError(400, 'validation_error', `\`timezone\` ${JSON.stringify(tz)} is an offset; use an IANA name like Europe/Ljubljana`);
+  }
+  return resolved;
 }
 
 /** Workspace `teamId`'s stats config; the default row (§4.5) is made on first read. */
