@@ -168,7 +168,8 @@ the event ledger), `liveEvents24h` and `lastRefreshAt` (the newest `account_work
 last backfill's data: [Keeping it fresh](#keeping-it-fresh)), over the claimed accounts in the key's scope, and
 `nextRefreshAt`, the next daily refresh time (null when `STATS_REFRESH_HOUR_UTC` is unset). The Stats, Revenue and
 Conversations pages show them under their range: "Live: last message event 5m ago · 4 events last 24h", then
-"Backfill: refreshed 6h ago · next 03:00 UTC" ("not refreshed yet" before any backfill has ended since migration
+"Backfill: refreshed 6h ago · next after 03:00 UTC" (the job ticks hourly from the API's start, so the run starts
+within the hour after that time; "not refreshed yet" before any backfill has ended since migration
 `0015`; "next: off" with the refresh off).
 
 ## Keeping it fresh

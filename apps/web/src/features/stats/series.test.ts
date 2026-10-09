@@ -119,7 +119,7 @@ describe('live line', () => {
     const live = { lastLiveAt: null, liveEvents24h: 0 };
     expect(refreshLine({ ...live, ...noRefresh }, now)).toBe('Backfill: not refreshed yet · next: off');
     expect(refreshLine({ ...live, lastRefreshAt: '2026-10-08T06:00:00.000Z', nextRefreshAt: '2026-10-09T03:00:00.000Z' }, now)).toBe(
-      'Backfill: refreshed 6h ago · next 03:00 UTC',
+      'Backfill: refreshed 6h ago · next after 03:00 UTC',
     );
   });
 });

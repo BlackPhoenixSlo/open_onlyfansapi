@@ -141,14 +141,14 @@ export function RangeControls({
         {served && ` · as of ${new Date(served.asOf).toLocaleString()}`}
       </p>
       {config.data && (
-        <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
-          {liveLine(config.data.freshness)}
-        </p>
-      )}
-      {config.data && (
-        <p className="text-xs text-muted-foreground" title={config.data.freshness.lastRefreshAt ?? undefined}>
-          {refreshLine(config.data.freshness)}
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground" title={config.data.freshness.lastLiveAt ?? undefined}>
+            {liveLine(config.data.freshness)}
+          </p>
+          <p className="text-xs text-muted-foreground" title={config.data.freshness.lastRefreshAt ?? undefined}>
+            {refreshLine(config.data.freshness)}
+          </p>
+        </>
       )}
       {children}
     </div>

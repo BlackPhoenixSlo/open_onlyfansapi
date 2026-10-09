@@ -3,10 +3,10 @@ import { and, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import type { StatsFreshness, WebhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
 import { env } from '../../env.js';
-import { nextRefresh } from '../../jobs/analytics-refresh.js';
 import { accountWorkspace, chatCoverage, event, messageFact } from '../../db/schema.js';
 import { cause } from '../../lib/errors.js';
 import { deriveContext, deriveMessage, fanNames, int, type Raw } from './derive.js';
+import { nextRefresh } from './refresh.js';
 
 // Live updates (docs/analytics.md): upstream message events write `message_fact` between backfills. Scripts and
 // `chat_coverage` are backfill-only.

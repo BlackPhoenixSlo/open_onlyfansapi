@@ -5,9 +5,10 @@ import { newId } from '../lib/ids.js';
 import type { Upstream } from '../lib/upstream.js';
 import { backfillRun, startBackfillRun } from '../modules/analytics/backfill-runs.js';
 import { dbStore, readTransactions, type Get } from '../modules/analytics/backfill.js';
+import { refreshBoundary } from '../modules/analytics/refresh.js';
+import { DAY_MS } from '../modules/stats/scope.js';
 
 const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 /** The daily refresh's longest window. */
 const REFRESH_MAX_MS = 7 * DAY_MS;
 /** The poll's window: OF's ledger lagged real time by 3.5 to 10.5 hours, so a sale shows up well within it. */
@@ -40,16 +41,6 @@ export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogge
     }
   }
   return stored;
-}
-
-/** Today's refresh time: `hour`:00 UTC on `now`'s UTC day. */
-export const refreshBoundary = (now: Date, hour: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour));
-
-/** The first refresh time after `now`; null when the refresh is off (`hour` undefined). */
-export function nextRefresh(hour: number | undefined, now: Date): Date | null {
-  if (hour === undefined) return null;
-  const today = refreshBoundary(now, hour);
-  return today > now ? today : new Date(today.getTime() + DAY_MS);
 }
 
 /**
