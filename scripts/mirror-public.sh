@@ -8,7 +8,7 @@
 # the push is normally a fast-forward; the force only matters after a rebase of master.
 set -eu
 
-MIRROR_REMOTE=${MIRROR_REMOTE:-git@github.com:BlackPhoenixSlo/gateway-public.git}
+MIRROR_REMOTE=${MIRROR_REMOTE:-git@github.com:BlackPhoenixSlo/open_onlyfansapi.git}
 SOURCE=$(git rev-parse --show-toplevel)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

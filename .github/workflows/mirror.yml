@@ -2,7 +2,7 @@ name: mirror
 
 # Pushes master and the tags to the public repository with services/ filtered out of history.
 # Needs the MIRROR_DEPLOY_KEY secret: the private half of a deploy key that has write access on
-# BlackPhoenixSlo/gateway-public. The job only runs in the private repository, so the copy of
+# BlackPhoenixSlo/open_onlyfansapi. The job only runs in the private repository, so the copy of
 # this file that lands in the mirror stays inert.
 
 on:
