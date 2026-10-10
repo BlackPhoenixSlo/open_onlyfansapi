@@ -1,6 +1,6 @@
 name: mirror
 
-# Pushes master and the tags to the public repository with services/ filtered out of history.
+# Pushes master and the tags to the public repository, services/upstream included.
 # Needs the MIRROR_DEPLOY_KEY secret: the private half of a deploy key that has write access on
 # BlackPhoenixSlo/open_onlyfansapi. The job only runs in the private repository, so the copy of
 # this file that lands in the mirror stays inert.
@@ -21,7 +21,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: master
-      - run: pipx install git-filter-repo
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.MIRROR_DEPLOY_KEY }}

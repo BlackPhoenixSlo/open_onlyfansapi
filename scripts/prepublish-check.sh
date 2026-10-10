@@ -27,10 +27,6 @@ if [ -n "$brand_hits" ]; then
   echo "$brand_hits"
 fi
 
-# 2b. the private upstream must be filtered out before a public publish
-if git ls-files --error-unmatch services >/dev/null 2>&1; then
-  report "services/ is tracked: private-only tree; filter it out before any public publish"
-fi
 
 # 3. README disclaimer
 if ! grep -qi 'not affiliated' README.md 2>/dev/null; then
