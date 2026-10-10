@@ -7,6 +7,9 @@
 #   DOMAIN          required, bare hostname whose A record points at this VPS (§2)
 #   REPO            default https://github.com/BlackPhoenixSlo/open_onlyfansapi.git
 #   REF             branch or tag, default master
+#   HTTPS_PORT      default 443. Another value (e.g. 8443) when 80/443 are taken: the site is https://DOMAIN:8443
+#                   with a certificate from Caddy's own CA (Let's Encrypt only reaches 80 and 443), so browsers
+#                   warn once; HTTP_PORT (default 80) is then the plain-http redirect port, e.g. 8080
 #   SKIP_DNS_CHECK  1 = do not check that DOMAIN resolves to this host
 set -euo pipefail
 
@@ -14,6 +17,8 @@ DIR=/opt/gateway
 REPO=${REPO:-https://github.com/BlackPhoenixSlo/open_onlyfansapi.git}
 REF=${REF:-master}
 DOMAIN=${DOMAIN:-}
+HTTPS_PORT=${HTTPS_PORT:-443}
+HTTP_PORT=${HTTP_PORT:-80}
 
 die() { echo "install: $*" >&2; exit 1; }
 logs_and_die() { # <message>; run from deploy/
@@ -27,6 +32,8 @@ say() { echo "==> $*"; }
 [ -n "$DOMAIN" ] || die "DOMAIN is required, e.g. DOMAIN=gw.example.com (a bare hostname)"
 [[ $DOMAIN =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] ||
   die "DOMAIN must be a bare hostname like gw.example.com (no https://, path or port), got: $DOMAIN"
+[[ $HTTPS_PORT =~ ^[0-9]+$ && $HTTP_PORT =~ ^[0-9]+$ ]] || die "HTTPS_PORT and HTTP_PORT must be numbers, got: $HTTPS_PORT $HTTP_PORT"
+if [ "$HTTPS_PORT" = 443 ]; then URL="https://$DOMAIN"; else URL="https://$DOMAIN:$HTTPS_PORT"; fi
 [ "$(id -u)" -eq 0 ] || die "must run as root: open a root shell first (sudo -i), then run the line again"
 
 command -v docker >/dev/null || die "docker is not installed; use the Ubuntu 24.04 + Docker template (hostinger.md §1)"
@@ -81,8 +88,8 @@ fi
 cd "$DIR/deploy"
 if [ -f .env ]; then
   say "kept the existing deploy/.env"
-  grep -qxF "PUBLIC_URL=https://$DOMAIN" .env ||
-    echo "install: warning: deploy/.env has a PUBLIC_URL other than https://$DOMAIN; Caddy serves that one" >&2
+  grep -qxF "PUBLIC_URL=$URL" .env ||
+    echo "install: warning: deploy/.env has a PUBLIC_URL other than $URL; Caddy serves that one" >&2
   # The §8 backup: migrations are forward-only, so dump before the new images start.
   if [ -n "$(docker compose ps --status running -q postgres)" ]; then
     umask 077
@@ -98,13 +105,16 @@ else
   umask 077
   while IFS= read -r line || [ -n "$line" ]; do
     case $line in
-      PUBLIC_URL=*) line="PUBLIC_URL=https://$DOMAIN" ;;
+      PUBLIC_URL=*) line="PUBLIC_URL=$URL" ;;
       POSTGRES_PASSWORD=*) line="POSTGRES_PASSWORD=$(openssl rand -hex 24)" ;;
       BETTER_AUTH_SECRET=*) line="BETTER_AUTH_SECRET=$(openssl rand -base64 32)" ;;
       UPSTREAM_TOKEN=*) line="UPSTREAM_TOKEN=$(openssl rand -hex 32)" ;;
     esac
     printf '%s\n' "$line"
   done <.env.example >.env.tmp
+  if [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
+    printf 'HTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT" >>.env.tmp
+  fi
   mv .env.tmp .env
   chmod 600 .env
   umask 022
@@ -113,25 +123,26 @@ fi
 # Caddy publishes 80 and 443. Check before the build, not after, and do not count our own caddy on a re-run.
 if grep -qE '^COMPOSE_PROFILES=.*caddy' .env; then
   own_caddy=$(docker compose ps -q caddy 2>/dev/null || true)
-  for port in 80 443; do
+  for port in $HTTP_PORT $HTTPS_PORT; do
     holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
     [ -z "$holder" ] && continue
     if [ -n "$own_caddy" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
-    die "port $port is already in use on this VPS ($holder); the one-line install needs a VPS with 80 and 443 free (an application template is not), or see hostinger.md §11b for a box with its own reverse proxy"
+    die "port $port is already in use on this VPS ($holder). Pick free ports instead: HTTPS_PORT=8443 HTTP_PORT=8080 in front of the install line (self-signed certificate, hostinger.md §0), or see §11b for a box with its own reverse proxy"
   done
 fi
 
 say "building and starting the stack (the first build takes a few minutes)"
 docker compose up -d --build || logs_and_die "docker compose up failed"
 
-say "waiting for https://$DOMAIN/healthz"
+say "waiting for $URL/healthz"
 for _ in $(seq 36); do
-  if curl -fsS -o /dev/null --max-time 5 "https://$DOMAIN/healthz"; then
+  # -k: on an alternate port the certificate comes from Caddy's own CA.
+  if curl -fsSk -o /dev/null --max-time 5 "$URL/healthz"; then
     cat <<EOF
 
-Done: https://$DOMAIN is up.
+Done: $URL is up.$([ "$HTTPS_PORT" = 443 ] || printf '\n   The certificate is self-signed (Let'"'"'s Encrypt cannot reach port %s): the browser warns once; accept it.' "$HTTPS_PORT")
 
-1. Sign up at https://$DOMAIN; you are signed in at once. Then close registration (hostinger.md §6): set
+1. Sign up at $URL; you are signed in at once. Then close registration (hostinger.md §6): set
    REGISTRATION_OPEN=false in $DIR/deploy/.env and run: cd $DIR/deploy && docker compose up -d
 2. Every sign-up gets its own workspace, linked to the upstream automatically. A workspace sees the accounts
    it connected (Accounts -> Connect account in the dashboard) or was given with analytics-claim.
@@ -151,4 +162,4 @@ EOF
   sleep 5
 done
 
-logs_and_die "https://$DOMAIN/healthz did not answer within 3 minutes"
+logs_and_die "$URL/healthz did not answer within 3 minutes"

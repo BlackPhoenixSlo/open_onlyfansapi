@@ -1,0 +1,10 @@
+# For HTTPS_PORT other than 443: Let's Encrypt only reaches 80 and 443, so Caddy's own CA signs the certificate
+# (tls internal) and browsers warn once. Selected with CADDYFILE=Caddyfile.selfsigned in deploy/.env.
+{
+	skip_install_trust
+}
+{$PUBLIC_URL} {
+	tls internal
+	encode zstd gzip
+	reverse_proxy gateway:4000
+}

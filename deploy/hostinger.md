@@ -25,6 +25,16 @@ DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubuse
 No domain yet? Hostinger gives every VPS a hostname like `srv1234567.hstgr.cloud` that already resolves to it, so
 `DOMAIN=$(hostname -f)` works without §2.
 
+Ports 80 or 443 already taken on the box? Pick others, and open them in the hPanel firewall:
+
+```sh
+HTTPS_PORT=8443 HTTP_PORT=8080 DOMAIN=$(hostname -f) bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+```
+
+The site is then `https://<domain>:8443`. Let's Encrypt only reaches 80 and 443, so the certificate comes from
+Caddy's own CA and the browser warns once; accept it. For a trusted certificate on another port, put the box's
+own reverse proxy in front instead (§11b).
+
 [`install.sh`](install.sh) does §§3-6 up to the first sign-up, so skip those:
 
 - checks Docker and the Compose plugin, and that `DOMAIN`'s A and AAAA records point at this VPS

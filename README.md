@@ -95,6 +95,7 @@ DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubuse
 ```
 
 No domain yet? Use the hostname the provider gave the VPS, which already points at it: `DOMAIN=$(hostname -f)`.
+Ports 80/443 taken? Add `HTTPS_PORT=8443 HTTP_PORT=8080` in front (self-signed certificate, browser warns once).
 The script clones the repo into `/opt/gateway`, writes `deploy/.env` with fresh secrets, starts the stack and
 waits for `https://$DOMAIN/healthz`; re-running it later is the update. Then skip to "Open" below. The steps it
 automates, for doing them by hand:
