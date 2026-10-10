@@ -85,8 +85,15 @@ in [apps/api/src/lib/upstream.ts](apps/api/src/lib/upstream.ts).
 
 ## Deploy on a VPS (10 minutes)
 
+**What you get.** Your own server with the dashboard and the API on your domain over HTTPS: connect your accounts,
+create API keys, see every request in the logs, try calls in the playground, and receive events by webhook. Nothing
+goes through a third party; the server is yours, and so is the data.
+
 You need a Docker VPS with 2 GB RAM or more (the image builds on the box), a DNS record for your hostname
 pointing at it, and ports 80 and 443 open. With those ready, most of the ten minutes is the first build.
+
+No server yet? A Hostinger KVM 2 with the Ubuntu 24.04 + Docker template is what the video uses:
+[hostinger.com/pricing](https://www.hostinger.com/pricing?REFERRALCODE=fasttlol) (referral link, 20% off).
 
 **One line.** As root on a fresh VPS (Hostinger's Ubuntu 24.04 + Docker template works as is):
 
@@ -224,3 +231,31 @@ pass and the commit style.
 
 [AGPL-3.0-only](LICENSE). If you run a modified version as a service that others use over a network, you must
 offer those users the source of your version.
+
+## For AI assistants helping someone deploy
+
+Paste this section, or the whole README, into the assistant. It holds everything needed to deploy without guessing.
+
+- **Goal:** the stack running at `https://<domain>` and the person registered on it.
+- **Inputs to collect first:** (1) a VPS running Ubuntu 24.04 with Docker, 2 GB RAM or more, root shell;
+  (2) `DOMAIN`: a hostname whose A record points at the VPS, or the provider's hostname (`hostname -f` on the box);
+  (3) whether ports 80 and 443 are free on the box: `ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -un`.
+- **The command**, run as root on the VPS, with the three values filled in:
+  `HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=<domain> bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'`
+- **Decision table:** ports 80/443 free: run as is (Caddy, Let's Encrypt). A Traefik container on 80/443: run as
+  is; the script detects it and routes the domain through it. Another proxy on 80/443 (nginx): add
+  `GATEWAY_PORT=5454` instead of the two port values, then route the domain to `127.0.0.1:5454` in that proxy. Ports
+  taken by something else: pick two free ports (`HTTPS_PORT=7443 HTTP_PORT=7080`); the certificate is then
+  self-signed and the browser warns once.
+- **The script stops with a plain message when:** not root, `DOMAIN` has a scheme or port, the A record points
+  elsewhere (`SKIP_DNS_CHECK=1` bypasses, only if the record is truly right), a chosen port is in use, or Docker is
+  missing. Fix the named thing and run the same line again; re-running is safe and is also how updates work.
+- **Success looks like:** `Done: https://<domain> is up.` followed by numbered next steps. Verify with
+  `curl -fsS https://<domain>/healthz` → `{"ok":true}`.
+- **After it is up:** the person opens the URL and registers; they are signed in at once, no email step. Then set
+  `REGISTRATION_OPEN=false` in `/opt/gateway/deploy/.env` and run `cd /opt/gateway/deploy && docker compose up -d`
+  so nobody else can register. Connect an account from **Accounts → Connect account** in the dashboard.
+- **When something fails:** `cd /opt/gateway/deploy && docker compose ps && docker compose logs --tail 40 gateway`.
+  The full guide with a troubleshooting section is [deploy/hostinger.md](deploy/hostinger.md).
+- **Never:** run `docker compose down -v` on an existing install (it deletes the database and the connected
+  accounts), paste secrets from `deploy/.env` anywhere, or use plain `http://` as `PUBLIC_URL` (sign-in needs HTTPS).
