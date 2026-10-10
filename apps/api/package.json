@@ -14,6 +14,7 @@
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "auth:generate": "better-auth generate --config src/auth.ts --output src/db/auth-schema.ts -y",
     "link-team": "tsx --env-file-if-exists=../../.env src/db/link-team.ts",
+    "auth:reset-link": "tsx --env-file-if-exists=../../.env src/cli/reset-link.ts",
     "analytics:claim": "tsx --env-file-if-exists=../../.env src/cli/analytics-claim.ts",
     "analytics:backfill": "tsx --env-file-if-exists=../../.env src/cli/analytics-backfill.ts",
     "analytics:rehash": "tsx --env-file-if-exists=../../.env src/cli/analytics-rehash.ts"

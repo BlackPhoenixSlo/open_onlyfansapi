@@ -8,7 +8,7 @@ import { db } from './db/index.js';
 import * as schema from './db/schema.js';
 import { appOrigin, env } from './env.js';
 import { randomBase62 } from './lib/ids.js';
-import { sendMail } from './lib/mailer.js';
+import { sendMail, type Mail } from './lib/mailer.js';
 import { linkTeam } from './lib/team-link.js';
 
 /** Header the Fastify bridge sets to the resolved client IP; client-sent values are dropped. */
@@ -48,8 +48,9 @@ export async function ensureWorkspace(user: { id: string; name: string; email: s
         .returning({ id: schema.member.id });
       // Another request created the membership first: drop this organization row.
       if (inserted.length === 0) tx.rollback();
-      // Sign-up creates the session before this runs. With one membership per user any other active id is stale
-      // (it has no FK, so it survives an org delete): point every session of the user at this workspace.
+      // Sign-up creates its session after this runs (session.create.before below sets its active workspace). With one
+      // membership per user any other active id is stale (it has no FK, so it survives an org delete): point every
+      // existing session of the user at this workspace.
       await tx.update(schema.session).set({ activeOrganizationId: orgId }).where(eq(schema.session.userId, user.id));
     });
     created = true;
@@ -83,17 +84,22 @@ const blockOrganizationWrites = createAuthMiddleware(async (ctx) => {
 });
 
 /**
- * better-auth serves the verification link from BETTER_AUTH_URL and redirects to its callbackURL, `/` when the
- * client sent none. Point that default at the dashboard's /login (on APP_URL, so it also works when the API and the
- * dashboard are on different origins in dev): after verification the user is signed in and /login forwards to `/`;
- * an expired or invalid link arrives as `/login?error=TOKEN_EXPIRED|INVALID_TOKEN|USER_NOT_FOUND`, where the page
- * offers a resend.
+ * The dashboard page a reset token is used on, rather than better-auth's `url` (on BETTER_AUTH_URL, which can be a
+ * different origin from the dashboard in dev). The page posts the token to /reset-password.
  */
-function verificationLink(url: string) {
-  const link = new URL(url);
-  const callback = link.searchParams.get('callbackURL');
-  link.searchParams.set('callbackURL', new URL(!callback || callback === '/' ? '/login' : callback, env.APP_URL).toString());
-  return link.toString();
+export function resetPasswordLink(token: string): string {
+  return new URL(`/reset-password?token=${encodeURIComponent(token)}`, env.APP_URL).toString();
+}
+
+type ResetDelivery = (reset: { mail: Mail; link: string }) => void;
+// Not awaited: better-auth answers an unknown email at once, so waiting on SMTP here would reveal which exist.
+let deliverReset: ResetDelivery = ({ mail }) => {
+  void sendMail(mail).catch((err) => console.error('reset mail failed', err));
+};
+
+/** Replaces how a reset is delivered (the reset-link CLI prints the link instead of mailing it). */
+export function setResetDelivery(next: ResetDelivery): void {
+  deliverReset = next;
 }
 
 export const auth = betterAuth({
@@ -102,18 +108,26 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: [appOrigin],
   database: drizzleAdapter(db, { provider: 'pg', schema }),
-  emailAndPassword: { enabled: true, requireEmailVerification: true },
-  emailVerification: {
-    // Sent on sign-up because requireEmailVerification is on.
-    autoSignInAfterVerification: true,
-    expiresIn: 3600,
-    sendVerificationEmail: async ({ user, url }) => {
-      const link = verificationLink(url);
-      await sendMail({
-        to: user.email,
-        subject: 'Verify your email address',
-        text: `Confirm your email address to finish signing up:\n\n${link}\n\nThe link expires in 1 hour. If you did not sign up, ignore this email.`,
-        html: `<p>Confirm your email address to finish signing up:</p><p><a href="${link.replaceAll('&', '&amp;')}">Verify email</a></p><p>The link expires in 1 hour. If you did not sign up, ignore this email.</p>`,
+  emailAndPassword: {
+    enabled: true,
+    // REGISTRATION_OPEN=false: /sign-up/email is refused; existing users still sign in.
+    disableSignUp: !env.REGISTRATION_OPEN,
+    // A reset signs the user out everywhere, so a session taken over with the old password ends.
+    revokeSessionsOnPasswordReset: true,
+    // The mail below says "1 hour": change both together.
+    resetPasswordTokenExpiresIn: 3600,
+    sendResetPassword: async ({ user, token }) => {
+      const link = resetPasswordLink(token);
+      const intro = 'Someone asked to reset the password for this account. Choose a new password:';
+      const outro = 'The link expires in 1 hour. If you did not request this, ignore this email.';
+      deliverReset({
+        link,
+        mail: {
+          to: user.email,
+          subject: 'Reset your password',
+          text: `${intro}\n\n${link}\n\n${outro}`,
+          html: `<p>${intro}</p><p><a href="${link.replaceAll('&', '&amp;')}">Reset password</a></p><p>${outro}</p>`,
+        },
       });
     },
   },
@@ -135,7 +149,7 @@ export const auth = betterAuth({
     },
     session: {
       create: {
-        // Later sign-ins: start the new session in the user's workspace.
+        // Sign-up and every later sign-in: start the new session in the user's workspace.
         before: async (session) => {
           const m = await findMembership(session.userId);
           return { data: { ...session, activeOrganizationId: m?.organizationId ?? null } };

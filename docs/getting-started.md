@@ -37,13 +37,17 @@ Set these values in `.env`:
 `DATABASE_URL` points at the Postgres from step 1. The API exits on start with a list of problems if a
 required value is missing or invalid.
 
-### Email verification
+### Email (password reset only)
 
-New accounts must confirm their email address before they can sign in. Email verification requires `SMTP_*`
-(`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`; e.g.
-`mail.privateemail.com`, port `587` for STARTTLS or `465` for TLS). Without `SMTP_HOST` no mail is sent and the
-link is printed in the API logs instead, which is enough for local use. Accounts created before this existed
-are marked verified by the migration.
+Sign-up needs no email: registering signs you in at once. Mail is used only for password reset: Forgot password?
+on the login page sends a link to `APP_URL/reset-password` that is valid for 1 hour and works once. Sending it
+requires `SMTP_*` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`;
+e.g. `mail.privateemail.com`, port `587` for STARTTLS or `465` for TLS). Without `SMTP_HOST` no mail is sent and
+the link is printed in the API logs instead, which is enough for local use. If the mail does not arrive, the operator
+can print a user's link with `pnpm --filter @gateway/api auth:reset-link <email>` (on a VPS:
+`docker compose exec gateway node dist/cli/reset-link.js <email>`).
+
+`REGISTRATION_OPEN=false` refuses new sign-ups; existing users still sign in.
 
 ## 3. Install, migrate, run
 
@@ -84,7 +88,6 @@ account without a proxy only when `OF_REQUIRE_PROXY=true`; by default an account
 From the dashboard (once your workspace is signed up and linked, §4): **Accounts → Connect account**, paste the
 cURL, optionally a nickname, and the proxy URL (`http://user:pass@host:port` or `socks5h://…`). The gateway
 forwards it to the upstream's `/session/bootstrap` and never stores the cURL in the request log.
-
 Or from the command line. An account connected this way belongs to no workspace, so no workspace sees it until it is
 claimed (`link-team` prints the workspace id):
 
@@ -108,8 +111,8 @@ Left empty, there is no event source and `/v1/ws` answers 503.
 
 ## 4. Sign up
 
-Open http://localhost:5173 and register, then open the verification link (from your inbox, or the API log
-without SMTP). It signs you in. A workspace is created for you and linked to the upstream automatically.
+Open http://localhost:5173 and register; you are signed in at once. A workspace is created for you and linked to
+the upstream automatically.
 
 An unlinked workspace gets `409 team_not_linked` on calls that would reach the upstream. If **Settings** shows
 yours as not linked (the automatic link failed; the API log says why), copy the slug from there and run:

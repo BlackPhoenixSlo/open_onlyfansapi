@@ -54,6 +54,8 @@ export const envSchema = z.object({
     .transform((v) => v || undefined),
   KEY_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(120),
   RUN_JOBS: bool.default(true),
+  /** `false` refuses new sign-ups (existing users still sign in): close it once your own account exists. */
+  REGISTRATION_OPEN: bool.default(true),
   /** Which request logs keep bodies: `errors` = status >= 400 only. */
   LOG_BODIES: z.enum(['errors', 'all', 'none']).default('errors'),
   LOG_BODY_MAX_BYTES: z.coerce.number().int().positive().default(16_384),
@@ -80,7 +82,7 @@ export const envSchema = z.object({
   STATS_REFRESH_HOUR_UTC: z
     .preprocess((v) => (typeof v === 'string' ? v.trim() : v), z.literal('').or(z.coerce.number().int().min(0).max(23)).optional())
     .transform((v) => (v === '' ? undefined : v)),
-  /** Outgoing mail (sign-up verification links). Unset or empty = no mail is sent; the link is logged instead. */
+  /** Outgoing mail (password reset links). Unset or empty = no mail is sent; the link is logged instead. */
   SMTP_HOST: optionalString,
   /** 465 = implicit TLS; anything else (587) must upgrade with STARTTLS. */
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -122,7 +124,7 @@ if (env.UPSTREAM_WS_URL && isUnencrypted(env.UPSTREAM_WS_URL, UPSTREAM_PLAIN_HOS
   console.warn('UPSTREAM_WS_URL is plain ws:// to a remote host: UPSTREAM_TOKEN and events travel unencrypted.');
 }
 if (env.NODE_ENV === 'production' && !env.SMTP_HOST) {
-  console.warn('SMTP_HOST is not set: email verification links, which sign the user in, are printed to this log instead of being emailed.');
+  console.warn('SMTP_HOST is not set: password reset links are printed to this log instead of being emailed.');
 }
 /** Every variable the API reads (`.env.example` must list them all). */
 export const ENV_KEYS = Object.keys(envSchema.shape);

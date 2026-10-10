@@ -30,7 +30,7 @@ Variables in the root `.env`. Copy it from `.env.example` and do not commit it. 
 | `STATIC_PARAM` | OF signing parameter, read by the upstream (or pass `--static-param` to `connect.py`) | Whoever ran the upstream before (check) |
 | `OF_REQUIRE_PROXY` | `true` refuses accounts that have no proxy | Default `false` |
 | `ALLOW_HTTP_WEBHOOKS` | Allows the local `http://localhost:4100` webhook receiver | Set `true` for local tests only |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | Verification email. With no `SMTP_HOST`, the link is printed in the API log | Your mail provider |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | Password reset email. With no `SMTP_HOST`, the link is printed in the API log | Your mail provider |
 | `ANALYTICS_REQUESTS_PER_HOUR`, `ANALYTICS_PAGE_DELAY_MS`, `ANALYTICS_BACKOFF_MAX_MS` | Backfill pacing | Keep the defaults: 600, 300, 300000 |
 | `KEY_RATE_LIMIT_PER_MIN`, `LOG_BODIES`, `RUN_JOBS` | Per-key limit (120), body logging (`errors`), retention jobs and the webhook worker (`true`) | Defaults |
 
@@ -78,8 +78,7 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
 
 > Local dev login (exists only in the local Postgres): `dev@localhost.test` / `gateway-dev-2026`, owner of org `dev-iyogpp`. Not an env var: the hygiene test rejects unknown keys in `.env.example`.
 
-1. **Sign up.** Open the dashboard and register. Open the verification link, which is in the API log when there is no SMTP. A
-   workspace is created.
+1. **Sign up.** Open the dashboard and register; you are signed in at once. A workspace is created.
 2. **Get the workspace id.** Sign-up links the workspace. Copy `<slug>` from **Settings**, then run
    `pnpm --filter @gateway/api link-team <slug>` (harmless when already linked). It prints
    `linked workspace <slug> (<teamId>)`. Note `<teamId>` for later.
@@ -122,7 +121,7 @@ Use `H="Authorization: Bearer $READ"` and base `localhost:4000`. "Verified" mean
 | Logs and usage | Dashboard **Logs** and **Usage** after the calls above | Rows with status, latency, key and account. No credential headers stored | Your calls appear, redacted | none recorded |
 | Playground | Dashboard `/playground`, pick an op and the account, Send | `limit` 20 and last-7-days dates prefilled, Table view, Copy curl | Real response rendered | `pnpm media` (screenshot script) Playground selector is broken (earlier session notes). The Playground itself is not affected |
 | OpenAPI and docs | `GET /openapi.json`, `/docs` | OpenOnlyfansAPI plus upstream ops under `platform` | Upstream ops present | Spec is cached 10 min |
-| Email verification | Sign up a new user | `403 EMAIL_NOT_VERIFIED` until the link is opened. Login page has Resend | Real email received with `SMTP_*` set | Live SMTP send untested |
+| Sign-up signs in | Sign up a new user | Lands on the dashboard signed in, no email sent. With `REGISTRATION_OPEN=false` sign-up is refused | Signed in with no email | Live SMTP send (password reset) untested |
 | Webhooks | Set `ALLOW_HTTP_WEBHOOKS=true`. Run `WEBHOOK_SECRET=whsec_… pnpm --filter @gateway/api exec tsx src/db/webhook-receiver.ts` (:4100). Create an endpoint `http://localhost:4100/hook` with `$WRITE`, then `POST /v1/webhooks/$ID/test` | Receiver logs `signature ok`, delivery `succeeded` | A real OF event (e.g. a fan message) delivered | `$WRITE` is allowlisted, and any allowlisted key gets `403 account_not_allowed` on webhook routes. Create the endpoint from the dashboard (session) or with an un-allowlisted write key (check). Events are at-most-once and lost during reconnects. `upstream.*` names may change |
 | Webhook SSE and live events | Dashboard **Webhooks**: Live events card, **Emit test event** button | Card lists the newest ledger events on open; toast per delivery attempt, `webhook.test` in the card, desktop notification when the tab is hidden | Real event from the account shows in the card | Stream lives 10 min, then the browser reconnects (check) |
 | Realtime `/v1/ws` | `node -e "const w=new WebSocket('ws://localhost:4000/v1/ws?accountId=<id>',['bearer','bearer.'+process.env.READ]);w.onmessage=m=>console.log(m.data)"` | `ready` frame, then events | A real event frame | 503 when `UPSTREAM_WS_URL` is empty |

@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { ensureWorkspace, ORG_WRITE_REFUSED } from '../src/auth.js';
+import { ensureWorkspace, ORG_WRITE_REFUSED, resetPasswordLink } from '../src/auth.js';
 import { db, pool } from '../src/db/index.js';
 import { member, organization, user } from '../src/db/schema.js';
 import { isTeamLinked } from '../src/lib/team-link.js';
-import { bearer, cookieOf, createKey, ORIGIN, outbox, resetDb, signUp, verificationPath } from './helpers.js';
+import { bearer, cookieOf, createKey, ORIGIN, outbox, resetDb, signUp } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 let u: Awaited<ReturnType<typeof signUp>>;
@@ -138,52 +138,111 @@ describe('workspace creation on first session load', () => {
   });
 });
 
-describe('email verification', () => {
-  const email = 'verify@example.test';
+describe('sign-up', () => {
+  const email = 'signup@example.test';
   const credentials = { email, password: 'pw-12345678' };
 
-  it('sign-up sends a verification mail and starts no session', async () => {
-    const res = await authPost('sign-up/email', { ...credentials, name: 'verify' });
+  it('signs the user in at once, in their workspace, and sends no mail', async () => {
+    const res = await authPost('sign-up/email', { ...credentials, name: 'signup' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().token).toBeNull();
-    expect(cookieOf(res)).not.toContain('session_token');
-    const mail = outbox.findLast((m) => m.to === email);
-    expect(mail?.subject).toBe('Verify your email address');
-    expect(mail?.html).toContain('/api/auth/verify-email?token=');
-  });
-
-  it('refuses sign-in until the email is verified', async () => {
-    const res = await authPost('sign-in/email', credentials);
-    expect(res.statusCode).toBe(403);
-    expect(res.json().code).toBe('EMAIL_NOT_VERIFIED');
-  });
-
-  it('resends the verification mail', async () => {
-    const before = outbox.length;
-    const res = await authPost('send-verification-email', { email });
-    expect(res.statusCode).toBe(200);
-    expect(outbox.slice(before).map((m) => m.to)).toEqual([email]);
-  });
-
-  it('the link verifies the email, signs the user in and redirects to the dashboard login (which forwards to /)', async () => {
-    const res = await app.inject({ method: 'GET', url: verificationPath(email) });
-    expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe(`${ORIGIN}/login`);
-    const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie: cookieOf(res) } });
-    expect(session.json().user).toMatchObject({ email, emailVerified: true });
+    const cookie = cookieOf(res);
+    expect(cookie).toContain('session_token');
+    const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie } });
+    expect(session.json().user).toMatchObject({ email });
     expect(session.json().session.activeOrganizationId).toEqual(expect.any(String));
+    expect(outbox.filter((m) => m.to === email)).toEqual([]);
   });
 
-  it('an invalid link redirects to /login with the error, for the resend prompt', async () => {
-    const callbackURL = encodeURIComponent(`${ORIGIN}/login`);
-    const res = await app.inject({ method: 'GET', url: `/api/auth/verify-email?token=bogus&callbackURL=${callbackURL}` });
-    expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe(`${ORIGIN}/login?error=INVALID_TOKEN`);
-  });
-
-  it('allows sign-in once verified', async () => {
+  it('allows sign-in with the same credentials', async () => {
     const res = await authPost('sign-in/email', credentials);
     expect(res.statusCode).toBe(200);
     expect(res.json().token).toEqual(expect.any(String));
+  });
+
+  it('REGISTRATION_OPEN=false refuses sign-up', async () => {
+    // env.ts is read once at import: load a fresh auth module with the variable set.
+    vi.stubEnv('REGISTRATION_OPEN', 'false');
+    vi.resetModules();
+    const { auth: closed } = await import('../src/auth.js');
+    const { pool: closedPool } = await import('../src/db/index.js');
+    try {
+      const res = await closed.handler(
+        new Request('http://localhost:4000/api/auth/sign-up/email', {
+          method: 'POST',
+          headers: { origin: ORIGIN, 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'closed@example.test', password: 'pw-12345678', name: 'closed' }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe('EMAIL_PASSWORD_SIGN_UP_DISABLED');
+      expect(await db.select().from(user).where(eq(user.email, 'closed@example.test'))).toEqual([]);
+    } finally {
+      await closedPool.end();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('password reset', () => {
+  const email = 'reset@example.test';
+  const oldPassword = 'pw-12345678';
+  const newPassword = 'new-pw-87654321';
+  let token: string;
+  let cookie: string;
+  let userId: string;
+  /** The answer to a reset request for the known address, compared with the unknown one. */
+  let knownBody: unknown;
+
+  beforeAll(async () => {
+    ({ cookie, userId } = await signUp(app, email));
+  });
+
+  it('request-password-reset mails a link to the dashboard reset page', async () => {
+    const res = await authPost('request-password-reset', { email });
+    expect(res.statusCode).toBe(200);
+    knownBody = res.json();
+    const { rows } = await pool.query<{ identifier: string }>(
+      `SELECT identifier FROM verification WHERE value = $1 AND identifier LIKE 'reset-password:%'`,
+      [userId],
+    );
+    expect(rows).toHaveLength(1);
+    token = rows[0]!.identifier.slice('reset-password:'.length);
+    const link = resetPasswordLink(token);
+    expect(link).toBe(`${ORIGIN}/reset-password?token=${token}`);
+    const mail = outbox.findLast((m) => m.to === email);
+    expect(mail?.subject).toBe('Reset your password');
+    expect(mail?.text).toContain(link);
+    expect(mail?.html).toContain(link);
+  });
+
+  it('answers an unknown email the same way and sends nothing', async () => {
+    const before = outbox.length;
+    const res = await authPost('request-password-reset', { email: 'nobody@example.test' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(knownBody);
+    expect(outbox.length).toBe(before);
+  });
+
+  it('refuses an invalid token', async () => {
+    const res = await authPost('reset-password', { token: 'bogus', newPassword });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_TOKEN');
+  });
+
+  it('the token sets the new password: the old one is refused, the new one accepted', async () => {
+    const res = await authPost('reset-password', { token, newPassword });
+    expect(res.statusCode).toBe(200);
+    expect((await authPost('sign-in/email', { email, password: oldPassword })).statusCode).toBe(401);
+    expect((await authPost('sign-in/email', { email, password: newPassword })).statusCode).toBe(200);
+  });
+
+  it('the reset signs out the sessions started before it', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie } });
+    expect(res.json()).toBeNull();
+  });
+
+  it('the token works once', async () => {
+    const res = await authPost('reset-password', { token, newPassword: 'third-pw-12345678' });
+    expect(res.statusCode).toBe(400);
   });
 });

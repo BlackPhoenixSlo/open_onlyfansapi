@@ -11,7 +11,7 @@ function smtpTransport(host: string): MailTransport {
     secure: env.SMTP_PORT === 465,
     // Not 465: refuse to send unless the server upgrades to TLS (STARTTLS).
     requireTLS: env.SMTP_PORT !== 465,
-    // Sign-up waits for the send: do not let a hanging server stall it.
+    // Do not let a hanging server hold a connection open.
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     // env.ts requires SMTP_PASSWORD with SMTP_USER, and a sender (SMTP_FROM_EMAIL or SMTP_USER) with SMTP_HOST.

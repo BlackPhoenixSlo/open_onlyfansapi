@@ -66,9 +66,8 @@ export function Tutorial() {
         </Step>
         <Step title="Sign up">
           <p>
-            Open the dashboard and register, then open the verification link from your email. Without SMTP the link is
-            printed in the API log (<code>docker compose logs gateway</code> on a VPS). This creates your workspace and
-            links it to the upstream automatically. A workspace sees only the accounts it connects; another
+            Open the dashboard and register; you are signed in at once, no email needed. This creates your workspace
+            and links it to the upstream automatically. A workspace sees only the accounts it connects; another
             workspace's accounts stay out of its lists, calls, events and stats.
           </p>
           <p>
