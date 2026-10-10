@@ -29,9 +29,14 @@ then `https://<domain>:7443`. The ports already in use:
 
 ```sh
 ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' '; echo
-``` Let's Encrypt only reaches 80 and 443, so the certificate comes from
-Caddy's own CA and the browser warns once; accept it. For a trusted certificate on another port, put the box's
-own reverse proxy in front instead (§11b).
+```
+
+On other ports the certificate comes from Caddy's own CA, because Let's Encrypt only reaches 80 and 443, and
+the browser warns once; accept it.
+
+For a trusted certificate on a box where Traefik, nginx or another proxy owns 80/443 (§11b), let that proxy
+serve the domain and skip Caddy: `GATEWAY_PORT=5454` instead of the two port values. The stack then listens on
+`127.0.0.1:5454`, and the script prints the Traefik route to add; the proxy gets the Let's Encrypt certificate.
 
 [`install.sh`](install.sh) does §§3-6 up to the first sign-up, so skip those:
 

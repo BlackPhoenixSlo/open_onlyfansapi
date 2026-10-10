@@ -10,6 +10,9 @@
 #   HTTPS_PORT      default 443. Another value (e.g. 8443) when 80/443 are taken: the site is https://DOMAIN:8443
 #                   with a certificate from Caddy's own CA (Let's Encrypt only reaches 80 and 443), so browsers
 #                   warn once; HTTP_PORT (default 80) is then the plain-http redirect port, e.g. 8080
+#   GATEWAY_PORT    a box whose 80/443 belong to Traefik, nginx or another proxy (hostinger.md §11b): no Caddy, the
+#                   gateway is published on 127.0.0.1:GATEWAY_PORT and that proxy terminates TLS for DOMAIN with
+#                   a real certificate; the script prints the Traefik route to add. Not with HTTPS_PORT/HTTP_PORT.
 #   SKIP_DNS_CHECK  1 = do not check that DOMAIN resolves to this host
 set -euo pipefail
 cd / # the caller may sit in a directory that no longer exists (an rm -rf of the previous install)
@@ -18,9 +21,10 @@ DIR=/opt/gateway
 REPO=${REPO:-https://github.com/BlackPhoenixSlo/open_onlyfansapi.git}
 REF=${REF:-master}
 DOMAIN=${DOMAIN:-}
-ports_given=${HTTPS_PORT+1}${HTTP_PORT+1} # set when the caller named a port: a re-run then moves the stack to it
+ports_given=${HTTPS_PORT+1}${HTTP_PORT+1}${GATEWAY_PORT+1} # the caller named a port: a re-run then moves the stack to it
 HTTPS_PORT=${HTTPS_PORT:-443}
 HTTP_PORT=${HTTP_PORT:-80}
+GATEWAY_PORT=${GATEWAY_PORT:-}
 
 die() { echo "install: $*" >&2; exit 1; }
 logs_and_die() { # <message>; run from deploy/
@@ -35,7 +39,24 @@ say() { echo "==> $*"; }
 [[ $DOMAIN =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] ||
   die "DOMAIN must be a bare hostname like gw.example.com (no https://, path or port), got: $DOMAIN"
 [[ $HTTPS_PORT =~ ^[0-9]+$ && $HTTP_PORT =~ ^[0-9]+$ ]] || die "HTTPS_PORT and HTTP_PORT must be numbers, got: $HTTPS_PORT $HTTP_PORT"
-if [ "$HTTPS_PORT" = 443 ]; then URL="https://$DOMAIN"; else URL="https://$DOMAIN:$HTTPS_PORT"; fi
+[[ -z $GATEWAY_PORT || $GATEWAY_PORT =~ ^[0-9]+$ ]] || die "GATEWAY_PORT must be a number, got: $GATEWAY_PORT"
+if [ -n "$GATEWAY_PORT" ] && { [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; }; then
+  die "GATEWAY_PORT (the box's own proxy serves 443) does not go with HTTPS_PORT/HTTP_PORT (our Caddy on other ports)"
+fi
+if [ -n "$GATEWAY_PORT" ] || [ "$HTTPS_PORT" = 443 ]; then URL="https://$DOMAIN"; else URL="https://$DOMAIN:$HTTPS_PORT"; fi
+
+# The .env lines that pick the mode; the secrets and everything else come from .env.example or the kept .env.
+mode_lines() {
+  printf 'PUBLIC_URL=%s\n' "$URL"
+  if [ -n "$GATEWAY_PORT" ]; then
+    printf 'COMPOSE_PROFILES=upstream\nCOMPOSE_FILE=docker-compose.yml:docker-compose.direct.yml\nGATEWAY_PORT=127.0.0.1:%s\n' "$GATEWAY_PORT"
+  elif [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
+    printf 'COMPOSE_PROFILES=caddy,upstream\nHTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT"
+  else
+    printf 'COMPOSE_PROFILES=caddy,upstream\n'
+  fi
+}
+MODE_KEYS='^(PUBLIC_URL|COMPOSE_PROFILES|COMPOSE_FILE|GATEWAY_PORT|HTTPS_PORT|HTTP_PORT|CADDYFILE)='
 [ "$(id -u)" -eq 0 ] || die "must run as root: open a root shell first (sudo -i), then run the line again"
 
 command -v docker >/dev/null || die "docker is not installed; use the Ubuntu 24.04 + Docker template (hostinger.md §1)"
@@ -93,14 +114,14 @@ if [ -f .env ]; then
   if [ -n "$ports_given" ]; then
     # Ports named on the command line win: rewrite the port lines, keep every other line (and the secrets).
     umask 077
-    grep -vE '^(PUBLIC_URL|HTTPS_PORT|HTTP_PORT|CADDYFILE)=' .env >.env.tmp
-    printf 'PUBLIC_URL=%s\n' "$URL" >>.env.tmp
-    if [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
-      printf 'HTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT" >>.env.tmp
-    fi
+    { grep -vE "$MODE_KEYS" .env || true; mode_lines; } >.env.tmp
     mv .env.tmp .env && chmod 600 .env
     umask 022
-    say "deploy/.env now serves $URL (ports $HTTP_PORT/$HTTPS_PORT)"
+    say "deploy/.env now serves $URL${GATEWAY_PORT:+ from 127.0.0.1:$GATEWAY_PORT behind the proxy on this box}"
+    # A profile change does not stop a running caddy, and it would keep its ports.
+    if [ -n "$GATEWAY_PORT" ] && [ -n "$(docker compose --profile caddy ps -q caddy 2>/dev/null)" ]; then
+      docker compose --profile caddy rm -sf caddy >/dev/null
+    fi
   elif ! grep -qxF "PUBLIC_URL=$URL" .env; then
     echo "install: warning: deploy/.env has a PUBLIC_URL other than $URL; Caddy serves that one (name HTTPS_PORT/HTTP_PORT on the command line to move it)" >&2
   fi
@@ -119,37 +140,72 @@ else
   umask 077
   while IFS= read -r line || [ -n "$line" ]; do
     case $line in
-      PUBLIC_URL=*) line="PUBLIC_URL=$URL" ;;
       POSTGRES_PASSWORD=*) line="POSTGRES_PASSWORD=$(openssl rand -hex 24)" ;;
       BETTER_AUTH_SECRET=*) line="BETTER_AUTH_SECRET=$(openssl rand -base64 32)" ;;
       UPSTREAM_TOKEN=*) line="UPSTREAM_TOKEN=$(openssl rand -hex 32)" ;;
     esac
+    [[ $line =~ $MODE_KEYS ]] && continue
     printf '%s\n' "$line"
   done <.env.example >.env.tmp
-  if [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
-    printf 'HTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT" >>.env.tmp
-  fi
+  mode_lines >>.env.tmp
   mv .env.tmp .env
   chmod 600 .env
   umask 022
 fi
 
-# Caddy publishes 80 and 443. Check before the build, not after, and do not count our own caddy on a re-run.
-if grep -qE '^COMPOSE_PROFILES=.*caddy' .env; then
-  own_caddy=$(docker compose ps -q caddy 2>/dev/null || true)
-  for port in $HTTP_PORT $HTTPS_PORT; do
-    holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
-    [ -z "$holder" ] && continue
-    if [ -n "$own_caddy" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
-    die "port $port is already in use on this VPS ($holder). Name two free ports in front of the install line, e.g. HTTPS_PORT=8443 HTTP_PORT=8081 (self-signed certificate, hostinger.md §0; ss -Hltn lists the ports in use), or see §11b for a box with its own reverse proxy"
-  done
+# The published ports must be free. Check before the build, not after, and do not count our own containers on a re-run.
+if [ -n "$GATEWAY_PORT" ]; then
+  own=$(docker compose ps -q gateway 2>/dev/null || true); check_ports=$GATEWAY_PORT
+else
+  own=$(docker compose ps -q caddy 2>/dev/null || true); check_ports="$HTTP_PORT $HTTPS_PORT"
 fi
+for port in $check_ports; do
+  holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
+  [ -z "$holder" ] && continue
+  if [ -n "$own" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
+  die "port $port is already in use on this VPS ($holder). A box whose 80/443 belong to Traefik or nginx: GATEWAY_PORT=5454 in front of the install line (that proxy serves the domain, hostinger.md §11b). Otherwise name two free ports, e.g. HTTPS_PORT=8443 HTTP_PORT=8081 (self-signed certificate, §0); ss -Hltn lists the ports in use"
+done
 
 say "building and starting the stack (the first build takes a few minutes)"
 docker compose up -d --build || logs_and_die "docker compose up failed"
 
+if [ -n "$GATEWAY_PORT" ]; then
+  # The stack answers on the local port; the box's proxy puts the domain in front of it.
+  say "waiting for http://127.0.0.1:$GATEWAY_PORT/healthz"
+  for _ in $(seq 36); do
+    curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:$GATEWAY_PORT/healthz" && break
+    sleep 5
+  done
+  curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:$GATEWAY_PORT/healthz" ||
+    logs_and_die "http://127.0.0.1:$GATEWAY_PORT/healthz did not answer within 3 minutes"
+  if ! curl -fsS -o /dev/null --max-time 5 "$URL/healthz"; then
+    cat <<EOF
+
+The stack is up on 127.0.0.1:$GATEWAY_PORT. $URL does not answer yet: route it in the proxy that owns 443 on this box.
+For Traefik, a dynamic-configuration file (its file provider directory; entryPoint and certResolver names are
+the ones in your Traefik config):
+
+  http:
+    routers:
+      gateway:
+        rule: Host(\`$DOMAIN\`)
+        entryPoints: [websecure]
+        tls: { certResolver: letsencrypt }
+        service: gateway
+    services:
+      gateway:
+        loadBalancer:
+          servers: [{ url: "http://127.0.0.1:$GATEWAY_PORT" }]
+
+A Traefik container without host networking cannot reach 127.0.0.1: then publish on the bridge instead,
+GATEWAY_PORT=172.17.0.1:$GATEWAY_PORT in deploy/.env and the same address in the url above, and docker compose up -d.
+Then: curl -fsS $URL/healthz
+EOF
+  fi
+fi
+
 say "waiting for $URL/healthz"
-for _ in $(seq 36); do
+for _ in $(seq "$([ -n "$GATEWAY_PORT" ] && echo 2 || echo 36)"); do
   # -k: on an alternate port the certificate comes from Caddy's own CA.
   if curl -fsSk -o /dev/null --max-time 5 "$URL/healthz"; then
     cat <<EOF
@@ -176,4 +232,5 @@ EOF
   sleep 5
 done
 
+[ -n "$GATEWAY_PORT" ] && exit 0 # the stack is up; the proxy route above is the remaining step
 logs_and_die "$URL/healthz did not answer within 3 minutes"

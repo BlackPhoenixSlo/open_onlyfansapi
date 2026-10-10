@@ -21,6 +21,8 @@ if bash -n "$script"; then echo "ok    bash -n"; else echo "FAIL  bash -n"; fail
 expect "DOMAIN missing" "DOMAIN is required"
 expect "DOMAIN with scheme" "bare hostname" DOMAIN=https://gw.example.com
 expect "DOMAIN with port" "bare hostname" DOMAIN=gw.example.com:443
+expect "GATEWAY_PORT with HTTPS_PORT" "does not go with" DOMAIN=gw.example.com GATEWAY_PORT=5454 HTTPS_PORT=8443
+expect "GATEWAY_PORT not a number" "must be a number" DOMAIN=gw.example.com GATEWAY_PORT=abc
 if [ "$(id -u)" -eq 0 ]; then
   echo "skip  not root (running as root)"
 else
