@@ -12,6 +12,7 @@
 #                   warn once; HTTP_PORT (default 80) is then the plain-http redirect port, e.g. 8080
 #   SKIP_DNS_CHECK  1 = do not check that DOMAIN resolves to this host
 set -euo pipefail
+cd / # the caller may sit in a directory that no longer exists (an rm -rf of the previous install)
 
 DIR=/opt/gateway
 REPO=${REPO:-https://github.com/BlackPhoenixSlo/open_onlyfansapi.git}
