@@ -88,6 +88,17 @@ in [apps/api/src/lib/upstream.ts](apps/api/src/lib/upstream.ts).
 You need a Docker VPS with 2 GB RAM or more (the image builds on the box), a DNS record for your hostname
 pointing at it, and ports 80 and 443 open. With those ready, most of the ten minutes is the first build.
 
+**One line.** As root on a fresh VPS (Hostinger's Ubuntu 24.04 + Docker template works as is):
+
+```sh
+DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+```
+
+No domain yet? Use the hostname the provider gave the VPS, which already points at it: `DOMAIN=$(hostname -f)`.
+The script clones the repo into `/opt/gateway`, writes `deploy/.env` with fresh secrets, starts the stack and
+waits for `https://$DOMAIN/healthz`; re-running it later is the update. Then skip to "Open" below. The steps it
+automates, for doing them by hand:
+
 ```sh
 git clone https://github.com/BlackPhoenixSlo/open_onlyfansapi.git /opt/gateway
 cd /opt/gateway/deploy

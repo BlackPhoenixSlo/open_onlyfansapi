@@ -22,6 +22,9 @@ root on the VPS:
 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
 ```
 
+No domain yet? Hostinger gives every VPS a hostname like `srv1234567.hstgr.cloud` that already resolves to it, so
+`DOMAIN=$(hostname -f)` works without §2.
+
 [`install.sh`](install.sh) does §§3-6 up to the first sign-up, so skip those:
 
 - checks Docker and the Compose plugin, and that `DOMAIN`'s A and AAAA records point at this VPS
