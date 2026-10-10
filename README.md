@@ -91,11 +91,12 @@ pointing at it, and ports 80 and 443 open. With those ready, most of the ten min
 **One line.** As root on a fresh VPS (Hostinger's Ubuntu 24.04 + Docker template works as is):
 
 ```sh
-DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
 ```
 
-No domain yet? Use the hostname the provider gave the VPS, which already points at it: `DOMAIN=$(hostname -f)`.
-Ports 80/443 taken? Add `HTTPS_PORT=8443 HTTP_PORT=8080` in front (self-signed certificate, browser warns once).
+Change the three values to taste. No domain yet? Use the hostname the provider gave the VPS, which already
+points at it: `DOMAIN=$(hostname -f)`. Ports 80/443 taken? Any other pair works, e.g. `HTTPS_PORT=8443 HTTP_PORT=8080`
+(the certificate is then self-signed and the browser warns once).
 The script clones the repo into `/opt/gateway`, writes `deploy/.env` with fresh secrets, starts the stack and
 waits for `https://$DOMAIN/healthz`; re-running it later is the update. Then skip to "Open" below. The steps it
 automates, for doing them by hand:

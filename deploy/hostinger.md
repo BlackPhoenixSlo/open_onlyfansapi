@@ -19,19 +19,13 @@ Do §1 (the VPS, with `22/80/443` open in the hPanel firewall) and §2 (the A re
 root on the VPS:
 
 ```sh
-DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
 ```
 
-No domain yet? Hostinger gives every VPS a hostname like `srv1234567.hstgr.cloud` that already resolves to it, so
-`DOMAIN=$(hostname -f)` works without §2.
-
-Ports 80 or 443 already taken on the box? Pick others, and open them in the hPanel firewall:
-
-```sh
-HTTPS_PORT=8443 HTTP_PORT=8080 DOMAIN=$(hostname -f) bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
-```
-
-The site is then `https://<domain>:8443`. Let's Encrypt only reaches 80 and 443, so the certificate comes from
+Change the three values to taste. No domain yet? Hostinger gives every VPS a hostname like `srv1234567.hstgr.cloud`
+that already resolves to it, so `DOMAIN=$(hostname -f)` works without §2. Ports 80 or 443 already taken on the
+box? Any other pair works, e.g. `HTTPS_PORT=8443 HTTP_PORT=8080`; open them in the hPanel firewall. The site is
+then `https://<domain>:8443`. Let's Encrypt only reaches 80 and 443, so the certificate comes from
 Caddy's own CA and the browser warns once; accept it. For a trusted certificate on another port, put the box's
 own reverse proxy in front instead (§11b).
 

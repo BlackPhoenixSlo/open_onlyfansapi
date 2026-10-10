@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-line install (or update) on a fresh Hostinger VPS, Ubuntu 24.04 + Docker template, as root:
-#   DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+#   HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
 # Automates deploy/hostinger.md §§3-6: clone into /opt/gateway, write deploy/.env with fresh secrets, start the
 # stack, wait for https://$DOMAIN/healthz. Re-running is an update (a Postgres dump is taken first): it pulls,
 # keeps .env and rebuilds.
