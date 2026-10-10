@@ -370,7 +370,7 @@ say "waiting for $URL/healthz${TRAEFIK:+ (Traefik first gets the certificate)}"
 # unless Traefik has no resolver.
 insecure=1; [ -z "$TRAEFIK" ] || [ -z "$T_RESOLVER" ] || insecure=
 for _ in $(seq "$([ -n "$GATEWAY_PORT" ] && echo 2 || echo 36)"); do
-  if curl -fsS ${insecure:+-k} -o /dev/null --max-time 5 "$URL/healthz"; then
+  if curl -fs ${insecure:+-k} -o /dev/null --max-time 5 "$URL/healthz"; then # -s only: attempts before the certificate exists are not errors
     cat <<EOF
 
 Done: $URL is up.$([ -z "$TRAEFIK" ] || printf '\n   Traefik on this box serves it, with its certificate (resolver %s).' "${T_RESOLVER:-none: its default certificate}")$([ "$HTTPS_PORT" = 443 ] || printf '\n   The certificate is self-signed (Let'"'"'s Encrypt cannot reach port %s): the browser warns once; accept it.' "$HTTPS_PORT")
