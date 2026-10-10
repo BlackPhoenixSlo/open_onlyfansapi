@@ -5,6 +5,13 @@ A self-hosted API gateway and dashboard for a creator-platform service, with the
 [![CI](https://github.com/BlackPhoenixSlo/open_onlyfansapi/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackPhoenixSlo/open_onlyfansapi/actions/workflows/ci.yml)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 
+**Deploy in one line**, as root on a fresh Docker VPS, with your domain filled in
+([details](#deploy-on-a-vps-10-minutes)):
+
+```sh
+HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+```
+
 The dashboard's root `/` is the landing page, with screenshots and a tutorial: signed-out visitors get Log in and
 Register there, signed-in users an Open dashboard button. The dashboard home is `/dashboard`.
 
