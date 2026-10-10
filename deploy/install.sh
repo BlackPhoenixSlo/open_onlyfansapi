@@ -43,10 +43,11 @@ apt_install() { # <command> <package>
 apt_install git git
 apt_install openssl openssl
 
-# Caddy asks Let's Encrypt for a certificate on first boot, which fails unless DOMAIN points here.
+# Caddy asks Let's Encrypt for a certificate on first boot, which fails unless DOMAIN points here. A public
+# resolver, not the local stub: /etc/hosts maps the VPS hostname to 127.0.1.1, which is not what the CA sees.
 if [ "${SKIP_DNS_CHECK:-}" != 1 ]; then
   apt_install dig dnsutils
-  resolved=$(dig +short A "$DOMAIN" | grep -E '^[0-9.]+$' || true)
+  resolved=$(dig +short A "$DOMAIN" @1.1.1.1 | grep -E '^[0-9.]+$' || true)
   [ -n "$resolved" ] || die "$DOMAIN has no A record yet; add one pointing at this VPS (hostinger.md §2), wait, and re-run (SKIP_DNS_CHECK=1 bypasses)"
   own="$(curl -4 -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true) $(hostname -I 2>/dev/null || true)"
   match=
@@ -55,7 +56,7 @@ if [ "${SKIP_DNS_CHECK:-}" != 1 ]; then
   done
   [ -n "$match" ] || die "$DOMAIN resolves to ${resolved//$'\n'/ }, not to this host (${own//$'\n'/ }); fix the A record (hostinger.md §2) and re-run (SKIP_DNS_CHECK=1 bypasses)"
   # Let's Encrypt may validate over IPv6, so every AAAA record must be this host too.
-  for ip in $(dig +short AAAA "$DOMAIN" | grep -E '^[0-9A-Fa-f:]+$' || true); do
+  for ip in $(dig +short AAAA "$DOMAIN" @1.1.1.1 | grep -E '^[0-9A-Fa-f:]+$' || true); do
     [[ " $own " == *" $ip "* ]] ||
       die "$DOMAIN has an AAAA record $ip that is not this host; fix or remove it (hostinger.md §2) and re-run (SKIP_DNS_CHECK=1 bypasses)"
   done
