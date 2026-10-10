@@ -24,8 +24,12 @@ HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/inst
 
 Change the three values to taste. No domain yet? Hostinger gives every VPS a hostname like `srv1234567.hstgr.cloud`
 that already resolves to it, so `DOMAIN=$(hostname -f)` works without §2. Ports 80 or 443 already taken on the
-box? Any other pair works, e.g. `HTTPS_PORT=8443 HTTP_PORT=8080`; open them in the hPanel firewall. The site is
-then `https://<domain>:8443`. Let's Encrypt only reaches 80 and 443, so the certificate comes from
+box? Any other pair works, e.g. `HTTPS_PORT=7443 HTTP_PORT=7080`; open them in the hPanel firewall. The site is
+then `https://<domain>:7443`. The ports already in use:
+
+```sh
+ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' '; echo
+``` Let's Encrypt only reaches 80 and 443, so the certificate comes from
 Caddy's own CA and the browser warns once; accept it. For a trusted certificate on another port, put the box's
 own reverse proxy in front instead (§11b).
 

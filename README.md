@@ -95,8 +95,12 @@ HTTPS_PORT=443 HTTP_PORT=80 DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/inst
 ```
 
 Change the three values to taste. No domain yet? Use the hostname the provider gave the VPS, which already
-points at it: `DOMAIN=$(hostname -f)`. Ports 80/443 taken? Any other pair works, e.g. `HTTPS_PORT=8443 HTTP_PORT=8080`
-(the certificate is then self-signed and the browser warns once).
+points at it: `DOMAIN=$(hostname -f)`. Ports 80/443 taken? Any other pair works, e.g. `HTTPS_PORT=7443 HTTP_PORT=7080`
+(the certificate is then self-signed and the browser warns once). This lists the ports already in use:
+
+```sh
+ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' '; echo
+```
 The script clones the repo into `/opt/gateway`, writes `deploy/.env` with fresh secrets, starts the stack and
 waits for `https://$DOMAIN/healthz`; re-running it later is the update. Then skip to "Open" below. The steps it
 automates, for doing them by hand:
