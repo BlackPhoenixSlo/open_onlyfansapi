@@ -2,7 +2,7 @@
 
 A self-hosted API gateway and dashboard for a creator-platform service, with the upstream service included.
 
-[![CI](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackPhoenixSlo/gateway/actions/workflows/ci.yml)
+[![CI](https://github.com/BlackPhoenixSlo/open_onlyfansapi/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackPhoenixSlo/open_onlyfansapi/actions/workflows/ci.yml)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
 
 The dashboard's root `/` is the landing page, with screenshots and a tutorial: signed-out visitors get Log in and

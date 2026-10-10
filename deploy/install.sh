@@ -110,6 +110,17 @@ else
   umask 022
 fi
 
+# Caddy publishes 80 and 443. Check before the build, not after, and do not count our own caddy on a re-run.
+if grep -qE '^COMPOSE_PROFILES=.*caddy' .env; then
+  own_caddy=$(docker compose ps -q caddy 2>/dev/null || true)
+  for port in 80 443; do
+    holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
+    [ -z "$holder" ] && continue
+    if [ -n "$own_caddy" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
+    die "port $port is already in use on this VPS ($holder); the one-line install needs a VPS with 80 and 443 free (an application template is not), or see hostinger.md §11b for a box with its own reverse proxy"
+  done
+fi
+
 say "building and starting the stack (the first build takes a few minutes)"
 docker compose up -d --build || logs_and_die "docker compose up failed"
 
