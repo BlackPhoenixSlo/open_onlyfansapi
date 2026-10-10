@@ -280,10 +280,12 @@ else
   # Running only: a caddy that restarts because Traefik holds its ports is not the holder.
   own=$(docker compose ps -q --status running caddy 2>/dev/null || true); check_ports="$HTTP_PORT $HTTPS_PORT"
 fi
+# The host ports our own container publishes (empty when there is none): only those are not "taken".
+own_ports=$( [ -n "$own" ] && docker port "$own" 2>/dev/null | sed -E 's/.*:([0-9]+)$/\1/' | sort -u || true)
 for port in $check_ports; do
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
   [ -z "$holder" ] && continue
-  if [ -n "$own" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
+  if printf '%s\n' "$own_ports" | grep -qx "$port"; then continue; fi
   # The default line on a box whose 80/443 belong to a Traefik container: the domain goes through it.
   if [ -z "$GATEWAY_PORT" ] && [ "$HTTPS_PORT" = 443 ] && [ "$HTTP_PORT" = 80 ] && TRAEFIK=$(traefik_container) && [ -n "$TRAEFIK" ]; then
     break
