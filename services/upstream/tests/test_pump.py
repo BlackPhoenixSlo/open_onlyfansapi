@@ -54,6 +54,15 @@ def supervisor(hub=None, **kw):
     return Supervisor(hub or FakeHub(), source=src, **kw), src
 
 
+@pytest.fixture(autouse=True)
+def inline_threads(monkeypatch):
+    """Run `asyncio.to_thread` inline so `settle()` does not race a real worker thread."""
+    async def inline(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline)
+
+
 @pytest.fixture
 def evicted(monkeypatch):
     calls = []

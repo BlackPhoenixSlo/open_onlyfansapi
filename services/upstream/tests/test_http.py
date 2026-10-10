@@ -491,6 +491,10 @@ def test_failed_bootstrap_does_not_revive_an_expired_session(routed, bootstrap_f
         for _ in range(10):
             await asyncio.sleep(0)
 
+    async def inline(func, /, *args, **kwargs):  # no worker thread for settle() to race
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline)
     monkeypatch.setattr(upstream.supervisor, "source", expiring)
     monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=events.append))
     make_account("100001")

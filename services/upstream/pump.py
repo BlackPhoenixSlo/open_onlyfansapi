@@ -62,7 +62,7 @@ class Hub:
         self.send_timeout = send_timeout
         self._queues: set[asyncio.Queue] = set()
         self._unsent = 0             # events published while no socket was connected
-        self._unsent_logged_at = 0.0
+        self._unsent_logged_at = float("-inf")  # not 0.0: monotonic() can be < 60 s on a fresh host
 
     def publish(self, frame: dict) -> None:
         if not self._queues and frame.get("type") != "heartbeat":
