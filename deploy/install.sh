@@ -10,9 +10,14 @@
 #   HTTPS_PORT      default 443. Another value (e.g. 8443) when 80/443 are taken: the site is https://DOMAIN:8443
 #                   with a certificate from Caddy's own CA (Let's Encrypt only reaches 80 and 443), so browsers
 #                   warn once; HTTP_PORT (default 80) is then the plain-http redirect port, e.g. 8080
-#   GATEWAY_PORT    a box whose 80/443 belong to Traefik, nginx or another proxy (hostinger.md §11b): no Caddy, the
-#                   gateway is published on 127.0.0.1:GATEWAY_PORT and that proxy terminates TLS for DOMAIN with
-#                   a real certificate; the script prints the Traefik route to add. Not with HTTPS_PORT/HTTP_PORT.
+#   GATEWAY_PORT    a box whose 80/443 belong to nginx, a Traefik outside Docker or another proxy (hostinger.md §11b):
+#                   no Caddy, the gateway is published on 127.0.0.1:GATEWAY_PORT and that proxy terminates TLS for
+#                   DOMAIN with a real certificate; the script prints the Traefik route to add. Not with
+#                   HTTPS_PORT/HTTP_PORT.
+# Traefik in a container on 80/443: the default line finds it and routes DOMAIN through it (its Docker provider, or
+# a file in its file provider directory), so Traefik gets the certificate. What it reads from Traefik's config can
+# be named instead: TRAEFIK_ENTRYPOINT (the one on 443), TRAEFIK_RESOLVER (certificate resolver; empty = none),
+# TRAEFIK_NETWORK (a network Traefik is on).
 #   SKIP_DNS_CHECK  1 = do not check that DOMAIN resolves to this host
 set -euo pipefail
 cd / # the caller may sit in a directory that no longer exists (an rm -rf of the previous install)
@@ -34,6 +39,134 @@ logs_and_die() { # <message>; run from deploy/
 }
 say() { echo "==> $*"; }
 
+# Traefik already on 80/443: its container, and what its static configuration says. Traefik reads one source
+# only: a configuration file if there is one, else its flags, else its TRAEFIK_* variables.
+traefik_container() { docker ps --format '{{.ID}} {{.Image}}' | awk 'tolower($2) ~ /traefik/ { print $1; exit }'; }
+traefik_names_ok() { # <entrypoint> <resolver> <network>, each may be empty
+  [[ $1 =~ ^[A-Za-z0-9_-]*$ && $2 =~ ^[A-Za-z0-9_-]*$ && $3 =~ ^[A-Za-z0-9_.-]*$ ]]
+}
+yaml_flat() { # YAML on stdin -> a.b.c=value lines; block mappings only, list items are skipped
+  awk '
+    function unquote(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["'"'"']|["'"'"']$/, "", s); return s }
+    /^[[:space:]]*(#.*)?$/ || /^(---|\.\.\.)/ { next }
+    {
+      ind = match($0, /[^ ]/) - 1; line = substr($0, ind + 1); c = index(line, ":")
+      if (line ~ /^-/ || c == 0) next
+      key = substr(line, 1, c - 1); val = substr(line, c + 1)
+      if (val != "" && val !~ /^[[:space:]]/) next # a:b is a scalar, not a key
+      while (n > 0 && depth[n] >= ind) n--
+      depth[++n] = ind; name[n] = unquote(key); path = name[1]
+      for (i = 2; i <= n; i++) path = path "." name[i]
+      sub(/[[:space:]]+#.*$/, "", val); print path "=" unquote(val)
+    }'
+}
+toml_flat() { # TOML on stdin -> a.b.c=value lines; [[arrays of tables]] are skipped
+  awk '
+    function unquote(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^["'"'"']|["'"'"']$/, "", s); return s }
+    /^[[:space:]]*(#.*)?$/ { next }
+    { sub(/^[[:space:]]+/, "") }
+    /^\[\[/ { skip = 1; next }
+    /^\[/ { skip = 0; prefix = $0; sub(/^\[/, "", prefix); sub(/\].*$/, "", prefix); gsub(/[[:space:]"]/, "", prefix); print prefix "="; next }
+    skip { next }
+    {
+      e = index($0, "="); if (e == 0) next
+      key = substr($0, 1, e - 1); gsub(/[[:space:]"]/, "", key); val = substr($0, e + 1); sub(/[[:space:]]+#.*$/, "", val)
+      print (prefix == "" ? key : prefix "." key) "=" unquote(val)
+    }'
+}
+traefik_static() { # <container id>: its static configuration as a.b.c=value lines
+  local id=$1 args f file='' text=''
+  args=$(docker inspect -f '{{range .Args}}{{println .}}{{end}}' "$id")
+  f=$(printf '%s\n' "$args" | grep -i '^--configfile=' | head -1 | cut -d= -f2- || true)
+  for f in $f /etc/traefik/traefik.yml /etc/traefik/traefik.yaml /etc/traefik/traefik.toml; do
+    text=$(docker exec "$id" cat "$f" 2>/dev/null) && { file=$f; break; }
+  done
+  if [ -n "$file" ]; then
+    case $file in *.toml) toml_flat ;; *) yaml_flat ;; esac <<<"$text"
+  elif printf '%s\n' "$args" | grep -q '^--'; then
+    printf '%s\n' "$args" | sed -n 's/^--//p'
+  else
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$id" |
+      awk '/^TRAEFIK_/ { e = index($0, "="); k = tolower(substr($0, 9, e - 9)); gsub(/_/, ".", k); print k substr($0, e) }'
+  fi
+}
+traefik_detect() { # <container id>: sets T_ENTRYPOINT T_RESOLVER T_DOCKER T_NETWORK T_FILEDIR T_HOSTNET; TRAEFIK_* given win
+  local id=$1 port
+  # The entrypoint behind the host's 443: the container port published there (443 itself with host networking),
+  # else the one named websecure.
+  port=$(docker port "$id" 2>/dev/null | awk '$NF ~ /:443$/ { sub(/\/.*/, "", $1); print $1; exit }')
+  IFS='|' read -r T_ENTRYPOINT T_RESOLVER T_DOCKER T_NETWORK T_FILEDIR < <(traefik_static "$id" | awk -v port="${port:-443}" '
+    { e = index($0, "="); if (e == 0) e = length($0) + 1; k = substr($0, 1, e - 1); v = substr($0, e + 1); lk = tolower(k); split(k, p, ".") }
+    lk ~ /^entrypoints\.[^.]+\.address$/ {
+      a = v; sub(/\/(tcp|udp)$/, "", a)
+      if (ep == "" && a ~ (":" port "$")) ep = p[2]
+      if (tolower(p[2]) == "websecure") ws = p[2]
+    }
+    lk ~ /^certificatesresolvers\.[^.]+/ && res == "" { res = p[2] }
+    (lk == "providers.docker" && tolower(v) != "false") || lk ~ /^providers\.docker\./ { dock = 1 }
+    lk == "providers.docker.network" { net = v }
+    lk == "providers.file.directory" { dir = v }
+    END { print (ep != "" ? ep : ws) "|" res "|" dock "|" net "|" dir }')
+  # Without a network in its config: the first user-defined network the container is on.
+  [ -n "$T_NETWORK" ] || T_NETWORK=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$id" |
+    grep -vxE 'bridge|host|none' | head -1 || true)
+  T_HOSTNET=$([ "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$id")" = host ] && echo 1 || true)
+  [ -z "${TRAEFIK_ENTRYPOINT:-}" ] || T_ENTRYPOINT=$TRAEFIK_ENTRYPOINT
+  [ -z "${TRAEFIK_RESOLVER+1}" ] || T_RESOLVER=$TRAEFIK_RESOLVER
+  [ -z "${TRAEFIK_NETWORK:-}" ] || T_NETWORK=$TRAEFIK_NETWORK
+}
+traefik_file_route() { # <container id> <backend url>: a dynamic-configuration file in Traefik's file provider directory
+  local tmp
+  tmp=$(mktemp)
+  cat >"$tmp" <<EOF
+# Written by $DIR/deploy/install.sh: Traefik serves $DOMAIN from the gateway.
+http:
+  routers:
+    $ROUTER:
+      rule: Host(\`$DOMAIN\`)
+      entryPoints: [$T_ENTRYPOINT]
+      service: $ROUTER
+      tls: {${T_RESOLVER:+ certResolver: $T_RESOLVER }}
+  services:
+    $ROUTER:
+      loadBalancer:
+        servers: [{ url: "$2" }]
+EOF
+  chmod 644 "$tmp"
+  if ! docker cp "$tmp" "$1:$T_FILEDIR/$ROUTER.yml" >/dev/null; then
+    rm -f "$tmp"
+    die "could not write $T_FILEDIR/$ROUTER.yml in the Traefik container (a read-only mount?)"
+  fi
+  rm -f "$tmp"
+}
+TRAEFIK='' TRAEFIK_VIA='' # Traefik's container, and docker (labels), file (a file, over its network) or file-host
+LOCAL_PORT=5454       # file-host: Traefik on the host network reaches the gateway on 127.0.0.1:5454
+# The .env lines that pick the mode; the secrets and everything else come from .env.example or the kept .env.
+mode_lines() {
+  printf 'PUBLIC_URL=%s\n' "$URL"
+  if [ "$TRAEFIK_VIA" = docker ] || [ "$TRAEFIK_VIA" = file ]; then
+    printf 'COMPOSE_PROFILES=upstream\nCOMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml\n'
+    printf 'TRAEFIK_%s\n' "HOST=$DOMAIN" "ROUTER=$ROUTER" "ENTRYPOINT=$T_ENTRYPOINT" "RESOLVER=$T_RESOLVER" "NETWORK=$T_NETWORK"
+  elif [ "$TRAEFIK_VIA" = file-host ]; then
+    printf 'COMPOSE_PROFILES=upstream\nCOMPOSE_FILE=docker-compose.yml:docker-compose.direct.yml\nGATEWAY_PORT=127.0.0.1:%s\n' "$LOCAL_PORT"
+  elif [ -n "$GATEWAY_PORT" ]; then
+    printf 'COMPOSE_PROFILES=upstream\nCOMPOSE_FILE=docker-compose.yml:docker-compose.direct.yml\nGATEWAY_PORT=127.0.0.1:%s\n' "$GATEWAY_PORT"
+  elif [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
+    printf 'COMPOSE_PROFILES=caddy,upstream\nHTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT"
+  else
+    printf 'COMPOSE_PROFILES=caddy,upstream\n'
+  fi
+}
+MODE_KEYS='^(PUBLIC_URL|COMPOSE_PROFILES|COMPOSE_FILE|GATEWAY_PORT|HTTPS_PORT|HTTP_PORT|CADDYFILE|TRAEFIK_[A-Z]+)='
+rewrite_mode() { # the mode lines of deploy/.env from mode_lines, every other line (and the secrets) kept
+  umask 077
+  { grep -vE "$MODE_KEYS" .env || true; mode_lines; } >.env.tmp
+  mv .env.tmp .env && chmod 600 .env
+  umask 022
+}
+# Sourced (deploy/install.traefik.test.sh): the functions only.
+(return 0 2>/dev/null) && return 0
+
 # Inputs first, so a typo is reported before anything else happens.
 [ -n "$DOMAIN" ] || die "DOMAIN is required, e.g. DOMAIN=gw.example.com (a bare hostname)"
 [[ $DOMAIN =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] ||
@@ -43,20 +176,10 @@ say() { echo "==> $*"; }
 if [ -n "$GATEWAY_PORT" ] && { [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; }; then
   die "GATEWAY_PORT (the box's own proxy serves 443) does not go with HTTPS_PORT/HTTP_PORT (our Caddy on other ports)"
 fi
+traefik_names_ok "${TRAEFIK_ENTRYPOINT:-}" "${TRAEFIK_RESOLVER:-}" "${TRAEFIK_NETWORK:-}" ||
+  die "TRAEFIK_ENTRYPOINT, TRAEFIK_RESOLVER and TRAEFIK_NETWORK take a name (letters, digits, - and _, and . in a network), got: ${TRAEFIK_ENTRYPOINT:-} ${TRAEFIK_RESOLVER:-} ${TRAEFIK_NETWORK:-}"
 if [ -n "$GATEWAY_PORT" ] || [ "$HTTPS_PORT" = 443 ]; then URL="https://$DOMAIN"; else URL="https://$DOMAIN:$HTTPS_PORT"; fi
 
-# The .env lines that pick the mode; the secrets and everything else come from .env.example or the kept .env.
-mode_lines() {
-  printf 'PUBLIC_URL=%s\n' "$URL"
-  if [ -n "$GATEWAY_PORT" ]; then
-    printf 'COMPOSE_PROFILES=upstream\nCOMPOSE_FILE=docker-compose.yml:docker-compose.direct.yml\nGATEWAY_PORT=127.0.0.1:%s\n' "$GATEWAY_PORT"
-  elif [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
-    printf 'COMPOSE_PROFILES=caddy,upstream\nHTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT"
-  else
-    printf 'COMPOSE_PROFILES=caddy,upstream\n'
-  fi
-}
-MODE_KEYS='^(PUBLIC_URL|COMPOSE_PROFILES|COMPOSE_FILE|GATEWAY_PORT|HTTPS_PORT|HTTP_PORT|CADDYFILE)='
 [ "$(id -u)" -eq 0 ] || die "must run as root: open a root shell first (sudo -i), then run the line again"
 
 command -v docker >/dev/null || die "docker is not installed; use the Ubuntu 24.04 + Docker template (hostinger.md §1)"
@@ -113,10 +236,7 @@ if [ -f .env ]; then
   say "kept the existing deploy/.env"
   if [ -n "$ports_given" ]; then
     # Ports named on the command line win: rewrite the port lines, keep every other line (and the secrets).
-    umask 077
-    { grep -vE "$MODE_KEYS" .env || true; mode_lines; } >.env.tmp
-    mv .env.tmp .env && chmod 600 .env
-    umask 022
+    rewrite_mode
     say "deploy/.env now serves $URL${GATEWAY_PORT:+ from 127.0.0.1:$GATEWAY_PORT behind the proxy on this box}"
     # A profile change does not stop a running caddy, and it would keep its ports.
     if [ -n "$GATEWAY_PORT" ] && [ -n "$(docker compose --profile caddy ps -q caddy 2>/dev/null)" ]; then
@@ -157,14 +277,53 @@ fi
 if [ -n "$GATEWAY_PORT" ]; then
   own=$(docker compose ps -q gateway 2>/dev/null || true); check_ports=$GATEWAY_PORT
 else
-  own=$(docker compose ps -q caddy 2>/dev/null || true); check_ports="$HTTP_PORT $HTTPS_PORT"
+  # Running only: a caddy that restarts because Traefik holds its ports is not the holder.
+  own=$(docker compose ps -q --status running caddy 2>/dev/null || true); check_ports="$HTTP_PORT $HTTPS_PORT"
 fi
 for port in $check_ports; do
   holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
   [ -z "$holder" ] && continue
   if [ -n "$own" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
+  # The default line on a box whose 80/443 belong to a Traefik container: the domain goes through it.
+  if [ -z "$GATEWAY_PORT" ] && [ "$HTTPS_PORT" = 443 ] && [ "$HTTP_PORT" = 80 ] && TRAEFIK=$(traefik_container) && [ -n "$TRAEFIK" ]; then
+    break
+  fi
   die "port $port is already in use on this VPS ($holder). A box whose 80/443 belong to Traefik or nginx: GATEWAY_PORT=5454 in front of the install line (that proxy serves the domain, hostinger.md §11b). Otherwise name two free ports, e.g. HTTPS_PORT=8443 HTTP_PORT=8081 (self-signed certificate, §0); ss -Hltn lists the ports in use"
 done
+
+if [ -n "$TRAEFIK" ]; then
+  traefik_detect "$TRAEFIK"
+  ROUTER=gateway-$(printf '%s' "$DOMAIN" | tr 'A-Z.' 'a-z-') # one router per domain, apart from the box's other apps
+  if [ -n "$T_HOSTNET" ]; then
+    [ -z "$T_FILEDIR" ] || TRAEFIK_VIA='file-host'
+  elif [ -n "$T_NETWORK" ] && [ -n "$T_DOCKER" ]; then
+    TRAEFIK_VIA='docker'
+  elif [ -n "$T_NETWORK" ] && [ -n "$T_FILEDIR" ]; then
+    TRAEFIK_VIA='file'
+  fi
+  if [ -z "$TRAEFIK_VIA" ] || [ -z "$T_ENTRYPOINT" ]; then
+    die "Traefik (container $TRAEFIK) owns 80/443, but its config does not say how to route $DOMAIN through it. Found: entrypoint on 443 '$T_ENTRYPOINT', certificate resolver '$T_RESOLVER', docker provider ${T_DOCKER:+on}${T_DOCKER:-off}, network '$T_NETWORK', file provider directory '$T_FILEDIR', host networking ${T_HOSTNET:+yes}${T_HOSTNET:-no}. Needed: an entrypoint, and the docker provider with a user-defined network, or a file provider directory. Name what is missing in front of the line, e.g. TRAEFIK_ENTRYPOINT=websecure TRAEFIK_RESOLVER=letsencrypt TRAEFIK_NETWORK=traefik; or route the domain yourself with GATEWAY_PORT=5454 (hostinger.md §11b)"
+  fi
+  traefik_names_ok "$T_ENTRYPOINT" "$T_RESOLVER" "$T_NETWORK" ||
+    die "Traefik's config has names install.sh does not handle: entrypoint '$T_ENTRYPOINT', resolver '$T_RESOLVER', network '$T_NETWORK'; name them with TRAEFIK_ENTRYPOINT, TRAEFIK_RESOLVER, TRAEFIK_NETWORK"
+  [ -n "$T_RESOLVER" ] ||
+    echo "install: warning: Traefik has no certificate resolver, so $DOMAIN gets its default certificate (TRAEFIK_RESOLVER=<name> names one)" >&2
+  if [ "$TRAEFIK_VIA" = file-host ]; then
+    holder=$(ss -Hltnp "sport = :$LOCAL_PORT" 2>/dev/null | head -1)
+    if [ -n "$holder" ] && [ -z "$(docker compose ps -q gateway 2>/dev/null)" ]; then
+      die "port $LOCAL_PORT is already in use on this VPS ($holder); Traefik on the host network reaches the gateway there"
+    fi
+  fi
+  rewrite_mode
+  # A caddy from an earlier run would fight Traefik for 80/443.
+  [ -z "$(docker compose --profile caddy ps -aq caddy 2>/dev/null)" ] || docker compose --profile caddy rm -sf caddy >/dev/null
+  case $TRAEFIK_VIA in
+    # The compose project is gateway-prod, so the container is gateway-prod-gateway-1 on Traefik's network.
+    file) traefik_file_route "$TRAEFIK" http://gateway-prod-gateway-1:4000 ;;
+    file-host) traefik_file_route "$TRAEFIK" "http://127.0.0.1:$LOCAL_PORT" ;;
+  esac
+  say "Traefik owns 80/443: $DOMAIN goes through it (entrypoint $T_ENTRYPOINT, certificate resolver ${T_RESOLVER:-none}, $([ "$TRAEFIK_VIA" = docker ] && echo "labels on network $T_NETWORK" || echo "file $T_FILEDIR/$ROUTER.yml"))"
+fi
 
 say "building and starting the stack (the first build takes a few minutes)"
 docker compose up -d --build || logs_and_die "docker compose up failed"
@@ -204,13 +363,15 @@ EOF
   fi
 fi
 
-say "waiting for $URL/healthz"
+say "waiting for $URL/healthz${TRAEFIK:+ (Traefik first gets the certificate)}"
+# -k: on an alternate port the certificate comes from Caddy's own CA. Behind Traefik it must be a trusted one,
+# unless Traefik has no resolver.
+insecure=1; [ -z "$TRAEFIK" ] || [ -z "$T_RESOLVER" ] || insecure=
 for _ in $(seq "$([ -n "$GATEWAY_PORT" ] && echo 2 || echo 36)"); do
-  # -k: on an alternate port the certificate comes from Caddy's own CA.
-  if curl -fsSk -o /dev/null --max-time 5 "$URL/healthz"; then
+  if curl -fsS ${insecure:+-k} -o /dev/null --max-time 5 "$URL/healthz"; then
     cat <<EOF
 
-Done: $URL is up.$([ "$HTTPS_PORT" = 443 ] || printf '\n   The certificate is self-signed (Let'"'"'s Encrypt cannot reach port %s): the browser warns once; accept it.' "$HTTPS_PORT")
+Done: $URL is up.$([ -z "$TRAEFIK" ] || printf '\n   Traefik on this box serves it, with its certificate (resolver %s).' "${T_RESOLVER:-none: its default certificate}")$([ "$HTTPS_PORT" = 443 ] || printf '\n   The certificate is self-signed (Let'"'"'s Encrypt cannot reach port %s): the browser warns once; accept it.' "$HTTPS_PORT")
 
 1. Sign up at $URL; you are signed in at once. Then close registration (hostinger.md §6): set
    REGISTRATION_OPEN=false in $DIR/deploy/.env and run: cd $DIR/deploy && docker compose up -d
@@ -232,5 +393,11 @@ EOF
   sleep 5
 done
 
+if [ -n "$TRAEFIK" ]; then
+  echo "install: $URL/healthz did not answer within 3 minutes; recent Traefik and gateway logs:" >&2
+  docker logs --tail 30 "$TRAEFIK" >&2 || true
+  docker compose logs --no-color --tail 40 gateway >&2 || true
+  die "Traefik gets the certificate from Let's Encrypt over 80/443: check the A record (hostinger.md §2) and Traefik's log above for $DOMAIN; see hostinger.md §12"
+fi
 [ -n "$GATEWAY_PORT" ] && exit 0 # the stack is up; the proxy route above is the remaining step
 logs_and_die "$URL/healthz did not answer within 3 minutes"

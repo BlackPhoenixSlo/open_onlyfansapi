@@ -34,8 +34,16 @@ ss -Hltn | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' '; echo
 On other ports the certificate comes from Caddy's own CA, because Let's Encrypt only reaches 80 and 443, and
 the browser warns once; accept it.
 
-For a trusted certificate on a box where Traefik, nginx or another proxy owns 80/443 (§11b), let that proxy
-serve the domain and skip Caddy: `GATEWAY_PORT=5454` instead of the two port values. The stack then listens on
+Traefik already on the box, in a container, owning 80/443? The same line detects it and routes the domain
+through it, with no other step: no Caddy; the gateway joins Traefik's network with labels for its Docker provider
+(or, without that provider, gets a file in its file provider directory), and Traefik gets the Let's Encrypt
+certificate, so the site is `https://<domain>` with a trusted certificate. The script reads the entrypoint on 443,
+the certificate resolver and the network from Traefik's configuration (its file, flags or `TRAEFIK_*` variables);
+when it cannot, it stops and says what it found, and `TRAEFIK_ENTRYPOINT=websecure TRAEFIK_RESOLVER=letsencrypt
+TRAEFIK_NETWORK=<network>` in front of the line name them.
+
+For a trusted certificate on a box where nginx or another proxy owns 80/443 (§11b), let that proxy serve the
+domain and skip Caddy: `GATEWAY_PORT=5454` instead of the two port values. The stack then listens on
 `127.0.0.1:5454`, and the script prints the Traefik route to add; the proxy gets the Let's Encrypt certificate.
 
 [`install.sh`](install.sh) does §§3-6 up to the first sign-up, so skip those:
@@ -45,7 +53,7 @@ serve the domain and skip Caddy: `GATEWAY_PORT=5454` instead of the two port val
 - clones the public repo into `/opt/gateway` (`REF=<branch or tag>`, default `master`);
 - writes `deploy/.env` with fresh secrets, or keeps the one that is there;
 - runs `docker compose up -d --build` and waits up to 3 minutes for `https://$DOMAIN/healthz`, printing the
-  gateway and caddy logs if either fails;
+  gateway and caddy (or Traefik) logs if either fails;
 - prints where to sign up and the §7 commands to connect an account.
 
 Re-running it is an update: with a running stack it first writes the §8 Postgres dump to `/root/backups`, then
@@ -407,8 +415,14 @@ of Caddy.
 
 ## 11b. Optional: behind a reverse proxy that is already on the box
 
-Use this when Traefik, nginx or another stack already owns 80/443 on the VPS. The gateway is published on a
-host port of your choice and the existing proxy terminates TLS for the domain.
+Use this when nginx or another stack already owns 80/443 on the VPS. The gateway is published on a host port of
+your choice and the existing proxy terminates TLS for the domain.
+
+A Traefik container on 80/443 needs none of this: §0's line detects it and routes the domain through it. It
+writes `COMPOSE_PROFILES=upstream`, `COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml` and the
+`TRAEFIK_*` lines into `deploy/.env`; [`docker-compose.traefik.yml`](docker-compose.traefik.yml) holds the labels.
+Traefik on the host network, or without its Docker provider, gets a route file in its file provider directory
+instead (`gateway-<domain>.yml`). Plain `docker compose up -d` keeps working, since `.env` names the files.
 
 1. In `deploy/.env` set `COMPOSE_PROFILES=upstream` (no caddy), `GATEWAY_PORT=5454` (any free port), and keep
    `PUBLIC_URL=https://gw.example.com`: a plain-http origin is refused in production.

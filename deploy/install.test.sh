@@ -23,6 +23,8 @@ expect "DOMAIN with scheme" "bare hostname" DOMAIN=https://gw.example.com
 expect "DOMAIN with port" "bare hostname" DOMAIN=gw.example.com:443
 expect "GATEWAY_PORT with HTTPS_PORT" "does not go with" DOMAIN=gw.example.com GATEWAY_PORT=5454 HTTPS_PORT=8443
 expect "GATEWAY_PORT not a number" "must be a number" DOMAIN=gw.example.com GATEWAY_PORT=abc
+expect "TRAEFIK_ENTRYPOINT not a name" "take a name" DOMAIN=gw.example.com 'TRAEFIK_ENTRYPOINT=web secure'
+expect "TRAEFIK_NETWORK not a name" "take a name" DOMAIN=gw.example.com 'TRAEFIK_NETWORK=a;b'
 if [ "$(id -u)" -eq 0 ]; then
   echo "skip  not root (running as root)"
 else

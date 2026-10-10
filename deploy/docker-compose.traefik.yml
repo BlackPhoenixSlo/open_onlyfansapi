@@ -1,0 +1,21 @@
+# Traefik mode, written by install.sh when Traefik already owns 80/443 on the box (hostinger.md §11b): no caddy;
+# the gateway joins Traefik's network and these labels route TRAEFIK_HOST to it, so Traefik serves the domain and
+# gets its certificate. In .env: COMPOSE_PROFILES=upstream,
+# COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml and the TRAEFIK_* lines.
+services:
+  gateway:
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:?}
+      - traefik.http.routers.${TRAEFIK_ROUTER:?}.rule=Host(`${TRAEFIK_HOST:?}`)
+      - traefik.http.routers.${TRAEFIK_ROUTER:?}.entrypoints=${TRAEFIK_ENTRYPOINT:?}
+      - traefik.http.routers.${TRAEFIK_ROUTER:?}.service=${TRAEFIK_ROUTER:?}
+      # tls.certresolver=<resolver>, or tls=true when TRAEFIK_RESOLVER is empty: either turns TLS on.
+      - traefik.http.routers.${TRAEFIK_ROUTER:?}.tls${TRAEFIK_RESOLVER:+.certresolver}=${TRAEFIK_RESOLVER:-true}
+      - traefik.http.services.${TRAEFIK_ROUTER:?}.loadbalancer.server.port=4000
+    networks: [default, traefik]
+
+networks:
+  traefik:
+    name: ${TRAEFIK_NETWORK:?}
+    external: true
