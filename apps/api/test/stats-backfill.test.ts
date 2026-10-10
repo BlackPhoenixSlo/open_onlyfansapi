@@ -5,7 +5,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { accountWorkspace, messageFact } from '../src/db/schema.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 const TOKEN = 'test-only-upstream-token';
 const ACCOUNT = 1001;
@@ -52,6 +52,7 @@ beforeAll(async () => {
   other = await signUp(app, 'backfill-other@example.test');
   await linkTeam(owner.teamId);
   await linkTeam(other.teamId);
+  await ownAccounts(owner.teamId, ACCOUNT); // as connecting it from the dashboard does
   fake.state.of = ofData();
 });
 afterAll(async () => {
@@ -61,7 +62,7 @@ afterAll(async () => {
 });
 
 describe('POST /v1/stats/backfill', () => {
-  it('claims a connected account for the session workspace, runs in the background to done, and refuses a second run meanwhile', async () => {
+  it("runs the session workspace's connected account in the background to done, and refuses a second run meanwhile", async () => {
     expect((await status(dashboard(owner.cookie))).json()).toEqual({ status: 'idle' });
 
     const res = await post(dashboard(owner.cookie), { accountId: ACCOUNT, days: 1 });
@@ -108,10 +109,10 @@ describe('POST /v1/stats/backfill', () => {
     expect(await waitForRun()).toMatchObject({ status: 'done', retries: 1, chats: 1, messages: 2, error: null });
   });
 
-  it('404s an account the workspace has not connected, 403s one outside a key allowlist or with a read key', async () => {
+  it('403s an account the workspace does not own, one outside a key allowlist or with a read key', async () => {
     const unknown = await post(dashboard(owner.cookie), { accountId: 9999 });
-    expect(unknown.statusCode).toBe(404);
-    expect(unknown.json().error.code).toBe('not_found');
+    expect(unknown.statusCode).toBe(403);
+    expect(unknown.json().error.code).toBe('account_not_allowed');
 
     const limited = (await createKey(app, owner.cookie, { scope: 'write', allowedAccountIds: [ACCOUNT] })).secret;
     const outside = await post(bearer(limited), { accountId: 2002 });
@@ -126,11 +127,11 @@ describe('POST /v1/stats/backfill', () => {
     expect(readOnly.json().error.code).toBe('insufficient_scope');
   });
 
-  it("409s an account another workspace claimed, and does not show that workspace's run", async () => {
+  it("403s an account another workspace owns, and does not show that workspace's run", async () => {
     const res = await post(dashboard(other.cookie), { accountId: ACCOUNT });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe('account_workspace_conflict');
-    expect((await status(dashboard(other.cookie))).json()).toEqual({ status: 'idle' });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('account_not_allowed');
+    expect((await status(dashboard(other.cookie))).statusCode).toBe(403);
   });
 
   it('records an expired OF session on the run', async () => {

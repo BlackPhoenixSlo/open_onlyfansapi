@@ -68,8 +68,8 @@ export function Tutorial() {
           <p>
             Open the dashboard and register, then open the verification link from your email. Without SMTP the link is
             printed in the API log (<code>docker compose logs gateway</code> on a VPS). This creates your workspace and
-            links it to the upstream automatically. Every linked workspace sees every connected account, so only let
-            people you trust register.
+            links it to the upstream automatically. A workspace sees only the accounts it connects; another
+            workspace's accounts stay out of its lists, calls, events and stats.
           </p>
           <p>
             If <strong>Settings</strong> shows the workspace as not linked (calls that would reach the upstream fail
@@ -80,13 +80,16 @@ export function Tutorial() {
         </Step>
         <Step title="Connect an account">
           <p>
-            With the fake upstream, account <code>1</code> is already there; skip to step 4. Otherwise copy a cURL from
+            With the fake upstream, account <code>1</code> is already there but belongs to no workspace: claim it for
+            yours with the second shell command below (the workspace id is printed by <code>link-team</code>), then
+            skip to step 4. Otherwise copy a cURL from
             Chrome: DevTools → Network → a request to <code>onlyfans.com/api2/v2/…</code> → Copy as cURL (bash). It must
             carry the cookies as <code>-b '…'</code>. On <strong>Accounts</strong>, press{' '}
             <strong>Connect account</strong>, paste it, add a nickname if you like, and a proxy URL for that account (
             <code>http://user:pass@host:port</code> or <code>socks5h://…</code>; without one the account connects from
-            the server's own IP). OpenOnlyfansAPI hands the cURL to the upstream and never stores it in the request log. Or
-            connect from the shell:
+            the server's own IP). OpenOnlyfansAPI hands the cURL to the upstream, never stores it in the request log, and
+            records the account as your workspace's. Or connect from the shell, then claim the account for your
+            workspace:
           </p>
           <Pre>{CONNECT_FROM_SHELL}</Pre>
           <p>
@@ -235,7 +238,8 @@ curl -fsS https://gw.example.com/healthz`;
 const LINK_TEAM = `pnpm --filter @gateway/api link-team <workspace-slug>                    # locally
 docker compose exec gateway node dist/db/link-team.js <workspace-slug>   # on the VPS, from /opt/gateway/deploy`;
 
-const CONNECT_FROM_SHELL = `docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt`;
+const CONNECT_FROM_SHELL = `docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt
+pnpm --filter @gateway/api analytics:claim --team <teamId> --account <accountId>   # on a VPS: docker compose exec gateway node dist/cli/analytics-claim.js ...`;
 
 const FIRST_CALL = `curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/whoami
 curl -H "Authorization: Bearer $API_KEY" http://localhost:4000/v1/accounts

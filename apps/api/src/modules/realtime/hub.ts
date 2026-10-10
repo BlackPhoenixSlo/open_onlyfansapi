@@ -6,8 +6,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { WebSocket } from 'ws';
 import { db } from '../../db/index.js';
 import { apiKey, requestLog, teamBackend } from '../../db/schema.js';
-import type { GatewayEvent } from '../../contracts.js';
-import { subscribe } from '../../lib/event-bus.js';
+import { subscribe, type BusEvent } from '../../lib/event-bus.js';
 import { envelope } from '../../lib/signature.js';
 
 export const MAX_SOCKETS_PER_KEY = 5;
@@ -17,6 +16,8 @@ const SWEEP_MS = 15_000;
 type Client = {
   socket: WebSocket;
   keyId: string;
+  /** The key's workspace: only events of accounts it owns reach the socket. */
+  teamId: string;
   /** The key's allowlist as of the last sweep; null = every account. */
   allowed: number[] | null;
   /** The `?accountId` filter; null = every allowed account. */
@@ -30,9 +31,9 @@ type Client = {
   done: boolean;
 };
 
-/** A null-account event goes only to sockets that see every account. */
-function admits(c: Client, accountId: number | null): boolean {
-  if (accountId === null) return c.allowed === null && c.accountId === null;
+/** The owning workspace's sockets whose filter and allowlist take the account. */
+function admits(c: Client, { accountId, teamId }: BusEvent): boolean {
+  if (teamId !== c.teamId) return false;
   if (c.accountId !== null && c.accountId !== accountId) return false;
   return c.allowed === null || c.allowed.includes(accountId);
 }
@@ -41,7 +42,7 @@ export type Hub = {
   /** Registers an open socket: inserts its log row, sends `ready`, then events. */
   add(
     socket: WebSocket,
-    session: { keyId: string; allowed: number[] | null; accountId: number | null },
+    session: { keyId: string; teamId: string; allowed: number[] | null; accountId: number | null },
     row: typeof requestLog.$inferInsert,
   ): void;
   /** Open sockets of one key (the per-key cap). */
@@ -108,11 +109,11 @@ export function startHub(log: FastifyBaseLogger): Hub {
     c.bytesSent += bytes;
   }
 
-  function broadcast(e: GatewayEvent) {
+  function broadcast(e: BusEvent) {
     if (clients.size === 0) return;
     const frame = envelope(e);
     const bytes = Buffer.byteLength(frame);
-    for (const c of clients) if (admits(c, e.accountId)) send(c, frame, bytes);
+    for (const c of clients) if (admits(c, e)) send(c, frame, bytes);
   }
 
   async function runSweep() {

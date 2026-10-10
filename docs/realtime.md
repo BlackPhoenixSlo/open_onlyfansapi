@@ -54,7 +54,7 @@ header is the only way to send a key.
 Every frame is one JSON object in a text frame.
 
 - First, once: `{"type":"ready","accountIds":[1001]}`. `accountIds` lists the accounts this socket receives: the
-  `accountId` filter, otherwise the key's allowed accounts, or `null` for every account.
+  `accountId` filter, otherwise the key's allowed accounts, or `null` for every account of the workspace.
 - Then one frame per event, byte for byte the same JSON as a webhook delivery body (`event`, `account_id` as a
   string, `payload`; see [webhooks.md](webhooks.md#the-request)):
 
@@ -63,7 +63,7 @@ Every frame is one JSON object in a text frame.
 ```
 
 Only `ready` has a `type` key; an event frame has `event` instead. See [webhooks.md](webhooks.md#event-types) for
-the event types. An event with no account has no `account_id` key and goes only to sockets that see every account.
+the event types.
 Frames carry no event id and no `X-OFAPI-Idempotency-Key`: the socket has no retries to de-duplicate. Messages the
 client sends are ignored. A client message larger than 4 KiB closes the socket (1009).
 
@@ -141,7 +141,7 @@ header nor `Sec-WebSocket-Protocol` is ever stored.
 
 ## Tenancy
 
-The gateway runs for a single operator. Under one upstream, **every linked workspace sees every account's events**,
-like it sees every account's REST data and webhooks. Event frames include fan message text. A key's allowed accounts
-(and the `accountId` filter) narrow what one socket receives, but they are not a tenancy boundary between workspaces.
-Separate workspaces would need an account-to-workspace mapping, which does not exist yet.
+Each account belongs to one workspace (the one that connected it; `account_workspace`). An event reaches only that
+workspace's sockets, webhooks and dashboard; an event of an account no workspace owns reaches none. `?accountId=` of
+another workspace's account is `403 account_not_allowed`. A key's allowed accounts (and the `accountId` filter) narrow
+what one socket receives within the workspace.

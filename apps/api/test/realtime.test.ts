@@ -7,7 +7,7 @@ import { env } from '../src/env.js';
 import { publish } from '../src/lib/event-bus.js';
 import { envelope } from '../src/lib/signature.js';
 import { sweep } from '../src/modules/realtime/hub.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp, waitForLogs } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 const saved = { RUN_JOBS: env.RUN_JOBS, UPSTREAM_WS_URL: env.UPSTREAM_WS_URL };
@@ -20,6 +20,7 @@ beforeAll(async () => {
   await resetDb();
   u = await signUp(app, 'realtime@example.test');
   await linkTeam(u.teamId);
+  await ownAccounts(u.teamId, 1, 2, 7);
   keyA = await createKey(app, u.cookie, { name: 'A', allowedAccountIds: [1] });
   keyB = await createKey(app, u.cookie, { name: 'B' });
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -91,9 +92,10 @@ function handshake(headers: Record<string, string>, query = '') {
 
 const protocols = (secret: string) => ({ 'sec-websocket-protocol': `bearer, bearer.${secret}` });
 let seq = 0;
-const event = (accountId: number | null) => {
+/** A bus event of `teamId`'s account (default: the test workspace's). */
+const event = (accountId: number, teamId: string = u.teamId) => {
   const id = `evt_test${++seq}`;
-  return { id, type: 'messages.received', accountId, ts: new Date().toISOString(), data: { text: 'hi', ref: id } };
+  return { id, type: 'messages.received', accountId, ts: new Date().toISOString(), data: { text: 'hi', ref: id }, teamId };
 };
 const wsLogs = (keyId: string) =>
   pool.query('SELECT * FROM request_log WHERE api_key_id = $1 AND endpoint = $2', [keyId, 'GET /v1/ws']);
@@ -130,15 +132,6 @@ describe('GET /v1/ws', () => {
     // A WS frame is the webhook body: the same envelope() bytes.
     expect(b.raw[1]).toBe(`{"event":"messages.received","account_id":"2","payload":{"text":"hi","ref":"${two.id}"}}`);
     expect(b.raw[1]).toBe(envelope(two));
-
-    const none = event(null);
-    const again = event(1);
-    publish(none);
-    publish(again);
-    await until(() => a.ids().includes(again.id) && b.ids().includes(again.id));
-    expect(b.ids().slice(2)).toEqual([none.id, again.id]);
-    expect(b.raw[3]).toBe(`{"event":"messages.received","payload":{"text":"hi","ref":"${none.id}"}}`);
-    expect(a.ids()).toEqual([one.id, again.id]);
     a.ws.close();
     b.ws.close();
   });
@@ -151,6 +144,29 @@ describe('GET /v1/ws', () => {
     await waitForLogs([id]);
     const { rows } = await pool.query('SELECT status_code, error_code FROM request_log WHERE id = $1', [id]);
     expect(rows[0]).toEqual({ status_code: 403, error_code: 'account_not_allowed' });
+  });
+
+  it("never delivers another workspace's account's events, and refuses its ?accountId before upgrade", async () => {
+    const v = await signUp(app, 'realtime-other@example.test', { linked: true });
+    await ownAccounts(v.teamId, 3);
+    const vKey = await createKey(app, v.cookie, { name: 'V' });
+    for (const query of ['?accountId=1', '?accountId=4']) {
+      const res = await handshake(protocols(vKey.secret), query);
+      expect(res.status, query).toBe(403);
+      expect(res.body?.error?.code).toBe('account_not_allowed');
+    }
+    const mine = await connect(keyB.secret);
+    const theirs = await connect(vKey.secret);
+    expect(theirs.frames[0]).toEqual({ type: 'ready', accountIds: null });
+    const three = event(3, v.teamId);
+    const one = event(1);
+    publish(three);
+    publish(one);
+    await until(() => mine.ids().includes(one.id) && theirs.ids().includes(three.id));
+    expect(mine.ids()).toEqual([one.id]);
+    expect(theirs.ids()).toEqual([three.id]);
+    mine.ws.close();
+    theirs.ws.close();
   });
 
   it('closes 4403 or narrows delivery when the allowlist is edited', async () => {

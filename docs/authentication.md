@@ -58,9 +58,11 @@ header gets `401 invalid_api_key`.
 
 Each key has an optional list of account ids.
 
-- **Empty (`null`):** the key can use every account the workspace can reach.
+- **Empty (`null`):** the key can use every account the workspace owns (the accounts connected from its dashboard).
+  Another workspace's accounts are never reachable: a call for one gets `403 account_not_allowed`.
 - **A list:** the key can use only those accounts. A call to `/v1/{account}/...` for any other account gets
-  `403 account_not_allowed`. `/v1/accounts` shows only the allowed accounts.
+  `403 account_not_allowed`. `/v1/accounts` shows only the allowed accounts. The list may name only accounts the
+  workspace owns; any other id gets `403 account_not_allowed` when the key is created or edited.
 
 `/v1/whoami` returns the key's scope and allowlist, so a program can check what it may do.
 
@@ -110,7 +112,7 @@ it to the upstream. Include it when you report a problem.
 | 401 | `unauthorized` | No API key and no usable dashboard session. |
 | 401 | `invalid_api_key` | The `Authorization` header is malformed, or the key is unknown or revoked. |
 | 403 | `insufficient_scope` | A `read` key used a method other than `GET` or `HEAD`. |
-| 403 | `account_not_allowed` | The account is not in the key's allowlist. |
+| 403 | `account_not_allowed` | The account is not in the key's allowlist, or the workspace does not own it. |
 | 403 | `csrf_failed` | A cookie-authenticated write lacked `x-dashboard: 1` or the right `Origin`. |
 | 404 | `not_found` | Unknown route, a non-numeric account id, or a key or log entry that does not exist. |
 | 409 | `team_not_linked` | The workspace is not linked to the upstream (sign-up links it; `link-team` repairs it). See [getting-started.md](getting-started.md). |

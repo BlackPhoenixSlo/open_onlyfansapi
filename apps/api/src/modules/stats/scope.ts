@@ -1,5 +1,6 @@
 import { AppError } from '../../lib/errors.js';
 import type { Actor } from '../../plugins/actor.js';
+import { assertAccountAllowed } from '../accounts/ownership.js';
 import { DAY_MS } from '../analytics/config.js';
 import { zonedMidnight, zonedToday } from '../analytics/metrics.js';
 
@@ -41,16 +42,12 @@ export function range(query: { from?: string; to?: string }, tz: string) {
   return { fromDay: from, toDay: to, from: zonedMidnight(from, tz), to: zonedMidnight(addDays(to, 1), tz) };
 }
 
-/** 403 when `accountId` is outside the key's allowlist. */
-export function assertAccountAllowed(actor: Actor, accountId: number): void {
-  if (actor.accountIds && !actor.accountIds.includes(accountId)) {
-    throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
-  }
-}
-
-/** The key's allowlist, narrowed by `accountId` (403 outside it); null = every account of the workspace. */
-export function scopedAccounts(actor: Actor, accountId: number | undefined): number[] | null {
+/**
+ * The key's allowlist, narrowed by `accountId` (403 outside it or the workspace); null = every account of the
+ * workspace (the stats queries filter on the workspace).
+ */
+export async function scopedAccounts(actor: Actor, accountId: number | undefined): Promise<number[] | null> {
   if (accountId === undefined) return actor.accountIds;
-  assertAccountAllowed(actor, accountId);
+  await assertAccountAllowed(actor, accountId);
   return [accountId];
 }

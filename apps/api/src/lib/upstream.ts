@@ -1,6 +1,15 @@
+import type { FastifyReply } from 'fastify';
 import { AppError } from './errors.js';
 
 export type UpstreamResponse = { status: number; ok: boolean; headers: Headers; body: Buffer };
+
+/** Sends the upstream's status, content type and body unchanged. */
+export function passThrough(reply: FastifyReply, res: UpstreamResponse) {
+  return reply
+    .status(res.status)
+    .header('content-type', res.headers.get('content-type') ?? 'application/json')
+    .send(res.body);
+}
 
 export type ForwardRequest = {
   accountId: number;

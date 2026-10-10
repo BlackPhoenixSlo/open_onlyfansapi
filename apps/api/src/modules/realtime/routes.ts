@@ -5,6 +5,7 @@ import { env } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { BEARER_PROTOCOL_PREFIX, offeredProtocols } from '../../plugins/actor.js';
+import { assertAccountAllowed } from '../accounts/ownership.js';
 import { toRow } from '../logs/capture.js';
 import { MAX_SOCKETS_PER_KEY, startHub } from './hub.js';
 
@@ -31,10 +32,8 @@ export default async function realtimeRoutes(app: FastifyInstance) {
       throw new AppError(400, 'invalid_subprotocol', "Offer 'bearer' together with 'bearer.<key>', so the response never echoes the key");
     }
     const { accountId } = request.query;
-    if (accountId !== undefined && actor.accountIds && !actor.accountIds.includes(accountId)) {
-      throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
-    }
     await assertTeamLinked(actor.teamId);
+    if (accountId !== undefined) await assertAccountAllowed(actor, accountId);
     if (hub.count(actor.keyId) >= MAX_SOCKETS_PER_KEY) {
       throw new AppError(429, 'too_many_sockets', `An API key can hold at most ${MAX_SOCKETS_PER_KEY} open sockets`);
     }
@@ -58,7 +57,7 @@ export default async function realtimeRoutes(app: FastifyInstance) {
         durationMs,
         createdAt: new Date(Date.now() - durationMs),
       });
-      hub.add(socket, { keyId: actor.keyId!, allowed: actor.accountIds, accountId }, { ...row, statusCode: 101, accountId });
+      hub.add(socket, { keyId: actor.keyId!, teamId: actor.teamId, allowed: actor.accountIds, accountId }, { ...row, statusCode: 101, accountId });
     },
   );
 }

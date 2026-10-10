@@ -3,7 +3,7 @@ import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { event } from '../src/db/schema.js';
 import { newId } from '../src/lib/ids.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 
@@ -31,6 +31,9 @@ beforeAll(async () => {
   const owner = await signUp(app, 'stats@example.test');
   cookie = owner.cookie;
   await linkTeam(owner.teamId);
+  await ownAccounts(owner.teamId, 12, 13, 14);
+  // 15 belongs to another workspace and 16 to none: their events never show.
+  await ownAccounts((await signUp(app, 'stats-other@example.test', { linked: true })).teamId, 15);
   fullKey = (await createKey(app, cookie, { scope: 'read' })).secret;
   limitedKey = (await createKey(app, cookie, { scope: 'read', allowedAccountIds: [12] })).secret;
   await db.insert(event).values([
@@ -41,6 +44,8 @@ beforeAll(async () => {
     ev(12, 'tips.received', '2026-03-10T11:00:00Z', 2_000_000_000), // sum beyond int4
     ev(13, 'messages.received', '2026-03-10T12:00:00Z'),
     ev(13, 'tips.received', '2026-03-11T12:00:00Z', 500),
+    ev(15, 'messages.received', '2026-03-10T12:00:00Z'), // another workspace's account
+    ev(16, 'messages.received', '2026-03-10T12:00:00Z'), // no workspace's account
     ev(12, 'messages.received', '2026-03-12T00:00:00.000Z'), // after `to`
     ev(14, 'messages.received', today), // default range
     ev(14, 'tips.received', new Date(today.getTime() - 29 * DAY), 100), // first day of the default range
@@ -89,6 +94,13 @@ describe('stats', () => {
     const denied = await get(`/v1/stats?${RANGE}&accountId=13`, bearer(limitedKey));
     expect(denied.statusCode).toBe(403);
     expect(denied.json().error.code).toBe('account_not_allowed');
+
+    // Another workspace's account and no workspace's: 403 even without an allowlist.
+    for (const id of [15, 16]) {
+      const foreign = await get(`/v1/stats?${RANGE}&accountId=${id}`, bearer(fullKey));
+      expect(foreign.statusCode, String(id)).toBe(403);
+      expect(foreign.json().error.code).toBe('account_not_allowed');
+    }
 
     const one = await get(`/v1/stats?${RANGE}&accountId=13`, bearer(fullKey));
     expect(one.json().rows.map((r: { accountId: number; type: string }) => [r.accountId, r.type])).toEqual([

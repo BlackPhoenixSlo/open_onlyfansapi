@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 const TOKEN = process.env.UPSTREAM_TOKEN!;
 const upstream = await startFakeUpstream(TOKEN, [
@@ -19,6 +19,8 @@ beforeAll(async () => {
   linked = await signUp(app, 'proxies@example.test');
   unlinked = await signUp(app, 'unlinked-proxies@example.test');
   await linkTeam(linked.teamId);
+  // 9999 is this workspace's but unknown upstream (the upstream's 404 passes through).
+  await ownAccounts(linked.teamId, 1001, 9999);
   key = (await createKey(app, linked.cookie, { scope: 'write' })).secret;
 });
 afterAll(async () => {
@@ -105,6 +107,24 @@ describe('GET /api/proxies', () => {
       since: '2026-10-09T10:00:00Z',
     });
     expect(dead.stats).toEqual({ ok: 0, failed: 0, blocked: 0, lastOkAt: null, lastError: null, lastErrorAt: null, lastUsedAt: null });
+  });
+
+  it("hides a proxy bound to another workspace's account and refuses it for probe and account edit; unbound ones are shared", async () => {
+    const other = await signUp(app, 'other-proxies@example.test', { linked: true });
+    await ownAccounts(other.teamId, 4040);
+    const res = await app.inject({ method: 'GET', url: '/api/proxies', headers: dashboard(other.cookie) });
+    expect(res.json().items.map((p: { label: string }) => p.label)).toEqual(['proxy two', 'dead']);
+    const before = upstream.requests.filter((r) => r.url !== '/proxies').length;
+    for (const refused of [
+      await edit(dashboard(other.cookie), 1001, { label: 'mine' }),
+      await edit(dashboard(other.cookie), 4040, { proxy: { label: 'acct-1001' } }),
+      await app.inject({ method: 'POST', url: '/api/proxies/acct-1001/probe', headers: dashboard(other.cookie) }),
+    ]) {
+      expect(refused.statusCode).toBe(403);
+      expect(refused.json().error.code).toBe('account_not_allowed');
+    }
+    // Only proxy-list reads reached the upstream.
+    expect(upstream.requests.filter((r) => r.url !== '/proxies').length).toBe(before);
   });
 
   it('needs a linked workspace and the dashboard session', async () => {

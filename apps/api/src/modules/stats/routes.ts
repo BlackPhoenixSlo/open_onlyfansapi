@@ -1,17 +1,21 @@
-import { and, asc, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { db } from '../../db/index.js';
-import { event } from '../../db/schema.js';
+import { accountWorkspace, event } from '../../db/schema.js';
 import { stats, statsQuery, type Stats } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { DAY_MS } from '../analytics/config.js';
+import { owned } from '../analytics/facts.js';
 import { DEFAULT_DAYS, MAX_DAYS, parseDay, scopedAccounts } from './scope.js';
 
 const day = sql<string>`to_char(${event.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
 
-/** `GET /v1/stats`: sparse per (UTC day, account, type) counts and amounts from the event ledger. Mounted under /v1. */
+/**
+ * `GET /v1/stats`: sparse per (UTC day, account, type) counts and amounts from the event ledger, over the accounts the
+ * workspace owns. Mounted under /v1.
+ */
 export default async function statsRoutes(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().get(
     '/stats',
@@ -28,7 +32,7 @@ export default async function statsRoutes(app: FastifyInstance) {
         throw new AppError(400, 'range_too_large', `The range can span at most ${MAX_DAYS} days`);
       }
 
-      const ids = scopedAccounts(actor, query.accountId);
+      const ids = await scopedAccounts(actor, query.accountId);
       const types = query.types
         ?.split(',')
         .map((t) => t.trim())
@@ -43,11 +47,12 @@ export default async function statsRoutes(app: FastifyInstance) {
           amountCents: sql<string>`coalesce(sum(${event.amountCents}), 0)::bigint`,
         })
         .from(event)
+        .innerJoin(accountWorkspace, eq(accountWorkspace.accountId, event.accountId))
         .where(
           and(
+            owned(accountWorkspace, actor.teamId, ids),
             gte(event.createdAt, new Date(from)),
             lt(event.createdAt, new Date(to + DAY_MS)),
-            ids ? inArray(event.accountId, ids) : undefined,
             types?.length ? inArray(event.type, types) : undefined,
           ),
         )

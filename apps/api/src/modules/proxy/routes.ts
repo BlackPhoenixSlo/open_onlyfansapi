@@ -3,6 +3,7 @@ import { appOrigin } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { assertWriteScope } from '../../plugins/actor.js';
+import { assertAccountAllowed } from '../accounts/ownership.js';
 
 const ENCODED_SEPARATOR = /%2f|%5c|\\/i;
 const MAX_ACCOUNT_ID = 2_147_483_647;
@@ -92,7 +93,7 @@ export function wrapResponse(
   return Buffer.concat([Buffer.from('{"data":'), res.body, Buffer.from(`,"_meta":{}${pagination}}`)]);
 }
 
-/** `ALL /v1/:account/*` → upstream `/of/*`, for a linked workspace, scoped by `x-of-proxy-account-id`. */
+/** `ALL /v1/:account/*` → upstream `/of/*`, for a linked workspace that owns the account, scoped by `x-of-proxy-account-id`. */
 export default async function proxyRoutes(app: FastifyInstance) {
   // Forward JSON bodies verbatim (and allow empty ones).
   app.removeContentTypeParser('application/json');
@@ -103,9 +104,7 @@ export default async function proxyRoutes(app: FastifyInstance) {
     const { accountId, path } = resolveUpstream(request.raw.url ?? request.url);
     await assertTeamLinked(actor.teamId);
     assertWriteScope(actor, request.method);
-    if (actor.accountIds && !actor.accountIds.includes(accountId)) {
-      throw new AppError(403, 'account_not_allowed', `This API key cannot use account ${accountId}`);
-    }
+    await assertAccountAllowed(actor, accountId);
 
     const headers: Record<string, string> = {
       'x-request-id': request.id,

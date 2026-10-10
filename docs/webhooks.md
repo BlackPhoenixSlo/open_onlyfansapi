@@ -12,7 +12,8 @@ Without `UPSTREAM_WS_URL` only `webhook.test` is sent (from the test route).
 
 All routes are under `/v1` and accept an API key or the dashboard session (see
 [authentication.md](authentication.md)). Writes need a `write` key. Keys limited to specific accounts get
-`403 account_not_allowed` on every webhook route, because an endpoint receives events for every account.
+`403 account_not_allowed` on every webhook route, because an endpoint receives events for every account of the
+workspace (and never another workspace's).
 
 | Route | What it does |
 |---|---|
@@ -126,10 +127,11 @@ of them:
 - `fanData.available` is `false` and the `spending` figures are zero, because the gateway does not compute fan
   spending. `fanData.last_updated_at` is the message's time. Branch on `available` before using `spending`.
 
-Every event goes to every workspace linked to the upstream (`link-team`). `messages.received` and `messages.sent`
-carry the fan's message text and profile, `chat_queue.finished` carries the broadcast's text and media, and
-`upstream.*` events carry the upstream's raw payload, which reaches every endpoint whose `events` filter is empty.
-So anyone with an endpoint in a linked workspace receives that text. The gateway's own event ledger (used for
+An event goes only to the workspace that owns its account (the one that connected or claimed it), and only once
+that workspace is linked (`link-team`); an account no workspace owns sends nothing. `messages.received` and
+`messages.sent` carry the fan's message text and profile, `chat_queue.finished` carries the broadcast's text and
+media, and `upstream.*` events carry the upstream's raw payload, which reaches every endpoint of that workspace whose
+`events` filter is empty. So anyone with an endpoint in the owning workspace receives that text. The gateway's own event ledger (used for
 `/v1/stats`) stores no payloads.
 
 Delivery from the upstream is **at-most-once**: there is no replay. Events are not sent when they happen while the

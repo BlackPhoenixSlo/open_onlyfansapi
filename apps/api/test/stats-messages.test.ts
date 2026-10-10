@@ -5,7 +5,7 @@ import { purchaseFact } from '../src/db/schema.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { messageExport } from '../src/modules/analytics/messages.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 // The stored messages per fan (`GET /v1/stats/fans`) and the transcript export (`GET /v1/stats/messages`), over a
 // backfill from the fake upstream.
@@ -104,6 +104,7 @@ beforeAll(async () => {
   cookieA = a.cookie;
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
+  await ownAccounts(a.teamId, A1, A2);
   keyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A1, A2] })).secret;
   limitedKeyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A2] })).secret;
   keyB = (await createKey(app, b.cookie, { scope: 'read' })).secret;
@@ -368,11 +369,14 @@ describe('stats fans and messages scoping', () => {
   });
 
   it("a second workspace's key sees none of the first's messages", async () => {
-    for (const q of [RANGE, `${RANGE}&accountId=${A1}`]) {
-      const res = (await get(`/v1/stats/fans?${q}`, keyB)).json();
-      expect([res.total, res.items]).toEqual([0, []]);
-      expect(await messageIds(q, keyB)).toEqual([]);
-      expect((await get(`/v1/stats/messages?${q}&format=csv`, keyB)).body).toBe(HEADER);
+    const res = (await get(`/v1/stats/fans?${RANGE}`, keyB)).json();
+    expect([res.total, res.items]).toEqual([0, []]);
+    expect(await messageIds(RANGE, keyB)).toEqual([]);
+    expect((await get(`/v1/stats/messages?${RANGE}&format=csv`, keyB)).body).toBe(HEADER);
+    // Naming the first workspace's account is refused.
+    for (const route of ['fans', 'messages']) {
+      const named = await get(`/v1/stats/${route}?${RANGE}&accountId=${A1}`, keyB);
+      expect([named.statusCode, named.json().error.code]).toEqual([403, 'account_not_allowed']);
     }
   });
 });

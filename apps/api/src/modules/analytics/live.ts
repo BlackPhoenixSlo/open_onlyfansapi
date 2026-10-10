@@ -72,15 +72,20 @@ const APPLY = {
 const applies = (type: string): type is keyof typeof APPLY => Object.hasOwn(APPLY, type);
 
 /**
- * Applies one ingested event to the analytics store when its account is claimed (`account_workspace`); otherwise
- * does nothing. `messages.received` / `messages.sent` insert the message's row (`insertMessage`); `messages.deleted`
+ * Applies one ingested event of an account workspace `teamId` owns to the analytics store. `messages.received` / `messages.sent` insert the message's row (`insertMessage`); `messages.deleted`
  * marks it deleted (`markDeleted`). Never throws: a failure is logged once with the event id.
  */
-export async function applyLiveEvent(eventId: string, type: string, accountId: number, payload: unknown, log: FastifyBaseLogger): Promise<void> {
+export async function applyLiveEvent(
+  eventId: string,
+  type: string,
+  accountId: number,
+  teamId: string,
+  payload: unknown,
+  log: FastifyBaseLogger,
+): Promise<void> {
   if (!applies(type)) return;
   try {
-    const [owner] = await db.select({ teamId: accountWorkspace.teamId }).from(accountWorkspace).where(eq(accountWorkspace.accountId, accountId));
-    if (owner) await APPLY[type](owner.teamId, accountId, payload);
+    await APPLY[type](teamId, accountId, payload);
   } catch (err) {
     log.error({ err: cause(err), eventId, type, accountId }, 'live analytics update failed');
   }

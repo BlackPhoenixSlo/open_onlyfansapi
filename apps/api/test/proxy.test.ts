@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { isPassthrough, resolveUpstream } from '../src/modules/proxy/routes.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp, waitForLogs } from './helpers.js';
 
 const TOKEN = process.env.UPSTREAM_TOKEN!;
 const upstream = await startFakeUpstream(TOKEN, [
@@ -25,6 +25,7 @@ beforeAll(async () => {
   cookie = user.cookie;
   userId = user.userId;
   await linkTeam(user.teamId);
+  await ownAccounts(user.teamId, 12, 13, 1001);
   writeKey = (await createKey(app, cookie, { scope: 'write' })).secret;
   readKey = (await createKey(app, cookie, { scope: 'read' })).secret;
   limitedKey = (await createKey(app, cookie, { scope: 'write', allowedAccountIds: [12] })).secret;

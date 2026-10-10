@@ -3,12 +3,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { env } from '../src/env.js';
-import type { GatewayEvent } from '../src/contracts.js';
-import { subscribe } from '../src/lib/event-bus.js';
+import { subscribe, type BusEvent } from '../src/lib/event-bus.js';
 import { parseFrame } from '../src/modules/events/ingest.js';
 import { startEventSource, type SourceTimings } from '../src/modules/events/source.js';
 import { eventFrame as frame, startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 const fake = await startFakeUpstream(env.UPSTREAM_TOKEN);
@@ -30,9 +29,12 @@ async function waitFor(check: () => boolean | Promise<boolean>, what: string, ti
   }
 }
 
-/** Workspace A: linked, endpoint on every event. B: linked, messages.received only. C: not linked. */
+/**
+ * Workspace A: linked, endpoint on every event, owns account 1001 (the default frame's). B: linked, messages.received
+ * only, owns 2002. C: not linked, endpoint on every event, owns 3003. Account 4004 is no workspace's.
+ */
 const teams: Record<'a' | 'b' | 'c', string> = { a: '', b: '', c: '' };
-const seen: GatewayEvent[] = [];
+const seen: BusEvent[] = [];
 const unsubscribe = subscribe((e) => seen.push(e));
 let source: { stop: () => Promise<void> } | null = null;
 
@@ -52,6 +54,9 @@ beforeAll(async () => {
   }
   await linkTeam(teams.a);
   await linkTeam(teams.b);
+  await ownAccounts(teams.a, 1001);
+  await ownAccounts(teams.b, 2002);
+  await ownAccounts(teams.c, 3003);
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE event, webhook_delivery');
@@ -108,10 +113,10 @@ describe('upstream event source', () => {
     expect(await outcome([`bearer.${env.UPSTREAM_TOKEN}`])).toBe('refused');
   });
 
-  it('one frame: one ledger row, one bus event, a pending delivery per linked workspace with a matching endpoint', async () => {
+  it("one frame: one ledger row, one bus event with the account's workspace, one pending delivery to that workspace", async () => {
     await connected();
     fake.pushFrame(frame());
-    await waitFor(async () => (await deliveries()).length === 2, 'two deliveries');
+    await waitFor(async () => (await deliveries()).length === 1, 'one delivery');
 
     const rows = await eventRows();
     expect(rows).toHaveLength(1);
@@ -126,14 +131,28 @@ describe('upstream event source', () => {
     expect(rows[0].id).toMatch(/^evt_/);
 
     expect(seen).toEqual([
-      { id: rows[0].id, type: 'messages.received', accountId: 1001, ts: frame().ts, data: frame().payload },
+      { id: rows[0].id, type: 'messages.received', accountId: 1001, ts: frame().ts, data: frame().payload, teamId: teams.a },
     ]);
     const queued = await deliveries();
-    expect(queued.map((d) => d.team_id).sort()).toEqual([teams.a, teams.b].sort());
+    // B's endpoint takes messages.received too, but 1001 is A's.
+    expect(queued.map((d) => d.team_id)).toEqual([teams.a]);
     for (const d of queued) {
       // The ledger id is every delivery's idempotency key.
       expect(d).toMatchObject({ event_id: rows[0].id, event_type: 'messages.received', account_id: 1001, payload: frame().payload, status: 'pending' });
     }
+  });
+
+  it("an event reaches only its account's workspace (no webhook when unlinked); no workspace's account: stored only, warned once", async () => {
+    await connected();
+    const of = (account: number, n = 1) => frame({ id: `message.received:${account}:${n}`, account_id: account });
+    for (const f of [of(3003), of(4004), of(4004, 2), of(2002)]) fake.pushFrame(f);
+    await waitFor(() => seen.length === 2, 'two bus events');
+    await waitFor(async () => (await deliveries()).length === 1, "B's delivery");
+    await sleep(100);
+    expect((await deliveries()).map((d) => [d.team_id, d.account_id])).toEqual([[teams.b, 2002]]);
+    expect(seen.map((e) => [e.accountId, e.teamId])).toEqual([[3003, teams.c], [2002, teams.b]]);
+    expect(await eventRows()).toHaveLength(4);
+    expect(log.warn.mock.calls.filter((c) => c[0]?.accountId === 4004)).toHaveLength(1);
   });
 
   it("the same id twice: one row, one delivery; a null id is never deduplicated; the frame's amount_cents fills the ledger", async () => {
@@ -173,7 +192,7 @@ describe('upstream event source', () => {
     }
   });
 
-  it('an amount outside int32 is stored as null; a failed ledger insert is published, not emitted', async () => {
+  it('an amount outside int32 is stored as null; a failed ledger insert drops the event', async () => {
     await connected();
     fake.pushFrame(frame({ id: 'tip.received:1001:1010', type: 'tips.received', amount_cents: 2 ** 40, payload: {} }));
     await waitFor(async () => (await deliveries()).length === 1, 'the tip delivery');
@@ -183,10 +202,10 @@ describe('upstream event source', () => {
       throw new Error('Failed query: insert … params: hi', { cause: new Error('connection refused') });
     });
     fake.pushFrame(frame());
-    await waitFor(() => seen.length === 2, 'the second bus event');
+    await waitFor(() => log.error.mock.calls.length === 1, 'the logged ledger failure');
     await sleep(100);
     insert.mockRestore();
-    expect(seen[1]!.type).toBe('messages.received');
+    expect(seen.map((e) => e.type)).toEqual(['tips.received']);
     expect(await eventRows()).toHaveLength(1);
     expect(await deliveries()).toHaveLength(1);
     expect(log.error).toHaveBeenCalledOnce();
@@ -208,11 +227,11 @@ describe('upstream event source', () => {
   it('a null payload reaches the bus and the deliveries as null, not {}', async () => {
     await connected();
     fake.pushFrame(frame({ payload: null }));
-    await waitFor(async () => (await deliveries()).length === 2, 'two deliveries');
+    await waitFor(async () => (await deliveries()).length === 1, 'one delivery');
 
     expect(seen.map((e) => e.data)).toEqual([null]);
     const { rows } = await pool.query('SELECT jsonb_typeof(payload) AS kind FROM webhook_delivery');
-    expect(rows).toEqual([{ kind: 'null' }, { kind: 'null' }]);
+    expect(rows).toEqual([{ kind: 'null' }]);
   });
 
   it('drops malformed frames, unknown types and heartbeats; the socket stays up', async () => {
@@ -228,7 +247,7 @@ describe('upstream event source', () => {
     fake.pushFrame(frame({ payload: undefined })); // payload is required (null allowed)
     fake.pushFrame({ type: 'heartbeat', ts: '2026-10-02T12:00:30.000Z' });
     fake.pushFrame(frame());
-    await waitFor(async () => (await deliveries()).length === 2, 'the valid frame');
+    await waitFor(async () => (await deliveries()).length === 1, 'the valid frame');
 
     expect(seen.map((e) => e.type)).toEqual(['messages.received']);
     expect(await eventRows()).toHaveLength(1);

@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import type { LogList } from '../src/contracts.js';
 import { pool } from '../src/db/index.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
+import { bearer, createKey, linkTeam, ownAccounts, resetDb, signUp, waitForLogs } from './helpers.js';
 
 const upstream = await startFakeUpstream(process.env.UPSTREAM_TOKEN!);
 const app = await buildApp({ logger: false, upstreamUrl: upstream.url });
@@ -29,6 +29,7 @@ beforeAll(async () => {
   await resetDb();
   owner = await signUp(app, 'logs@example.test');
   await linkTeam(owner.teamId);
+  await ownAccounts(owner.teamId, 12);
   const w = await createKey(app, owner.cookie, { name: 'writer', scope: 'write' });
   const r = await createKey(app, owner.cookie, { name: 'reader', scope: 'read' });
   writeKey = { id: w.key.id, secret: w.secret };

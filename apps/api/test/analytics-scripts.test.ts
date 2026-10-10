@@ -7,7 +7,7 @@ import { createUpstream } from '../src/lib/upstream.js';
 import { scriptHash } from '../src/modules/analytics/derive.js';
 import { rehashAccount, syncScripts } from '../src/modules/analytics/scripts.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 // Script candidates (spec §6 step 3) over a backfill from the fake upstream, with known answers.
 
@@ -114,6 +114,7 @@ beforeAll(async () => {
   teamA = a.teamId;
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
+  await ownAccounts(a.teamId, A1, A2);
   keyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A1, A2] })).secret;
   limitedKeyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A2] })).secret;
   keyB = (await createKey(app, b.cookie, { scope: 'read' })).secret; // no allowlist: still none of A's accounts
@@ -303,7 +304,8 @@ describe('GET /v1/stats/scripts', () => {
 
   it("a second workspace's key sees none of the first's scripts", async () => {
     expect((await scripts(RANGE, keyB)).items).toEqual([]);
-    expect((await scripts(`${RANGE}&accountId=${A1}`, keyB)).items).toEqual([]);
+    const named = await get(`/v1/stats/scripts?${RANGE}&accountId=${A1}`, keyB);
+    expect([named.statusCode, named.json().error.code]).toEqual([403, 'account_not_allowed']);
   });
 
   it('an unlinked workspace gets 409 team_not_linked', async () => {

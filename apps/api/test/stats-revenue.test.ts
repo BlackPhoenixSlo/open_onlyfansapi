@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
 import { messageFact, purchaseFact } from '../src/db/schema.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 // Revenue (`GET /v1/stats/revenue`) over transactions and messages stored by hand. The range is 2026-09-01..03 in UTC,
 // the default stats timezone.
@@ -79,6 +79,7 @@ beforeAll(async () => {
   cookieA = a.cookie;
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
+  await ownAccounts(a.teamId, A1, A2);
   keyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A1, A2] })).secret;
   limitedKeyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A2] })).secret;
   keyB = (await createKey(app, b.cookie, { scope: 'read' })).secret;
@@ -195,10 +196,8 @@ describe('stats revenue', () => {
     const other = await get(RANGE, bearer(keyB));
     expect(other.totals).toMatchObject({ gross: 4000, payers: 1, fansMessaged: 0 });
     expect(other.topPayers.map((p: { chatId: number }) => p.chatId)).toEqual([5001]);
-    const none = await get(`${RANGE}&accountId=${A1}`, bearer(keyB));
-    expect(none.totals).toEqual({ gross: 0, settledGross: 0, pendingGross: 0, net: 0, transactions: 0, payers: 0, fansMessaged: 0, fanCvr: null, dmMessages: 0, dmPpvs: 0, goldenRatio: null });
-    expect(none.topPayers).toEqual([]);
-    expect(none.withoutChat).toEqual({ payers: 0, gross: 0 });
+    const none = await app.inject({ method: 'GET', url: `/v1/stats/revenue?${RANGE}&accountId=${A1}`, headers: bearer(keyB) });
+    expect([none.statusCode, none.json().error.code]).toEqual([403, 'account_not_allowed']);
   });
 
   it('buckets the range and its days in the stats timezone', async () => {

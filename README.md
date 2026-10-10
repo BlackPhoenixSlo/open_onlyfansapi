@@ -39,7 +39,8 @@ usage, a playground and an API reference without building them.
   your dashboard session, so no key is pasted into the browser.
 - **Merged OpenAPI reference.** `/openapi.json` holds OpenOnlyfansAPI's own routes plus the upstream's operations
   rewritten to `/v1/{account}/...`. `/docs` renders it as an interactive reference.
-- **Workspace isolation.** Keys, logs and usage belong to one workspace, and every query is scoped to it.
+- **Workspace isolation.** Keys, logs and usage belong to one workspace, and every query is scoped to it. So do
+  OF accounts: a workspace sees and uses only the accounts it connected, with their events and stats.
   Sign-up is open and links each new workspace to the upstream automatically; `link-team` repairs one left unlinked.
 
 ## How it fits
@@ -117,10 +118,13 @@ not linked, copy its slug from there and link it from the VPS shell:
 docker compose exec gateway node dist/db/link-team.js <slug>
 ```
 
-Connect an OF account with a curl copied from your browser and a proxy of its own, then reload **Accounts**:
+Connect an OF account from **Accounts → Connect account** with a curl copied from your browser and a proxy of its
+own; it then belongs to your workspace, and no other workspace sees it. An account connected from the VPS shell
+instead belongs to no workspace until you claim it for one (`link-team` prints the workspace id):
 
 ```sh
 docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt
+docker compose exec gateway node dist/cli/analytics-claim.js --team <teamId> --account <accountId>
 ```
 
 The [full deploy guide](deploy/hostinger.md) covers capturing the curl, account statuses, the firewall, updates,

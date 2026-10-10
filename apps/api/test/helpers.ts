@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db, pool } from '../src/db/index.js';
-import { organization, teamBackend } from '../src/db/schema.js';
+import { accountWorkspace, organization, teamBackend } from '../src/db/schema.js';
 import { setMailTransport, type Mail } from '../src/lib/mailer.js';
 import { dbStore } from '../src/modules/analytics/backfill-store.js';
 import { backfill, type BackfillOptions } from '../src/modules/analytics/backfill.js';
-import { claimAccount } from '../src/modules/analytics/workspace.js';
+import { claimAccount } from '../src/modules/accounts/ownership.js';
 
 export const ORIGIN = 'http://localhost:5173';
 /** Headers the dashboard sends on cookie-authenticated writes. */
@@ -72,6 +72,11 @@ export async function createKey(
   });
   if (res.statusCode !== 201) throw new Error(`create key failed: ${res.statusCode} ${res.body}`);
   return res.json() as { key: { id: string; scope: string }; secret: string };
+}
+
+/** What a dashboard connect records, without its link check (fixtures of unlinked workspaces own accounts too). */
+export async function ownAccounts(teamId: string, ...accountIds: number[]) {
+  await db.insert(accountWorkspace).values(accountIds.map((accountId) => ({ accountId, teamId })));
 }
 
 /** What `link-team <slug>` does: marks the workspace as allowed to reach the upstream. */

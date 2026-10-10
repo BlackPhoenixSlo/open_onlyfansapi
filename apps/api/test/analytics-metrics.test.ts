@@ -4,7 +4,7 @@ import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { quantile } from '../src/modules/analytics/metrics.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 // Reply time and reply SLA (spec §6 step 1) over a backfill from the fake upstream, with known answers.
 
@@ -90,6 +90,7 @@ beforeAll(async () => {
   cookieA = a.cookie;
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
+  await ownAccounts(a.teamId, A1, A2);
   keyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A1, A2] })).secret;
   writeKeyA = (await createKey(app, a.cookie, { scope: 'write' })).secret;
   limitedKeyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A2] })).secret;
@@ -396,13 +397,17 @@ describe('stats metrics tenancy', () => {
   it("a second workspace's key sees none of the first's data or config, on every route", async () => {
     expect((await get('/v1/stats/metrics', keyB)).statusCode).toBe(200); // the catalogue holds no data
     for (const id of ['reply_time', 'reply_time_p90', 'reply_time_mean', 'reply_time_mean_last', 'reply_sla', 'reply_time_substantive']) {
-      for (const q of [`${RANGE}&groupBy=account`, `${RANGE}&accountId=${A1}`]) {
-        const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
-        expect([s.statusCode, s.json().rows]).toEqual([200, []]);
-        const csv = await get(`/v1/stats/metrics/${id}?${q}&format=csv`, keyB);
-        expect(csv.body).toBe('group,value,n,turns,in_cap,late,breached,pending,sla_met\n');
-        const samples = await get(`/v1/stats/metrics/${id}/samples?${q}`, keyB);
-        expect([samples.statusCode, samples.json().items]).toEqual([200, []]);
+      const q = `${RANGE}&groupBy=account`;
+      const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
+      expect([s.statusCode, s.json().rows]).toEqual([200, []]);
+      const csv = await get(`/v1/stats/metrics/${id}?${q}&format=csv`, keyB);
+      expect(csv.body).toBe('group,value,n,turns,in_cap,late,breached,pending,sla_met\n');
+      const samples = await get(`/v1/stats/metrics/${id}/samples?${q}`, keyB);
+      expect([samples.statusCode, samples.json().items]).toEqual([200, []]);
+      // Naming the first workspace's account is refused.
+      for (const url of [`/v1/stats/metrics/${id}?${RANGE}&accountId=${A1}`, `/v1/stats/metrics/${id}/samples?${RANGE}&accountId=${A1}`]) {
+        const res = await get(url, keyB);
+        expect([res.statusCode, res.json().error.code]).toEqual([403, 'account_not_allowed']);
       }
     }
     await put({ slaSeconds: 60, timezone: 'Asia/Tokyo' }); // workspace A

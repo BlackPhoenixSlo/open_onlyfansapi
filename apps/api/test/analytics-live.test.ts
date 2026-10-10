@@ -8,7 +8,7 @@ import { createUpstream } from '../src/lib/upstream.js';
 import { dbStore } from '../src/modules/analytics/backfill-store.js';
 import { ingestFrame, type EventFrame } from '../src/modules/events/ingest.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 const TOKEN = 'test-only-upstream-token';
 const ACCOUNT = 1001;
@@ -67,6 +67,7 @@ beforeAll(async () => {
   const a = await signUp(app, 'analytics-live@example.test');
   await linkTeam(a.teamId);
   teamId = a.teamId;
+  await ownAccounts(a.teamId, ACCOUNT);
   readKey = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [ACCOUNT] })).secret;
   fake.state.of = {
     chats: [{ withUser: FAN, lastMessage: { id: 110, createdAt: outbound.createdAt } }],

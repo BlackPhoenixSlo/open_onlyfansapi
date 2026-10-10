@@ -6,7 +6,7 @@ import type { PoolClient } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { db, pool } from '../src/db/index.js';
-import { accountWorkspace, apiKey, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
+import { accountWorkspace, chatCoverage, messageFact, purchaseFact, script } from '../src/db/schema.js';
 import { CHAT_COLUMNS, MESSAGE_COLUMNS, REPLY_TIME_COLUMNS, TRANSACTION_COLUMNS, readCsv } from '../src/cli/analytics-csv.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from '../src/cli/analytics-export.js';
 import { AppError } from '../src/lib/errors.js';
@@ -14,7 +14,7 @@ import { createUpstream, type Upstream } from '../src/lib/upstream.js';
 import { dbStore, memoryStore } from '../src/modules/analytics/backfill-store.js';
 import { backfill, progressLine, SessionExpiredError, type BackfillOptions, type BackfillResult, type BackfillRows } from '../src/modules/analytics/backfill.js';
 import { replyTimes } from '../src/modules/analytics/turns.js';
-import { claimAccount } from '../src/modules/analytics/workspace.js';
+import { claimAccount } from '../src/modules/accounts/ownership.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
 import { createKey, linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -185,9 +185,9 @@ beforeAll(async () => {
   teamB = b.teamId;
   await linkTeam(teamA);
   await linkTeam(teamB);
+  await claimAccount(teamA, ACCOUNT); // as analytics:backfill does before a stored run
   await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [ACCOUNT] });
   await createKey(app, b.cookie, { scope: 'read' }); // no allowlist: still none of workspace A's accounts
-  await claimAccount(teamA, ACCOUNT); // as analytics:backfill does before a stored run
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE message_fact, chat_coverage, purchase_fact');
@@ -839,13 +839,9 @@ describe('analytics tenancy', () => {
     expect(await replyTimes(teamA, ACCOUNT, FROM, TO)).toHaveLength(5);
   });
 
-  it('refuses an account the workspace does not list, and one two workspaces name', async () => {
-    await expect(claimAccount(teamB, ACCOUNT)).rejects.toMatchObject({ statusCode: 403, code: 'account_not_allowed' });
-    const [keyB] = await db.select().from(apiKey).where(eq(apiKey.teamId, teamB));
-    await db.update(apiKey).set({ allowedAccountIds: [ACCOUNT] }).where(eq(apiKey.id, keyB!.id));
+  it('claims idempotently for the owner, needs no key, and refuses an account another workspace owns', async () => {
+    await expect(claimAccount(teamA, ACCOUNT)).resolves.toBeUndefined();
     await expect(claimAccount(teamB, ACCOUNT)).rejects.toMatchObject({ statusCode: 409, code: 'account_workspace_conflict' });
-    await expect(claimAccount(teamA, ACCOUNT)).rejects.toMatchObject({ statusCode: 409, code: 'account_workspace_conflict' });
-    await db.update(apiKey).set({ allowedAccountIds: null }).where(eq(apiKey.id, keyB!.id));
   });
 });
 

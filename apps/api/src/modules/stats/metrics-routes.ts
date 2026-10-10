@@ -44,7 +44,7 @@ import {
   scopedTurns,
   type MetricId,
 } from '../analytics/metrics.js';
-import { connectedAccounts } from '../accounts/service.js';
+import { listUpstreamAccounts } from '../accounts/service.js';
 import { assertBackfillIdle, backfillRun, startBackfillRun } from '../analytics/backfill-runs.js';
 import { assertBackfillUnlocked } from '../analytics/backfill.js';
 import { DAY_MS } from '../analytics/config.js';
@@ -54,8 +54,8 @@ import { MESSAGE_EXPORT_COLUMNS, messageBatches, scopedFans, scopedMessages } fr
 import { scopedRevenue } from '../analytics/revenue.js';
 import { scopedScripts } from '../analytics/scripts.js';
 import { getStatsConfig, putStatsConfig } from '../analytics/stats-config.js';
-import { assignAccount } from '../analytics/workspace.js';
-import { assertAccountAllowed, daysBetween, range, scopedAccounts } from './scope.js';
+import { assertAccountAllowed } from '../accounts/ownership.js';
+import { daysBetween, range, scopedAccounts } from './scope.js';
 
 function metricId(id: string): MetricId {
   if (!isMetricId(id)) throw new AppError(404, 'metric_not_found', `No metric ${JSON.stringify(id)}`);
@@ -96,7 +96,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const id = metricId(request.params.id);
       const cfg = await getStatsConfig(actor.teamId);
       const span = range(query, cfg.timezone);
-      const accounts = scopedAccounts(actor, query.accountId);
+      const accounts = await scopedAccounts(actor, query.accountId);
       const asOf = new Date();
       const rows = isOpenerMetric(id)
         ? openerRows(id, await scopedOpeners(actor.teamId, accounts, id, cfg, { ...span, asOf }), query.groupBy, cfg)
@@ -120,7 +120,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const id = metricId(request.params.id);
       const cfg = await getStatsConfig(actor.teamId);
       const span = range(query, cfg.timezone);
-      const accounts = scopedAccounts(actor, query.accountId);
+      const accounts = await scopedAccounts(actor, query.accountId);
       const asOf = new Date();
       const inGroup = (x: Parameters<typeof groupKey>[0]) => query.group === undefined || groupKey(x, query.groupBy, cfg.timezone) === query.group;
       const items = isOpenerMetric(id)
@@ -135,7 +135,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
     const asOf = new Date();
-    const items = await scopedScripts(actor.teamId, scopedAccounts(actor, query.accountId), cfg, { ...span, asOf });
+    const items = await scopedScripts(actor.teamId, await scopedAccounts(actor, query.accountId), cfg, { ...span, asOf });
     return { ...windowMeta(cfg, span, asOf), normaliserVersion: NORMALISER_VERSION, items: items.slice(0, query.limit) };
   });
 
@@ -144,7 +144,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
     const asOf = new Date();
-    const fans = await scopedFans({ teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span }, query.limit, query.search);
+    const fans = await scopedFans({ teamId: actor.teamId, accountIds: await scopedAccounts(actor, query.accountId), ...span }, query.limit, query.search);
     return { ...windowMeta(cfg, span, asOf), ...fans };
   });
 
@@ -153,7 +153,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
     const asOf = new Date();
-    const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span };
+    const scope = { teamId: actor.teamId, accountIds: await scopedAccounts(actor, query.accountId), ...span };
     const revenue = await scopedRevenue(scope, daysBetween(span.fromDay, span.toDay), cfg.timezone);
     return { ...windowMeta(cfg, span, asOf), ...revenue };
   });
@@ -168,7 +168,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
       const cfg = await getStatsConfig(actor.teamId);
       const span = range(query, cfg.timezone);
       const asOf = new Date();
-      const scope = { teamId: actor.teamId, accountIds: scopedAccounts(actor, query.accountId), ...span, chatId: query.chatId, direction: query.direction };
+      const scope = { teamId: actor.teamId, accountIds: await scopedAccounts(actor, query.accountId), ...span, chatId: query.chatId, direction: query.direction };
       if (query.format === 'csv') {
         const name = ['messages', query.chatId, query.direction, span.fromDay, span.toDay].filter((x) => x !== undefined).join('_');
         async function* lines() {
@@ -199,12 +199,11 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     { schema: { tags, body: statsBackfillBody, response: { 202: statsBackfillStarted } } },
     async (request, reply) => {
       const { actor, body } = request;
-      assertAccountAllowed(actor, body.accountId);
+      await assertAccountAllowed(actor, body.accountId); // allowlist and ownership, before the backfill locks
       assertBackfillIdle(body.accountId);
       await assertBackfillUnlocked(body.accountId);
-      const connected = await connectedAccounts(app.upstream, actor, request.id);
-      if (!connected.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
-      await assignAccount(actor.teamId, body.accountId);
+      const listed = await listUpstreamAccounts(app.upstream, request.id);
+      if (!listed.some((a) => a.id === body.accountId)) throw new AppError(404, 'not_found', `Unknown account ${body.accountId}`);
       const runId = startBackfillRun({
         upstream: app.upstream,
         teamId: actor.teamId,
@@ -217,7 +216,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
 
   r.get('/stats/backfill', { schema: { tags, querystring: statsBackfillQuery, response: { 200: statsBackfillRun } } }, async (request) => {
     const { actor, query } = request;
-    assertAccountAllowed(actor, query.accountId);
+    await assertAccountAllowed(actor, query.accountId);
     return backfillRun(actor.teamId, query.accountId);
   });
 

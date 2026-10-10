@@ -4,13 +4,13 @@ This runs the whole stack on one Docker VPS: the dashboard and the API on a sing
 upstream from `services/upstream`, Postgres in a named volume and Caddy for TLS. Budget 30 minutes.
 
 The gateway talks to the upstream with one shared bearer token (`UPSTREAM_URL` + `UPSTREAM_TOKEN`). The upstream
-holds the OF sessions and proxies; you connect accounts to it from the VPS shell (§7). It runs under the
+holds the OF sessions and proxies; you connect accounts from the dashboard (or the VPS shell, §7). It runs under the
 `upstream` compose profile, so an upstream you run elsewhere still works: drop that profile and point
 `UPSTREAM_URL` at it (§4).
 
-> **One operator.** Every linked workspace sees every connected account: its REST calls, events, webhooks and
-> stats. Sign-up links each new workspace automatically (§6), so only let people you trust with all accounts
-> register; there is no per-account split.
+> **Accounts are split per workspace.** Each OF account belongs to the workspace that connected it, and only that
+> workspace sees its REST calls, events, webhooks and stats. The upstream itself and the proxies bound to no account
+> are shared by every workspace. Sign-up links each new workspace automatically (§6).
 
 ## 1. Create the VPS
 
@@ -137,12 +137,15 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
    Check that it printed `linked workspace …`. A wrong slug exits with `no workspace with slug "…"`; copy the
    slug from Settings again.
-3. Reload the **Accounts** page. It lists the upstream's accounts: none yet on a fresh install, until §7.
+3. Reload the **Accounts** page. It lists your workspace's accounts: none yet, until §7.
 
 ## 7. Connect an OF account
 
 Each account needs a logged-in OF session and, optionally, a proxy of its own (required only with `OF_REQUIRE_PROXY=true`). Any provider
 works; use a `socks5h://` URL (DNS is resolved at the proxy too) or `http://`.
+
+Prefer the dashboard: **Accounts → Connect account**, paste the cURL from step 1 and the proxy URL. That records the
+account as your workspace's. The shell steps below connect it for no workspace, so step 4 claims it.
 
 1. In Chrome, log in to OF, open **DevTools → Network**, click a request to `onlyfans.com/api2/v2/…` (for example
    `users/me`), and **Copy → Copy as cURL (bash)**. The copy must carry the cookies as `-b '…'` and a `user-id`
@@ -166,7 +169,14 @@ works; use a `socks5h://` URL (DNS is resolved at the proxy too) or `http://`.
    `bootstrap failed (409): … proxy_required` means the proxy is missing. Reconnecting the same account later (an
    expired session) keeps its proxy unless you pass a new one.
 
-4. Reload **Accounts** in the dashboard; the account appears with a status:
+4. An account connected here belongs to no workspace yet (the dashboard's **Accounts → Connect account** records it
+   for the workspace that connects it). Claim it for yours; `link-team` prints the workspace id:
+
+   ```sh
+   docker compose exec gateway node dist/cli/analytics-claim.js --team <teamId> --account <accountId>
+   ```
+
+5. Reload **Accounts** in the dashboard; the account appears with a status:
 
 | Status | Meaning |
 |---|---|
@@ -198,6 +208,13 @@ section (2.0 renames events, changes the webhook signature and wraps responses).
 **2.0 to 2.1** needs no `.env` change and no new migration: between `v2.0.0` and `v2.1.0`, `deploy/.env.example`,
 `deploy/docker-compose.yml` and `apps/api/drizzle` are unchanged; apart from version strings, the code changes are
 all in the upstream service.
+
+**Upgrading to account ownership** (the release that splits accounts per workspace): after `up -d`, claim each
+account for its workspace once, or no workspace sees it and `smoke.sh` answers `403` for it:
+
+```sh
+docker compose exec gateway node dist/cli/analytics-claim.js --team <teamId> --account <accountId>
+```
 
 `smoke.sh` takes an API key from the dashboard and a connected account id. It calls `/healthz`, `GET me` and
 `GET settings/drm` (a 2.1 route), and prints each status code with the JSON key names, never the values. It

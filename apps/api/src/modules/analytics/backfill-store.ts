@@ -25,7 +25,7 @@ function updateAll(table: PgTable, keep: string[]): Record<string, SQL> {
 }
 
 /**
- * The analytics tables of workspace `teamId`, which must own the account (`claimAccount` or `assignAccount` first).
+ * The analytics tables of workspace `teamId`, which must own the account (`claimAccount` first).
  * Messages from `massFrom` on upsert every column on `(account_id, message_id)` (`updateAll`, which clears
  * `deleted_at` too: the derived rows have none). Older ones were derived without their mass history, so on conflict
  * they update every column but `is_mass`, `is_automated` and `automated_reason`: the flags a run that read the mass

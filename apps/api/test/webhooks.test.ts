@@ -12,7 +12,7 @@ import { envelope, sign, verifySignature } from '../src/lib/signature.js';
 import { ingestFrame } from '../src/modules/events/ingest.js';
 import { emit } from '../src/modules/webhooks/service.js';
 import { assertDeliverable, claimDeliveries, completeDelivery, deliverDue, isPrivateAddress } from '../src/modules/webhooks/worker.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 type Received = { headers: Record<string, string | string[] | undefined>; body: string };
 
@@ -43,6 +43,7 @@ beforeAll(async () => {
   const user = await signUp(app, 'webhooks@example.test');
   cookie = user.cookie;
   teamId = user.teamId;
+  await ownAccounts(teamId, 7, 8, 12);
   writeKey = (await createKey(app, cookie, { scope: 'write' })).secret;
   readKey = (await createKey(app, cookie, { scope: 'read' })).secret;
 });
@@ -683,10 +684,11 @@ describe('dashboard delivery stream', () => {
     }
   });
 
-  it('pushes upstream events to linked workspaces only, and the test event to the caller only', async () => {
+  it("pushes upstream events to the account's linked workspace only, and the test event to the caller only", async () => {
     const unlinked = await signUp(app, 'webhooks-unlinked@example.test');
+    const notOwner = await signUp(app, 'webhooks-not-owner@example.test', { linked: true });
     await linkTeam(teamId);
-    const [a, b] = await Promise.all([openStream(base, cookie), openStream(base, unlinked.cookie)]);
+    const [a, b, c] = await Promise.all([openStream(base, cookie), openStream(base, unlinked.cookie), openStream(base, notOwner.cookie)]);
     try {
       const ts = '2026-10-05T12:00:00.000Z';
       await ingestFrame({ id: null, type: 'messages.received', account_id: 7, ts, payload: { text: 'hi' }, amount_cents: null }, app.log);
@@ -709,20 +711,24 @@ describe('dashboard delivery stream', () => {
       expect(frames(b.text, 'event')).toEqual([
         { id: evt, type: 'webhook.test', accountId: null, ts: expect.any(String), data: { message: 'Test event from the gateway' } },
       ]);
+      // Linked, but account 7 is another workspace's.
+      expect(frames(c.text, 'event')).toEqual([]);
     } finally {
       a.close();
       b.close();
+      c.close();
     }
   });
 
   it('a stream opened before link-team stays unlinked for its lifetime', async () => {
     const late = await signUp(app, 'webhooks-late-link@example.test');
+    await ownAccounts(late.teamId, 9);
     const before = await openStream(base, late.cookie);
     await linkTeam(late.teamId);
     const after = await openStream(base, late.cookie);
     try {
       const ts = '2026-10-05T12:00:00.000Z';
-      await ingestFrame({ id: null, type: 'upstream.chat_typing', account_id: 7, ts, payload: {} }, app.log);
+      await ingestFrame({ id: null, type: 'upstream.chat_typing', account_id: 9, ts, payload: {} }, app.log);
       const deadline = Date.now() + 2000;
       while (frames(after.text, 'event').length === 0) {
         if (Date.now() > deadline) throw new Error(`no frame: ${after.text}`);
@@ -737,7 +743,7 @@ describe('dashboard delivery stream', () => {
     }
   });
 
-  it('returns the newest 50 ledger events without payloads to linked workspaces only', async () => {
+  it("returns the newest 50 ledger events of the workspace's accounts without payloads, to linked workspaces only", async () => {
     await pool.query('TRUNCATE event');
     const t0 = Date.parse('2026-10-01T00:00:00.000Z');
     await db.insert(event).values(
@@ -751,6 +757,11 @@ describe('dashboard delivery stream', () => {
     );
     // Same time: the id breaks the tie.
     await db.insert(event).values({ id: 'evt_recent99', accountId: 8, type: 'messages.sent', createdAt: new Date(t0 + 50_000) });
+    // Newer, but another workspace's account (9) and no workspace's (10): never listed.
+    await db.insert(event).values([
+      { id: 'evt_recentx1', accountId: 9, type: 'messages.sent', createdAt: new Date(t0 + 60_000) },
+      { id: 'evt_recentx2', accountId: 10, type: 'messages.sent', createdAt: new Date(t0 + 60_000) },
+    ]);
 
     const noSession = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent' });
     expect(noSession.statusCode).toBe(401);
@@ -760,9 +771,12 @@ describe('dashboard delivery stream', () => {
     expect(none.statusCode).toBe(200);
     expect(none.json()).toEqual({ events: [] });
 
-    const linked = await signUp(app, 'webhooks-recent-linked@example.test');
-    await linkTeam(linked.teamId);
-    const res = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent', headers: { cookie: linked.cookie } });
+    const linked = await signUp(app, 'webhooks-recent-linked@example.test', { linked: true });
+    const notOwner = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent', headers: { cookie: linked.cookie } });
+    expect(notOwner.json()).toEqual({ events: [] });
+
+    await linkTeam(teamId);
+    const res = await app.inject({ method: 'GET', url: '/api/webhooks/stream/recent', headers: { cookie } });
     expect(res.statusCode).toBe(200);
     const { events } = res.json() as { events: unknown[] };
     expect(events).toHaveLength(50);

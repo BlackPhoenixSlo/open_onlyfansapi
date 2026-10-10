@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq, gte, lt } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { accountWorkspace, chatCoverage, messageFact, purchaseFact } from '../db/schema.js';
+import { chatCoverage, messageFact, purchaseFact } from '../db/schema.js';
+import { accountOwner } from '../modules/accounts/ownership.js';
 import type { BackfillRows } from '../modules/analytics/backfill.js';
 import { fanTurns, replyTimes } from '../modules/analytics/turns.js';
 import { exportFiles, type ExportData } from './analytics-csv.js';
@@ -16,9 +17,9 @@ export async function readAutomationTexts(file: string): Promise<string[]> {
 /** `team` when given, else the workspace that owns the account (`analytics:claim` records it). */
 export async function accountTeam(accountId: number, team?: string): Promise<string> {
   if (team) return team;
-  const rows = await db.select({ teamId: accountWorkspace.teamId }).from(accountWorkspace).where(eq(accountWorkspace.accountId, accountId));
-  if (rows.length !== 1) throw new Error(`account ${accountId} belongs to no workspace: pass --team <teamId> or run analytics:claim first`);
-  return rows[0]!.teamId;
+  const owner = await accountOwner(accountId);
+  if (!owner) throw new Error(`account ${accountId} belongs to no workspace: pass --team <teamId> or run analytics:claim first`);
+  return owner.teamId;
 }
 
 /** Writes messages.csv, chats.csv, transactions.csv and reply_times.csv for `[from, to)` to `outDir`; returns row counts. */

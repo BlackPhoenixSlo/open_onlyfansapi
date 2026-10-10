@@ -10,7 +10,7 @@ import { pollTransactions, refreshDue } from '../src/jobs/analytics-refresh.js';
 import { createUpstream, type Upstream } from '../src/lib/upstream.js';
 import { backfillRun } from '../src/modules/analytics/backfill-runs.js';
 import { nextRefresh, refreshBoundary } from '../src/modules/analytics/refresh.js';
-import { assignAccount } from '../src/modules/analytics/workspace.js';
+import { claimAccount } from '../src/modules/accounts/ownership.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { linkTeam, resetDb, signUp } from './helpers.js';
 
@@ -45,7 +45,7 @@ beforeAll(async () => {
   await pool.query('TRUNCATE account_workspace, message_fact, chat_coverage, purchase_fact');
   teamId = (await signUp(app, 'refresh@example.test')).teamId;
   await linkTeam(teamId);
-  for (const id of ACCOUNTS) await assignAccount(teamId, id);
+  for (const id of ACCOUNTS) await claimAccount(teamId, id);
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE purchase_fact');

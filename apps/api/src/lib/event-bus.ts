@@ -2,6 +2,9 @@
 // One gateway process (plan-v4 §1.3).
 import type { DeliveryNotice, GatewayEvent } from '../contracts.js';
 
+/** An upstream event with the workspace that owns its account (`account_workspace`). */
+export type BusEvent = GatewayEvent & { accountId: number; teamId: string };
+
 /** A finished webhook delivery attempt, for the open dashboard streams of the endpoint's workspace. */
 export type DeliveryMessage = { teamId: string; notice: DeliveryNotice };
 
@@ -28,8 +31,8 @@ function topic<M>(context: (m: M) => object) {
   };
 }
 
-/** Upstream events, for every linked workspace. */
-export const { publish, subscribe } = topic<GatewayEvent>((e) => ({ eventId: e.id, type: e.type }));
+/** Upstream events, each for the workspace that owns its account. */
+export const { publish, subscribe } = topic<BusEvent>((e) => ({ eventId: e.id, type: e.type }));
 
 /** Finished delivery attempts, each for one workspace. */
 export const { publish: publishDelivery, subscribe: subscribeDeliveries } = topic<DeliveryMessage>((d) => ({

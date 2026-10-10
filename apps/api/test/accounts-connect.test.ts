@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
+import { accountOwner } from '../src/modules/accounts/ownership.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
@@ -42,10 +43,33 @@ describe('POST /api/accounts/connect', () => {
     expect(JSON.parse(call.body!)).toEqual({ curl: CURL, nickname: 'Main', proxy_url: 'http://u:p@proxy:8080' });
   });
 
-  it("passes the upstream's 400 invalid_curl through unchanged", async () => {
-    const res = await connect(dashboard(linked.cookie), { curl: "curl 'https://onlyfans.com/api2/v2/me' -b 'sess=x'" });
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ error: { code: 'invalid_curl', message: 'the curl has no numeric user-id header' } });
+  it("records the connected account as the workspace's; reconnecting it is fine, another workspace gets 409 before the upstream", async () => {
+    const owner = async (id: number) => (await accountOwner(id))?.teamId;
+    expect(await owner(4242)).toBe(linked.teamId);
+    expect((await connect(dashboard(linked.cookie), { curl: CURL })).statusCode).toBe(200);
+    expect(await owner(4242)).toBe(linked.teamId);
+
+    const other = await signUp(app, 'other-connect@example.test', { linked: true });
+    const before = upstream.requests.length;
+    const res = await connect(dashboard(other.cookie), { curl: CURL });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('account_workspace_conflict');
+    expect(upstream.requests.length).toBe(before);
+    expect(await owner(4242)).toBe(linked.teamId);
+
+    const own = await connect(dashboard(other.cookie), { curl: CURL.replace('4242', '4343') });
+    expect(own.statusCode).toBe(200);
+    expect(await owner(4343)).toBe(other.teamId);
+  });
+
+  it('refuses a cURL without a numeric user-id header with 400 invalid_curl, without calling the upstream', async () => {
+    const before = bootstrapCalls().length;
+    for (const curl of ["curl 'https://onlyfans.com/api2/v2/me' -b 'sess=x'", "curl 'https://onlyfans.com/api2/v2/me' -H 'user-id: me' -b 'sess=x'"]) {
+      const res = await connect(dashboard(linked.cookie), { curl });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatchObject({ code: 'invalid_curl', message: 'the curl has no numeric user-id header' });
+    }
+    expect(bootstrapCalls().length).toBe(before);
   });
 
   it('refuses an unlinked workspace with 409 team_not_linked, like the account list, without calling the upstream', async () => {

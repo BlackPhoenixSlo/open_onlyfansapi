@@ -85,10 +85,12 @@ From the dashboard (once your workspace is signed up and linked, §4): **Account
 cURL, optionally a nickname, and the proxy URL (`http://user:pass@host:port` or `socks5h://…`). The gateway
 forwards it to the upstream's `/session/bootstrap` and never stores the cURL in the request log.
 
-Or from the command line:
+Or from the command line. An account connected this way belongs to no workspace, so no workspace sees it until it is
+claimed (`link-team` prints the workspace id):
 
 ```sh
 docker compose exec -T upstream python connect.py --nickname Main --proxy-url socks5h://user:pass@host:port < curl.txt
+pnpm --filter @gateway/api analytics:claim --team <teamId> --account <accountId>
 ```
 
 OF's static signing parameter comes from `--static-param <value>` on that command, or from `STATIC_PARAM` in
@@ -116,8 +118,8 @@ yours as not linked (the automatic link failed; the API log says why), copy the 
 pnpm --filter @gateway/api link-team <workspace-slug>
 ```
 
-Running the command again is harmless. Accounts themselves are connected in the upstream service, not in the
-gateway.
+Running the command again is harmless. Accounts themselves are stored in the upstream service; the gateway records
+which workspace each belongs to (the one that connected it), and a workspace sees only its own.
 
 ## 5. Create an API key
 

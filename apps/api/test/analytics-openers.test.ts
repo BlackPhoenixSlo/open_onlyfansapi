@@ -3,7 +3,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { createUpstream } from '../src/lib/upstream.js';
 import { startFakeUpstream, type FakeOf } from './fake-upstream.js';
-import { bearer, claimAndBackfill, createKey, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, claimAndBackfill, createKey, linkTeam, ownAccounts, resetDb, signUp } from './helpers.js';
 
 // Openers (spec §6 step 2) over a backfill from the fake upstream, with known answers.
 
@@ -114,6 +114,7 @@ beforeAll(async () => {
   const b = await signUp(app, 'openers-b@example.test');
   await linkTeam(a.teamId);
   await linkTeam(b.teamId);
+  await ownAccounts(a.teamId, A1, A2);
   keyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A1, A2] })).secret;
   writeKeyA = (await createKey(app, a.cookie, { scope: 'write' })).secret;
   limitedKeyA = (await createKey(app, a.cookie, { scope: 'read', allowedAccountIds: [A2] })).secret;
@@ -332,13 +333,17 @@ describe('opener samples', () => {
 describe('opener metrics tenancy', () => {
   it("a second workspace's key sees none of the first's openers, on every route", async () => {
     for (const id of IDS) {
-      for (const q of [`${RANGE}&groupBy=account`, `${RANGE}&accountId=${A1}`]) {
-        const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
-        expect([s.statusCode, s.json().rows]).toEqual([200, []]);
-        const csv = await get(`/v1/stats/metrics/${id}?${q}&format=csv`, keyB);
-        expect(csv.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap\n');
-        const samples = await get(`/v1/stats/metrics/${id}/samples?${q}`, keyB);
-        expect([samples.statusCode, samples.json().items]).toEqual([200, []]);
+      const q = `${RANGE}&groupBy=account`;
+      const s = await get(`/v1/stats/metrics/${id}?${q}`, keyB);
+      expect([s.statusCode, s.json().rows]).toEqual([200, []]);
+      const csv = await get(`/v1/stats/metrics/${id}?${q}&format=csv`, keyB);
+      expect(csv.body).toBe('group,value,n,openers,first_ever,reactivation,unknown_kind,replied,no_reply,pending,mass_or_automated_gap\n');
+      const samples = await get(`/v1/stats/metrics/${id}/samples?${q}`, keyB);
+      expect([samples.statusCode, samples.json().items]).toEqual([200, []]);
+      // Naming the first workspace's account is refused.
+      for (const url of [`/v1/stats/metrics/${id}?${RANGE}&accountId=${A1}`, `/v1/stats/metrics/${id}/samples?${RANGE}&accountId=${A1}`]) {
+        const res = await get(url, keyB);
+        expect([res.statusCode, res.json().error.code]).toEqual([403, 'account_not_allowed']);
       }
     }
   });

@@ -12,10 +12,9 @@ The usual path. On **Accounts**, each `active` account has a range (30, 90 or 18
 **Run analytics (N days)**. It calls `POST /v1/stats/backfill` with `days` ([analytics.md](analytics.md#routes);
 the API takes 1 to 366), which:
 
-1. checks the account is in the workspace's account list (`GET /v1/accounts`; for a key, within its allowlist), so no
-   key naming the account is needed;
-2. claims the account for the workspace (once; `409 account_workspace_conflict` if another workspace owns it);
-3. starts the backfill of the last `days` days, now minus `days` days up to when the run starts (later, if it is
+1. checks the workspace owns the account (connecting it from the dashboard records that; for a key, it must also be
+   within its allowlist), else `403 account_not_allowed`, and that the upstream still lists it, else `404`;
+2. starts the backfill of the last `days` days, now minus `days` days up to when the run starts (later, if it is
    queued behind another account), inside the API process, and answers at once. A long range takes hours at the per-hour request cap.
 
 The row then polls `GET /v1/stats/backfill` every 3 s and shows `Running… N chats, M messages`, then
@@ -65,11 +64,11 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
 3. **Get the workspace id.** Sign-up links the workspace; `pnpm --filter @gateway/api link-team <workspace-slug>`
    links it if it is not and prints the workspace id (`linked workspace <slug> (<teamId>)`), which the other commands take.
-4. **Allow the account on a key** (CLI only: the dashboard button needs neither this nor step 5). The workspace needs a
-   live API key whose account allowlist names the account (Dashboard → API keys); `analytics:backfill` checks it on
-   every run that stores rows. An account named by another workspace's keys is refused with `account_workspace_conflict`.
-5. **Claim the account:** `analytics:claim --team <teamId> --account <id>`. It is idempotent. Once claimed,
-   `analytics:backfill` finds the workspace itself, so `--team` is optional.
+4. **Claim the account** (only for an account connected outside the dashboard, e.g. with the upstream's `connect.py`,
+   or before ownership was recorded at connect: **Accounts → Connect account** records it for the workspace):
+   `analytics:claim --team <teamId> --account <id>`. It is idempotent and needs only a linked workspace; an account
+   another workspace owns is refused with `account_workspace_conflict`. Once claimed, `analytics:backfill` finds the
+   workspace itself, so `--team` is optional.
 
 `UPSTREAM_URL` and `UPSTREAM_TOKEN` come from `.env`, as for the server.
 

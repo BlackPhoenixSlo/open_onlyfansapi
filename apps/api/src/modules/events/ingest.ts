@@ -3,11 +3,12 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { webhookEventType } from '../../contracts.js';
 import { db } from '../../db/index.js';
-import { event, teamBackend } from '../../db/schema.js';
+import { event } from '../../db/schema.js';
 import { cause } from '../../lib/errors.js';
 import { publish } from '../../lib/event-bus.js';
 import { newId } from '../../lib/ids.js';
 import { applyLiveEvent } from '../analytics/live.js';
+import { accountOwner } from '../accounts/ownership.js';
 import { emit } from '../webhooks/service.js';
 
 /** Frames waiting for ingest; more are dropped. */
@@ -56,11 +57,15 @@ export function parseFrame(
   return parsed.data;
 }
 
+/** Accounts already warned about as owned by no workspace (one warning per account per process). */
+const unowned = new Set<number>();
+
 /**
- * One event: a stored type goes into the ledger first (a duplicate `id` stops here), then the bus, then together a
- * webhook `emit()` per linked workspace and the analytics store's live update (`applyLiveEvent`, which never throws). Its
- * `evt_` id is the ledger id, the bus id and the deliveries' idempotency key. A failed ledger insert is logged; the
- * event is still published but not emitted nor applied.
+ * One event: a stored type goes into the ledger first (a duplicate `id` stops here). Then, for the workspace that owns
+ * the account, the bus, and together a webhook `emit()` (when the workspace is linked) and the analytics store's live
+ * update (`applyLiveEvent`, which never throws). An event of an account no workspace owns stays in the ledger only
+ * (one warning per account). Its `evt_` id is the ledger id, the bus id and the deliveries' idempotency key. A failed
+ * ledger insert is logged and the event dropped.
  */
 export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Promise<void> {
   const { type, account_id: accountId } = frame;
@@ -76,21 +81,25 @@ export async function ingestFrame(frame: EventFrame, log: FastifyBaseLogger): Pr
         .returning({ id: event.id });
       if (rows.length === 0) return; // duplicate
     } catch (err) {
-      log.error({ err: cause(err), type, accountId }, 'event ledger insert failed; published, not emitted');
-      publish({ id, type, accountId, ts: frame.ts, data });
+      log.error({ err: cause(err), type, accountId }, 'event ledger insert failed; event dropped');
       return;
     }
   }
-  publish({ id, type, accountId, ts: frame.ts, data });
-  const teams = await db.select({ teamId: teamBackend.teamId }).from(teamBackend);
-  await Promise.all([
-    ...teams.map((t) =>
-      emit(t.teamId, id, type, accountId, data).catch((err) =>
-        log.error({ err: cause(err), type, teamId: t.teamId }, 'webhook emit failed'),
-      ),
-    ),
-    applyLiveEvent(id, type, accountId, data, log),
-  ]);
+  const owner = await accountOwner(accountId);
+  if (!owner) {
+    if (!unowned.has(accountId)) {
+      unowned.add(accountId);
+      log.warn({ accountId }, 'events of an account no workspace owns are not sent (analytics:claim assigns it)');
+    }
+    return;
+  }
+  const { teamId } = owner;
+  publish({ id, type, accountId, ts: frame.ts, data, teamId });
+  const tasks: Promise<unknown>[] = [applyLiveEvent(id, type, accountId, teamId, data, log)];
+  if (owner.linked) {
+    tasks.push(emit(teamId, id, type, accountId, data).catch((err) => log.error({ err: cause(err), type, teamId }, 'webhook emit failed')));
+  }
+  await Promise.all(tasks);
 }
 
 /**

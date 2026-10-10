@@ -1,10 +1,11 @@
-// Records that an OF account belongs to a workspace (step 0 of docs/analytics-backfill.md). Idempotent.
-// The workspace must be linked (link-team) and name the account in a live key's allowlist.
+// Records that an OF account belongs to a workspace (docs/analytics-backfill.md, before the first run). Idempotent.
+// The operator's repair path for an account connected outside the dashboard (the upstream's connect.py) or before
+// connect recorded ownership. The workspace must be linked (link-team); another workspace's account is refused.
 // Usage: pnpm --filter @gateway/api analytics:claim --team <teamId> --account <id>
 //        (in the container: node dist/cli/analytics-claim.js ...)
 import { parseArgs } from 'node:util';
 import { pool } from '../db/index.js';
-import { claimAccount } from '../modules/analytics/workspace.js';
+import { claimAccount } from '../modules/accounts/ownership.js';
 
 const { values } = parseArgs({ options: { team: { type: 'string' }, account: { type: 'string' } } });
 const accountId = Number(values.account);

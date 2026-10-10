@@ -56,7 +56,7 @@ export function assertBackfillIdle(accountId: number): void {
 }
 
 /**
- * Starts a backfill of an account the caller already assigned to `teamId` (`assignAccount`), without CSVs, from
+ * Starts a backfill of an account `teamId` owns (`account_workspace`), without CSVs, from
  * `from` up to when it starts, so its end moves `refreshed_at`. It is `queued` until the process-wide
  * one-account-at-a-time limiter lets it run. 409 `backfill_running` while the account's previous run is queued or
  * running.

@@ -13,7 +13,7 @@ import { env } from '../env.js';
 import { createUpstream } from '../lib/upstream.js';
 import { dbStore, memoryStore } from '../modules/analytics/backfill-store.js';
 import { backfill, progressLine, type BackfillResult, type BackfillRows, type BackfillStore } from '../modules/analytics/backfill.js';
-import { claimAccount } from '../modules/analytics/workspace.js';
+import { claimAccount } from '../modules/accounts/ownership.js';
 import { accountTeam, readAutomationTexts, writeExport, writeRowsExport } from './analytics-export.js';
 
 const USAGE = 'usage: analytics:backfill --account <id> --from <date> --to <date> --out <dir> [--team <teamId>] [--automation <file>] [--dry-run]';

@@ -87,15 +87,15 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
    (e.g. `users/me`) and choose Copy as cURL (bash). It must carry `-b '…'` cookies and a `user-id` header.
 4. **Connect.** Use **Accounts → Connect account**: paste the cURL, a nickname, and optionally a proxy URL
    (`socks5h://user:pass@host:port` or `http://…`). Leave the proxy empty to use your own IP (`OF_REQUIRE_PROXY=false`).
-   The CLI does the same:
+   The dashboard records the account as your workspace's. The CLI connects it too, but for no workspace:
    `umask 077; pbpaste > /tmp/curl.txt; docker compose exec -T upstream python connect.py --nickname Main [--proxy-url …] < /tmp/curl.txt; rm /tmp/curl.txt`.
-   It prints `{"accountId", "username", "status"}`.
+   It prints `{"accountId", "username", "status"}`; then claim it with
+   `pnpm --filter @gateway/api analytics:claim --team <teamId> --account <id>`.
 5. **Check the status.** Reload **Accounts** and look for `active` or `connecting`. `no_session` or `session_expired` means you
    need to capture again. `no_proxy` appears only with `OF_REQUIRE_PROXY=true`.
 6. **Mint two keys.** Go to **API keys**. The secret is shown once.
    - `read` key, allowlist `[<id>]`, named `testing-read`
-   - `write` key, allowlist `[<id>]`, named `testing-write`. The dashboard's Run analytics button needs no key; the
-     `analytics:claim` CLI does (a live key whose allowlist names the account).
+   - `write` key, allowlist `[<id>]`, named `testing-write`. An allowlist may name only your workspace's accounts.
 7. **Store the keys** in an editor so they stay out of shell history: `mkdir -p /tmp/step0 && umask 077 && nano /tmp/step0/.keys`, with
    `READ=gk_…`, `WRITE=gk_…`, `READ_ID=key_…` and `WRITE_ID=key_…`. Then run `chmod 600 /tmp/step0/.keys`. Load them per shell with
    `set -a; . /tmp/step0/.keys; set +a`. `/tmp/step0/mint.mts` (scratch, not in the repo) mints read keys through
