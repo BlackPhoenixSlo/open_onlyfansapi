@@ -89,7 +89,7 @@ You need a Docker VPS with 2 GB RAM or more (the image builds on the box), a DNS
 pointing at it, and ports 80 and 443 open. With those ready, most of the ten minutes is the first build.
 
 ```sh
-git clone https://github.com/BlackPhoenixSlo/gateway.git /opt/gateway
+git clone https://github.com/BlackPhoenixSlo/open_onlyfansapi.git /opt/gateway
 cd /opt/gateway/deploy
 cp .env.example .env && chmod 600 .env
 ```

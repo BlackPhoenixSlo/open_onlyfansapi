@@ -22,7 +22,8 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 const app = await buildApp({ logger: false });
-const fake = await startFakeUpstream(TOKEN);
+// 1004 is claimed below but not listed: a disconnected account.
+const fake = await startFakeUpstream(TOKEN, ACCOUNTS.map((id) => ({ id })));
 const upstream = createUpstream({ url: fake.url, token: TOKEN, timeoutMs: 2000 });
 const log = () => ({ error: vi.fn() }) as unknown as FastifyBaseLogger & { error: ReturnType<typeof vi.fn> };
 
@@ -114,6 +115,21 @@ describe('hourly transactions poll', () => {
     expect(spy.error.mock.calls[0]![0]).toMatchObject({ accountId: 1001 });
     expect(await db.$count(purchaseFact)).toBe(4);
   });
+
+  it('skips a claimed account the upstream no longer lists (disconnected), and fails the tick when the list is unreadable', async () => {
+    await claimAccount(teamId, 1004);
+    try {
+      const start = fake.requests.length;
+      const spy = log();
+      expect(await pollTransactions(upstream, spy, NOW)).toBe(6);
+      expect(ofCalls(start)).toHaveLength(3);
+      expect(spy.error).not.toHaveBeenCalled();
+      const down: Upstream = { ...upstream, listAccounts: async () => ({ status: 502, ok: false, headers: new Headers(), body: Buffer.from('') }) };
+      await expect(pollTransactions(down, spy, NOW)).rejects.toThrow('The upstream answered 502 for the account list');
+    } finally {
+      await db.delete(accountWorkspace).where(eq(accountWorkspace.accountId, 1004));
+    }
+  });
 });
 
 describe('daily refresh', () => {
@@ -149,6 +165,18 @@ describe('daily refresh', () => {
     expect(rows).toHaveLength(2);
     for (const { refreshedAt } of rows) expect(refreshedAt!.getTime()).toBeGreaterThanOrEqual(t.getTime());
     expect(await refreshDue(upstream, log(), h, new Date())).toBe(0);
+  });
+
+  it('starts nothing for a claimed account the upstream no longer lists (disconnected)', async () => {
+    const { t, h } = at(new Date());
+    for (const id of ACCOUNTS) await setRefreshed(id, new Date(refreshBoundary(t, h).getTime() + 1000)); // none due
+    await claimAccount(teamId, 1004); // refreshed_at null: due, but disconnected
+    try {
+      expect(await refreshDue(upstream, log(), h, t)).toBe(0);
+      expect(backfillRun(teamId, 1004).status).toBe('idle');
+    } finally {
+      await db.delete(accountWorkspace).where(eq(accountWorkspace.accountId, 1004));
+    }
   });
 
   it('starts nothing before today\'s refresh time', async () => {

@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { accountWorkspace } from '../db/schema.js';
 import { newId } from '../lib/ids.js';
 import type { Upstream } from '../lib/upstream.js';
+import { listUpstreamAccounts } from '../modules/accounts/service.js';
 import { backfillRun, startBackfillRun } from '../modules/analytics/backfill-runs.js';
 import { dbStore } from '../modules/analytics/backfill-store.js';
 import { readTransactions, type Get } from '../modules/analytics/backfill.js';
@@ -24,14 +25,24 @@ const plainGet =
   };
 
 /**
- * The hourly transactions poll (docs/analytics.md, Keeping it fresh): for each claimed account (`account_workspace`),
+ * The claimed accounts (`account_workspace`) the upstream still lists. A disconnected account keeps its row (its
+ * history and owner stay), but the upstream answers 404 for it, so a job that ran it would fail every tick. Throws when
+ * the upstream list cannot be read: the job fails once that tick instead of once per account.
+ */
+async function connectedClaims(upstream: Upstream) {
+  const listed = new Set((await listUpstreamAccounts(upstream, newId('req'))).map((a) => a.id));
+  return (await db.select().from(accountWorkspace)).filter((c) => listed.has(c.accountId));
+}
+
+/**
+ * The hourly transactions poll (docs/analytics.md, Keeping it fresh): for each claimed account the upstream still lists,
  * the transactions of the last 48 hours, read and upserted into `purchase_fact` as the backfill does
  * (`readTransactions`): one request an account, more only when those hours hold over 100 transactions. An account
  * that fails is logged and the others still run. Returns the rows stored.
  */
 export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogger, now = new Date()): Promise<number> {
   let stored = 0;
-  for (const { accountId, teamId } of await db.select().from(accountWorkspace)) {
+  for (const { accountId, teamId } of await connectedClaims(upstream)) {
     try {
       await readTransactions(plainGet(upstream, accountId), dbStore(teamId, accountId), now.getTime() - POLL_WINDOW_MS, now.getTime(), (rows) => {
         stored += rows.length;
@@ -45,7 +56,7 @@ export async function pollTransactions(upstream: Upstream, log: FastifyBaseLogge
 
 /**
  * The daily refresh (docs/analytics.md, Keeping it fresh), ticked hourly: once `now` is past today's `hour`:00 UTC,
- * each claimed account whose `refreshed_at` is null or before it gets one backfill from max(now - 7 days,
+ * each claimed account the upstream still lists whose `refreshed_at` is null or before it gets one backfill from max(now - 7 days,
  * refreshed_at - 1 hour) to now, started like the dashboard's (`startBackfillRun`: queued behind the one-at-a-time
  * limiter, its status on the Accounts page) and never awaited here. One attempt per account a day: skipped, an account
  * whose run is queued or running, or whose last run (since the API started: the state is in memory) started after
@@ -55,7 +66,7 @@ export async function refreshDue(upstream: Upstream, log: FastifyBaseLogger, hou
   const boundary = refreshBoundary(now, hour).getTime();
   if (now.getTime() < boundary) return 0;
   let started = 0;
-  for (const { accountId, teamId, refreshedAt } of await db.select().from(accountWorkspace)) {
+  for (const { accountId, teamId, refreshedAt } of await connectedClaims(upstream)) {
     if (refreshedAt && refreshedAt.getTime() >= boundary) continue;
     const last = backfillRun(teamId, accountId);
     if (last.status === 'queued' || last.status === 'running') continue;

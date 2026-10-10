@@ -10,7 +10,30 @@ holds the OF sessions and proxies; you connect accounts from the dashboard (or t
 
 > **Accounts are split per workspace.** Each OF account belongs to the workspace that connected it, and only that
 > workspace sees its REST calls, events, webhooks and stats. The upstream itself and the proxies bound to no account
-> are shared by every workspace. Sign-up links each new workspace automatically (§6).
+> are shared by every workspace. Sign-up is open until you close it and links each new workspace automatically
+> (§6).
+
+## 0. One line
+
+Do §1 (the VPS, with `22/80/443` open in the hPanel firewall) and §2 (the A record, propagated) first. Then, as
+root on the VPS:
+
+```sh
+DOMAIN=gw.example.com bash -c 'curl -fsSLo /tmp/install.sh https://raw.githubusercontent.com/BlackPhoenixSlo/open_onlyfansapi/master/deploy/install.sh && bash /tmp/install.sh'
+```
+
+[`install.sh`](install.sh) does §§3-6 up to the first sign-up, so skip those:
+
+- checks Docker and the Compose plugin, and that `DOMAIN`'s A and AAAA records point at this VPS
+  (`SKIP_DNS_CHECK=1` skips that);
+- clones the public repo into `/opt/gateway` (`REF=<branch or tag>`, default `master`);
+- writes `deploy/.env` with fresh secrets, or keeps the one that is there;
+- runs `docker compose up -d --build` and waits up to 3 minutes for `https://$DOMAIN/healthz`, printing the
+  gateway and caddy logs if either fails;
+- prints where to sign up and the §7 commands to connect an account.
+
+Re-running it is an update: with a running stack it first writes the §8 Postgres dump to `/root/backups`, then
+pulls, keeps `.env` and rebuilds. The manual path below is unchanged.
 
 ## 1. Create the VPS
 
@@ -52,7 +75,7 @@ holds the OF sessions and proxies; you connect accounts from the dashboard (or t
 
 ```sh
 mkdir -p /opt/gateway
-git clone <repo-url> /opt/gateway
+git clone https://github.com/BlackPhoenixSlo/open_onlyfansapi.git /opt/gateway
 cd /opt/gateway/deploy
 ```
 
@@ -124,10 +147,18 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
 ## 6. First user
 
-1. Open `https://gw.example.com` in a browser and **sign up**, then open the verification link from your email
-   (without `SMTP_HOST` it is in `docker compose logs gateway`). The first account creates a workspace, and
-   sign-up links it to the upstream automatically.
-2. Go to **Settings** and check that **Upstream link** says linked. If it does not (the gateway log shows
+1. Open `https://gw.example.com` in a browser and **sign up**; you are signed in at once, no email needed. The
+   first account creates a workspace, and sign-up links it to the upstream automatically.
+2. Close registration, so a stranger who finds the URL cannot sign up and run OF accounts through your VPS and
+   the proxies bound to no account. Set `REGISTRATION_OPEN=false` in `deploy/.env`, then:
+
+   ```sh
+   cd /opt/gateway/deploy
+   docker compose up -d
+   ```
+
+   Existing users still sign in. Set it back to `true` (and `docker compose up -d`) to let someone else register.
+3. Go to **Settings** and check that **Upstream link** says linked. If it does not (the gateway log shows
    `workspace … was not linked to the upstream`), copy the workspace **slug** and link it from the VPS shell:
 
    ```sh
@@ -137,7 +168,7 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
    Check that it printed `linked workspace …`. A wrong slug exits with `no workspace with slug "…"`; copy the
    slug from Settings again.
-3. Reload the **Accounts** page. It lists your workspace's accounts: none yet, until §7.
+4. Reload the **Accounts** page. It lists your workspace's accounts: none yet, until §7.
 
 ## 7. Connect an OF account
 

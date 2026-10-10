@@ -64,7 +64,8 @@ export type ConnectedAccount = { accountId: number; username: string | null; sta
 /**
  * `PATCH /api/accounts/:id` (dashboard only): an omitted field is left unchanged. `proxy`: `{ label }` moves the account
  * onto an existing proxy, `{ url }` (`scheme://[user:pass@]host:port`, checked by the upstream) stores a new one for it,
- * `null` unbinds it.
+ * `null` unbinds it. `DELETE /api/accounts/:id` (dashboard only, no body) disconnects the account upstream: 204, or
+ * 404 `account_not_found`.
  */
 export const updateAccountBody = z.object({
   label: z.string().trim().min(1).max(100).optional(),

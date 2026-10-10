@@ -30,10 +30,10 @@ function curlAccountId(curl: string): number {
 }
 
 /**
- * Dashboard-only account connect and edit (session cookie + CSRF). Mounted at /api/accounts.
+ * Dashboard-only account connect, edit and disconnect (session cookie + CSRF). Mounted at /api/accounts.
  * `/api` is outside the `/v1` request-log scope, so the cURL (live OF cookies) and proxy URLs are never stored; they are
  * forwarded to the upstream, and its error statuses and bodies are returned unchanged. Connect records the account as
- * the session workspace's (`account_workspace`); edit needs the workspace to own it (403 otherwise).
+ * the session workspace's (`account_workspace`); edit and disconnect need the workspace to own it (403 otherwise).
  */
 export default async function accountsConnectRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -80,6 +80,17 @@ export default async function accountsConnectRoutes(app: FastifyInstance) {
         throw new AppError(502, 'upstream_error', 'The upstream answered an unreadable account');
       }
       return { account: toAccount(row) };
+    },
+  );
+
+  // Disconnects upstream only: analytics rows and keys' `allowedAccountIds` that name the account are kept.
+  r.delete(
+    '/:id',
+    { schema: { tags: ['dashboard'], params: z.object({ id: z.coerce.number().int().positive() }) } },
+    async (request, reply) => {
+      await assertTeamLinked(request.session.teamId);
+      await assertAccountOwned(request.session.teamId, request.params.id);
+      return passThrough(reply, await app.upstream.deleteAccount(request.params.id, request.id));
     },
   );
 }

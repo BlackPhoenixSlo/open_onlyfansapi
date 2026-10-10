@@ -88,6 +88,10 @@ account without a proxy only when `OF_REQUIRE_PROXY=true`; by default an account
 From the dashboard (once your workspace is signed up and linked, §4): **Accounts → Connect account**, paste the
 cURL, optionally a nickname, and the proxy URL (`http://user:pass@host:port` or `socks5h://…`). The gateway
 forwards it to the upstream's `/session/bootstrap` and never stores the cURL in the request log.
+The row's actions menu has **Edit** (label, proxy) and **Disconnect**, which deletes the account's session on the
+upstream: it stops receiving events and API calls for it fail. Its analytics history is kept, and this workspace can
+connect it again later.
+
 Or from the command line. An account connected this way belongs to no workspace, so no workspace sees it until it is
 claimed (`link-team` prints the workspace id):
 

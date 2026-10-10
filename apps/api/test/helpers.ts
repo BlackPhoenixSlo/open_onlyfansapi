@@ -17,15 +17,6 @@ setMailTransport(async (mail) => {
   outbox.push(mail);
 });
 
-/** The verification link in the latest mail to `email`, as a path for app.inject. */
-export function verificationPath(email: string) {
-  const mail = outbox.findLast((m) => m.to === email);
-  const link = mail && /https?:\/\/\S+/.exec(mail.text)?.[0];
-  if (!link) throw new Error(`no verification mail to ${email}`);
-  const url = new URL(link);
-  return url.pathname + url.search;
-}
-
 /** Session cookies from a response's Set-Cookie headers, as one Cookie header. */
 export function cookieOf(res: { headers: Record<string, unknown> }) {
   const setCookie = res.headers['set-cookie'] as string | string[] | undefined;
@@ -37,7 +28,7 @@ export async function resetDb() {
 }
 
 /**
- * Signs up a user and follows the emailed verification link; returns the session cookie and the auto-created workspace.
+ * Signs up a user (sign-up signs them in); returns the session cookie and the auto-created workspace.
  * Sign-up links the workspace; this removes the link unless `linked`, so tests opt in with `linkTeam` as before and
  * the `team_not_linked` gate stays covered.
  */
@@ -49,9 +40,7 @@ export async function signUp(app: FastifyInstance, email: string, { linked = fal
     payload: { email, password: 'pw-12345678', name: email.split('@')[0] },
   });
   if (res.statusCode !== 200) throw new Error(`sign-up failed: ${res.statusCode} ${res.body}`);
-  const verified = await app.inject({ method: 'GET', url: verificationPath(email) });
-  if (verified.statusCode !== 302) throw new Error(`verification failed: ${verified.statusCode} ${verified.body}`);
-  const cookie = cookieOf(verified);
+  const cookie = cookieOf(res);
   const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie } });
   const teamId = session.json().session.activeOrganizationId as string;
   const [team] = await db.select().from(organization).where(eq(organization.id, teamId));

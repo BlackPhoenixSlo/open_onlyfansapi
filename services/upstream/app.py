@@ -383,6 +383,16 @@ async def of_account_update(account_id: str, body: AccountPatch) -> dict:
     return _account_row(accounts.load_meta(account_id) or {"id": account_id})
 
 
+@app.delete("/of-accounts/{account_id}", tags=["of-accounts"], operation_id="ofAccounts.delete", status_code=204)
+async def of_account_delete(account_id: str) -> None:
+    """Disconnect an account: delete its session and meta, then stop its pump and pollers. Its proxy binding is
+    kept, so a re-connect of the same account goes out through the same egress."""
+    if not account_id.isdigit() or not await run_in_threadpool(accounts.delete_account, account_id):
+        raise ApiError(404, "account_not_found")
+    client_pool.evict(account_id)
+    await supervisor.reconcile()
+
+
 # ─── Proxies (operator surface; never returns a password) ─────────
 
 

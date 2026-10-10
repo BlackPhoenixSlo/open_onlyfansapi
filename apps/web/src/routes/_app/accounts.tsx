@@ -1,13 +1,20 @@
 import type { Account } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { Pencil } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
+import { DisconnectDialog } from '@/features/accounts/DisconnectDialog';
 import { EditAccountDialog } from '@/features/accounts/EditAccountDialog';
 import { ProxiesCard } from '@/features/accounts/ProxiesCard';
 import { RunAnalytics } from '@/features/accounts/RunAnalytics';
@@ -20,6 +27,7 @@ function Accounts() {
   const accounts = useQuery(accountsQuery);
   const [connecting, setConnecting] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
+  const [disconnecting, setDisconnecting] = useState<Account | null>(null);
   const unlinked = accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked';
 
   return (
@@ -85,10 +93,19 @@ function Accounts() {
                 {/* Only an active account can run; a session_expired one shows no Run analytics until it is re-connected. */}
                 <TableCell>{a.status === 'active' && <RunAnalytics accountId={a.id} />}</TableCell>
                 <TableCell>
-                  <Button variant="ghost" size="sm" aria-label={`Edit ${a.label ?? a.id}`} onClick={() => setEditing(a)}>
-                    <Pencil />
-                    Edit
-                  </Button>
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" aria-label={`Actions for ${a.label ?? a.id}`}>
+                        <MoreHorizontal />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => setEditing(a)}>Edit</DropdownMenuItem>
+                      <DropdownMenuItem variant="destructive" onSelect={() => setDisconnecting(a)}>
+                        Disconnect
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             ))}
@@ -99,6 +116,9 @@ function Accounts() {
       {editing && <EditAccountDialog key={editing.id} account={editing} onClose={() => setEditing(null)} />}
       {/* Mounted only while open: closing it drops the cURL (live cookies) from React state. */}
       {connecting && <ConnectDialog onClose={() => setConnecting(false)} />}
+      {disconnecting && (
+        <DisconnectDialog key={disconnecting.id} account={disconnecting} onClose={() => setDisconnecting(null)} />
+      )}
     </div>
   );
 }

@@ -192,14 +192,15 @@ Off unless `STATS_REFRESH_HOUR_UTC` is set (an hour, 0 to 23, UTC; unset, empty 
 since these jobs call OF on their own). They are in-process jobs, so they also need `RUN_JOBS=true` (the default).
 
 - **Hourly transactions poll.** Every hour (and once at API start), for each claimed account (`account_workspace`
-  row), the transactions of the last 48 hours, read with the backfill's own reader and mapper and upserted into
+  row) the upstream still lists (a disconnected account keeps its row and history but is skipped; when the account
+  list cannot be read the tick fails as a whole), the transactions of the last 48 hours, read with the backfill's own reader and mapper and upserted into
   `purchase_fact` on `(account_id, tx_id)`, so a sale shows up on Revenue within about an hour of OF listing it
   (OF's ledger lags real time by hours, which the 48 hours cover). One request per account per hour (more only when
   those 48 hours hold over 100 transactions), with no pacing, retry or lock beyond that; an account that fails (a
   dead session, the upstream down) is logged (`transactions poll failed`) and tried again next hour. The socket's
   frames carry no transaction id or net, so this poll, not the live events, is the source of sales.
 - **Daily refresh.** Ticked every hour (and once at API start). Once the current time is past today's
-  `STATS_REFRESH_HOUR_UTC`:00 UTC, each claimed account whose `account_workspace.refreshed_at` is null or before that
+  `STATS_REFRESH_HOUR_UTC`:00 UTC, each claimed account the upstream still lists whose `account_workspace.refreshed_at` is null or before that
   time is due and gets one backfill ([analytics-backfill.md](analytics-backfill.md#running-a-backfill)) from
   max(now - 7 days, `refreshed_at` - 1 hour) to now. It starts like the dashboard's Run analytics (queued behind the
   one-account-at-a-time limiter, its status on the Accounts page, `GET /v1/stats/backfill`) and the job does not wait

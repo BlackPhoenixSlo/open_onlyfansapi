@@ -170,7 +170,7 @@ const offered = (header: string | string[] | undefined) => String(header ?? '').
  * `/of/shaped?status&type&body&next&gzip` answers as told (`next` becomes `x-next-page`),
  * `/of-accounts` serves one account list, `/docs/json` a small OpenAPI spec and `/session/bootstrap` answers 200 for a
  * curl with a numeric `user-id` header, else 400 `invalid_curl` (shaped like the upstream). `PATCH /of-accounts/:id` edits a
- * listed account, and `/proxies` (GET, POST) and `/proxies/:label/probe` serve `proxies` (probing `dead` answers 502 `proxy_error`). `/ws` (plan-v4 §2.2) instead needs
+ * listed account, `DELETE /of-accounts/:id` removes it (204, else 404), and `/proxies` (GET, POST) and `/proxies/:label/probe` serve `proxies` (probing `dead` answers 502 `proxy_error`). `/ws` (plan-v4 §2.2) instead needs
  * the subprotocols `bearer` and `bearer.<token>`, selects `bearer`, sends a heartbeat every 30 s and whatever
  * `pushFrame()` is given.
  */
@@ -250,6 +250,12 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     if (body.nickname) row.label = body.nickname;
     if (body.proxy !== undefined) row.proxyLabel = body.proxy ? (body.proxy.label ?? `acct-${row.id}`) : null;
     return row;
+  });
+  app.delete('/of-accounts/:id', async (request, reply) => {
+    const i = accounts.findIndex((a) => a.id === Number((request.params as { id: string }).id));
+    if (i < 0) return reply.status(404).send({ error: { code: 'account_not_found' } });
+    accounts.splice(i, 1);
+    return reply.status(204).send();
   });
   app.get('/proxies', async () => proxies);
   app.post('/proxies', async (request, reply) => {

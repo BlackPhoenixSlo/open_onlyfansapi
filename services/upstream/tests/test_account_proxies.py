@@ -1,4 +1,4 @@
-"""PATCH /of-accounts/{id}, GET /proxies, POST /proxies/{label}/probe and the proxy_stats hook."""
+"""PATCH and DELETE /of-accounts/{id}, GET /proxies, POST /proxies/{label}/probe and the proxy_stats hook."""
 from types import SimpleNamespace
 
 import pytest
@@ -129,6 +129,29 @@ def test_patch_errors(client, aid, body, status, code):
 def test_patch_needs_exactly_one_proxy_field(client, proxy):
     make_account("100001")
     assert patch(client, "100001", {"proxy": proxy}).status_code == 422
+
+
+# ─── DELETE /of-accounts/{id} ──────────────────────────────────────
+
+def test_delete_removes_the_account_and_stops_its_pump(client, monkeypatch):
+    make_account("100001")
+    make_account("100002")
+    evicted = []
+    monkeypatch.setattr(client_pool, "evict", evicted.append)
+    r = client.delete("/of-accounts/100001", headers=AUTH)
+    assert (r.status_code, r.content) == (204, b"")
+    assert not accounts.is_account("100001") and accounts.is_account("100002")
+    assert [a["id"] for a in client.get("/of-accounts", headers=AUTH).json()] == [100002]
+    assert evicted == ["100001"] and client.reconciled == [True]
+    assert proxies.get_by_label("acct-100001")["assigned_account_ids"] == ["100001"]  # kept for a re-connect
+
+
+@pytest.mark.parametrize("aid", ["100009", "abc"])
+def test_delete_unknown_account_is_404(client, aid):
+    make_account("100001")
+    r = client.delete(f"/of-accounts/{aid}", headers=AUTH)
+    assert (r.status_code, r.json()["error"]["code"]) == (404, "account_not_found")
+    assert accounts.is_account("100001") and client.reconciled == []
 
 
 # ─── GET /proxies ──────────────────────────────────────────────────
