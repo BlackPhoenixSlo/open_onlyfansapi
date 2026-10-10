@@ -18,6 +18,7 @@ DIR=/opt/gateway
 REPO=${REPO:-https://github.com/BlackPhoenixSlo/open_onlyfansapi.git}
 REF=${REF:-master}
 DOMAIN=${DOMAIN:-}
+ports_given=${HTTPS_PORT+1}${HTTP_PORT+1} # set when the caller named a port: a re-run then moves the stack to it
 HTTPS_PORT=${HTTPS_PORT:-443}
 HTTP_PORT=${HTTP_PORT:-80}
 
@@ -89,8 +90,20 @@ fi
 cd "$DIR/deploy"
 if [ -f .env ]; then
   say "kept the existing deploy/.env"
-  grep -qxF "PUBLIC_URL=$URL" .env ||
-    echo "install: warning: deploy/.env has a PUBLIC_URL other than $URL; Caddy serves that one" >&2
+  if [ -n "$ports_given" ]; then
+    # Ports named on the command line win: rewrite the port lines, keep every other line (and the secrets).
+    umask 077
+    grep -vE '^(PUBLIC_URL|HTTPS_PORT|HTTP_PORT|CADDYFILE)=' .env >.env.tmp
+    printf 'PUBLIC_URL=%s\n' "$URL" >>.env.tmp
+    if [ "$HTTPS_PORT" != 443 ] || [ "$HTTP_PORT" != 80 ]; then
+      printf 'HTTPS_PORT=%s\nHTTP_PORT=%s\nCADDYFILE=Caddyfile.selfsigned\n' "$HTTPS_PORT" "$HTTP_PORT" >>.env.tmp
+    fi
+    mv .env.tmp .env && chmod 600 .env
+    umask 022
+    say "deploy/.env now serves $URL (ports $HTTP_PORT/$HTTPS_PORT)"
+  elif ! grep -qxF "PUBLIC_URL=$URL" .env; then
+    echo "install: warning: deploy/.env has a PUBLIC_URL other than $URL; Caddy serves that one (name HTTPS_PORT/HTTP_PORT on the command line to move it)" >&2
+  fi
   # The §8 backup: migrations are forward-only, so dump before the new images start.
   if [ -n "$(docker compose ps --status running -q postgres)" ]; then
     umask 077
@@ -128,7 +141,7 @@ if grep -qE '^COMPOSE_PROFILES=.*caddy' .env; then
     holder=$(ss -Hltnp "sport = :$port" 2>/dev/null | head -1)
     [ -z "$holder" ] && continue
     if [ -n "$own_caddy" ] && echo "$holder" | grep -q docker-proxy; then continue; fi
-    die "port $port is already in use on this VPS ($holder). Pick free ports instead: HTTPS_PORT=8443 HTTP_PORT=8080 in front of the install line (self-signed certificate, hostinger.md §0), or see §11b for a box with its own reverse proxy"
+    die "port $port is already in use on this VPS ($holder). Name two free ports in front of the install line, e.g. HTTPS_PORT=8443 HTTP_PORT=8081 (self-signed certificate, hostinger.md §0; ss -Hltn lists the ports in use), or see §11b for a box with its own reverse proxy"
   done
 fi
 
