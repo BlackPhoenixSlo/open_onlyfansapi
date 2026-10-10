@@ -172,9 +172,8 @@ function Features() {
           revenue, per account and per day.
         </Feature>
         <Feature title="Workspaces">
-          Keys, logs and usage belong to one workspace. Sign-up is open, but a workspace reaches the upstream only after
-          the operator links it, and every linked workspace sees every connected account: run one deployment per
-          operator.
+          Keys, logs and usage belong to one workspace. Sign-up is open and links each new workspace to the upstream,
+          and every linked workspace sees every connected account: run one deployment per operator.
         </Feature>
       </div>
     </Section>

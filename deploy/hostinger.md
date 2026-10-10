@@ -8,8 +8,9 @@ holds the OF sessions and proxies; you connect accounts to it from the VPS shell
 `upstream` compose profile, so an upstream you run elsewhere still works: drop that profile and point
 `UPSTREAM_URL` at it (§4).
 
-> **One operator.** Every workspace you link (§6) sees every connected account: its REST calls, events,
-> webhooks and stats. Link only workspaces you trust with all accounts; there is no per-account split.
+> **One operator.** Every linked workspace sees every connected account: its REST calls, events, webhooks and
+> stats. Sign-up links each new workspace automatically (§6), so only let people you trust with all accounts
+> register; there is no per-account split.
 
 ## 1. Create the VPS
 
@@ -124,9 +125,10 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 ## 6. First user
 
 1. Open `https://gw.example.com` in a browser and **sign up**, then open the verification link from your email
-   (without `SMTP_HOST` it is in `docker compose logs gateway`). The first account creates a workspace.
-2. Go to **Settings** and copy the workspace **slug**.
-3. Approve that workspace from the VPS shell (sign-up is open, so this link is the approval step):
+   (without `SMTP_HOST` it is in `docker compose logs gateway`). The first account creates a workspace, and
+   sign-up links it to the upstream automatically.
+2. Go to **Settings** and check that **Upstream link** says linked. If it does not (the gateway log shows
+   `workspace … was not linked to the upstream`), copy the workspace **slug** and link it from the VPS shell:
 
    ```sh
    cd /opt/gateway/deploy
@@ -135,7 +137,7 @@ Caddy requests the certificate as soon as it starts; allow a few seconds. If `cu
 
    Check that it printed `linked workspace …`. A wrong slug exits with `no workspace with slug "…"`; copy the
    slug from Settings again.
-4. Reload the **Accounts** page. It lists the upstream's accounts: none yet on a fresh install, until §7.
+3. Reload the **Accounts** page. It lists the upstream's accounts: none yet on a fresh install, until §7.
 
 ## 7. Connect an OF account
 
@@ -374,7 +376,8 @@ host port of your choice and the existing proxy terminates TLS for the domain.
 - Certificates live in the `caddy_data` volume. Keep it across updates; deleting it re-issues and counts against
   Let's Encrypt rate limits (5 duplicate certificates per week).
 
-**`team_not_linked` (409) on API calls or the Accounts page.** The workspace has not been approved. Run
+**`team_not_linked` (409) on API calls or the Accounts page.** The workspace is not linked: its automatic link at
+sign-up failed (see the gateway log), or it was created before workspaces were linked automatically. Run
 `docker compose exec gateway node dist/db/link-team.js <slug>` with the exact slug shown on Settings.
 
 **gateway restarts in a loop.** Read the validation error:

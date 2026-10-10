@@ -53,8 +53,8 @@ Errors: `404 metric_not_found` for an unknown id; `400 validation_error` for a d
 
 ### Scoping
 
-- **Linked workspace only.** A workspace the operator has not linked (`link-team`) gets `409 team_not_linked` on
-  every route.
+- **Linked workspace only.** Sign-up links each new workspace; one left unlinked (repair with `link-team`) gets
+  `409 team_not_linked` on every route.
 - **Own rows only.** Every read is limited to rows of the key's workspace. A second workspace's key sees empty rows,
   even with `accountId` set to the first workspace's account.
 - **Key allowlist.** A key with an account allowlist sees only those accounts; a key without one sees all of its

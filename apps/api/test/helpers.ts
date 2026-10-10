@@ -36,8 +36,12 @@ export async function resetDb() {
   await pool.query('TRUNCATE "user", organization, verification CASCADE');
 }
 
-/** Signs up a user and follows the emailed verification link; returns the session cookie and the auto-created workspace. */
-export async function signUp(app: FastifyInstance, email: string) {
+/**
+ * Signs up a user and follows the emailed verification link; returns the session cookie and the auto-created workspace.
+ * Sign-up links the workspace; this removes the link unless `linked`, so tests opt in with `linkTeam` as before and
+ * the `team_not_linked` gate stays covered.
+ */
+export async function signUp(app: FastifyInstance, email: string, { linked = false }: { linked?: boolean } = {}) {
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/sign-up/email',
@@ -51,6 +55,7 @@ export async function signUp(app: FastifyInstance, email: string) {
   const session = await app.inject({ method: 'GET', url: '/api/auth/get-session', headers: { cookie } });
   const teamId = session.json().session.activeOrganizationId as string;
   const [team] = await db.select().from(organization).where(eq(organization.id, teamId));
+  if (!linked) await db.delete(teamBackend).where(eq(teamBackend.teamId, teamId));
   return { cookie, teamId, slug: team!.slug, userId: session.json().user.id as string };
 }
 
@@ -70,9 +75,7 @@ export async function createKey(
 }
 
 /** What `link-team <slug>` does: marks the workspace as allowed to reach the upstream. */
-export async function linkTeam(teamId: string) {
-  await db.insert(teamBackend).values({ teamId });
-}
+export { linkTeam } from '../src/lib/team-link.js';
 
 export const bearer = (secret: string) => ({ authorization: `Bearer ${secret}` });
 

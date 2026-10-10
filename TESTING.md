@@ -80,7 +80,8 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
 
 1. **Sign up.** Open the dashboard and register. Open the verification link, which is in the API log when there is no SMTP. A
    workspace is created.
-2. **Link the workspace.** Copy `<slug>` from **Settings**, then run `pnpm --filter @gateway/api link-team <slug>`. It prints
+2. **Get the workspace id.** Sign-up links the workspace. Copy `<slug>` from **Settings**, then run
+   `pnpm --filter @gateway/api link-team <slug>` (harmless when already linked). It prints
    `linked workspace <slug> (<teamId>)`. Note `<teamId>` for later.
 3. **Copy the session.** Log in to OF in Chrome and open DevTools → Network. Right-click a request to `onlyfans.com/api2/v2/…`
    (e.g. `users/me`) and choose Copy as cURL (bash). It must carry `-b '…'` cookies and a `user-id` header.

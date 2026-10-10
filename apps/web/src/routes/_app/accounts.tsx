@@ -33,7 +33,8 @@ function Accounts() {
       ) : accounts.isError ? (
         unlinked ? (
           <Empty title="Workspace not linked">
-            This workspace isn't linked to the upstream yet. The operator links it with{' '}
+            Workspaces are linked to the upstream automatically when they are created, but this one isn't. The
+            operator can link it with{' '}
             <code className="rounded bg-muted px-1 py-0.5">
               docker compose exec gateway node dist/db/link-team.js &lt;slug&gt;
             </code>{' '}

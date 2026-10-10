@@ -153,7 +153,8 @@ export function WorkspaceNotLinked({ title, subject }: { title: string; subject:
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">{title}</h1>
       <Empty title="Workspace not linked">
-        This page shows {subject} from what the analytics backfill stored for this workspace. Link the workspace (
+        This page shows {subject} from what the analytics backfill stored for this workspace. Workspaces are linked
+        automatically when they are created, but this one isn't: the operator can link it (
         <code className="rounded bg-muted px-1 py-0.5">pnpm --filter @gateway/api link-team &lt;slug&gt;</code>
         ), then connect the account in{' '}
         <Link to="/accounts" className="underline">

@@ -104,14 +104,13 @@ UPSTREAM_WS_URL=ws://localhost:3001/ws
 
 Left empty, there is no event source and `/v1/ws` answers 503.
 
-## 4. Sign up and link your workspace
+## 4. Sign up
 
 Open http://localhost:5173 and register, then open the verification link (from your inbox, or the API log
-without SMTP). It signs you in. A workspace is created for you.
+without SMTP). It signs you in. A workspace is created for you and linked to the upstream automatically.
 
-The workspace must be linked before it may reach the upstream; the link is the operator's approval step.
-Until then, calls that would reach the upstream fail with `409 team_not_linked`. Find your workspace slug on
-the **Settings** page, then run:
+An unlinked workspace gets `409 team_not_linked` on calls that would reach the upstream. If **Settings** shows
+yours as not linked (the automatic link failed; the API log says why), copy the slug from there and run:
 
 ```sh
 pnpm --filter @gateway/api link-team <workspace-slug>

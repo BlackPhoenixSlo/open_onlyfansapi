@@ -1,9 +1,11 @@
-// Links a workspace to the upstream, so its keys may reach it. Idempotent.
+// Links a workspace to the upstream, so its keys may reach it. Idempotent. Sign-up links new workspaces itself;
+// this is the repair path for one left unlinked (the link insert failed) or created before auto-linking.
 // Usage: pnpm --filter @gateway/api link-team <workspace-slug>
 //        (in the container: node dist/db/link-team.js <workspace-slug>)
 import { eq } from 'drizzle-orm';
 import { db, pool } from './index.js';
-import { organization, teamBackend } from './schema.js';
+import { linkTeam } from '../lib/team-link.js';
+import { organization } from './schema.js';
 
 const [slug] = process.argv.slice(2);
 if (!slug) {
@@ -17,10 +19,7 @@ try {
     console.error(`no workspace with slug "${slug}"`);
     process.exitCode = 1;
   } else {
-    await db
-      .insert(teamBackend)
-      .values({ teamId: team.id })
-      .onConflictDoUpdate({ target: teamBackend.teamId, set: { linkedAt: new Date() } });
+    await linkTeam(team.id);
     console.log(`linked workspace ${slug} (${team.id}) to the upstream`);
   }
 } finally {

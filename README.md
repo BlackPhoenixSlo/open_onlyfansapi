@@ -40,7 +40,7 @@ usage, a playground and an API reference without building them.
 - **Merged OpenAPI reference.** `/openapi.json` holds OpenOnlyfansAPI's own routes plus the upstream's operations
   rewritten to `/v1/{account}/...`. `/docs` renders it as an interactive reference.
 - **Workspace isolation.** Keys, logs and usage belong to one workspace, and every query is scoped to it.
-  Sign-up is open, but a workspace reaches the upstream only after the operator links it.
+  Sign-up is open and links each new workspace to the upstream automatically; `link-team` repairs one left unlinked.
 
 ## How it fits
 
@@ -110,8 +110,8 @@ curl -fsS https://gw.example.com/healthz
 ```
 
 Open `https://gw.example.com`, sign up and open the verification link from your email (without SMTP it is in
-`docker compose logs gateway`); that creates a workspace. Copy its slug from **Settings**, then approve it from the
-VPS shell:
+`docker compose logs gateway`); that creates a workspace and links it to the upstream. If **Settings** shows it as
+not linked, copy its slug from there and link it from the VPS shell:
 
 ```sh
 docker compose exec gateway node dist/db/link-team.js <slug>
@@ -147,8 +147,8 @@ default `UPSTREAM_URL`, and serves one account with id `1`.
 UPSTREAM_TOKEN=dev-upstream-token pnpm --filter @gateway/api exec tsx test/fake-upstream.ts
 ```
 
-Register at http://localhost:5173, open the verification link (printed in the API log without SMTP), copy the
-workspace slug from **Settings**, and link it:
+Register at http://localhost:5173 and open the verification link (printed in the API log without SMTP). The new
+workspace is linked automatically; if **Settings** shows it as not linked, copy its slug and link it by hand:
 
 ```sh
 pnpm --filter @gateway/api link-team <workspace-slug>

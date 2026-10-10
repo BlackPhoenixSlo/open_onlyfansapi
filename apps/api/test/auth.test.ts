@@ -4,7 +4,8 @@ import { buildApp } from '../src/app.js';
 import { ensureWorkspace, ORG_WRITE_REFUSED } from '../src/auth.js';
 import { db, pool } from '../src/db/index.js';
 import { member, organization, user } from '../src/db/schema.js';
-import { cookieOf, ORIGIN, outbox, resetDb, signUp, verificationPath } from './helpers.js';
+import { isTeamLinked } from '../src/lib/team-link.js';
+import { bearer, cookieOf, createKey, ORIGIN, outbox, resetDb, signUp, verificationPath } from './helpers.js';
 
 const app = await buildApp({ logger: false });
 let u: Awaited<ReturnType<typeof signUp>>;
@@ -125,6 +126,15 @@ describe('workspace creation on first session load', () => {
     expect(a.organizationId).toBe(b.organizationId);
     expect(await membershipsOf(fresh.id)).toHaveLength(1);
     expect(await countOrgs()).toBe(before + 1);
+    expect(await isTeamLinked(a.organizationId)).toBe(true);
+  });
+
+  it('sign-up links the new workspace to the upstream, with no operator step', async () => {
+    const s = await signUp(app, 'autolink@example.test', { linked: true });
+    expect(await isTeamLinked(s.teamId)).toBe(true);
+    const { secret } = await createKey(app, s.cookie);
+    const who = await app.inject({ method: 'GET', url: '/v1/whoami', headers: bearer(secret) });
+    expect(who.json().team).toMatchObject({ id: s.teamId, linked: true });
   });
 });
 

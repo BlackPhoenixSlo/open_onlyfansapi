@@ -64,18 +64,19 @@ export function Tutorial() {
             Cloudflare Tunnel.
           </p>
         </Step>
-        <Step title="Sign up and get your workspace linked">
+        <Step title="Sign up">
           <p>
             Open the dashboard and register, then open the verification link from your email. Without SMTP the link is
-            printed in the API log (<code>docker compose logs gateway</code> on a VPS). This creates your workspace.
-            Until the operator links it, calls that would reach the upstream fail with <code>409 team_not_linked</code>.
-            Copy the workspace slug from <strong>Settings</strong>, then link it:
+            printed in the API log (<code>docker compose logs gateway</code> on a VPS). This creates your workspace and
+            links it to the upstream automatically. Every linked workspace sees every connected account, so only let
+            people you trust register.
+          </p>
+          <p>
+            If <strong>Settings</strong> shows the workspace as not linked (calls that would reach the upstream fail
+            with <code>409 team_not_linked</code>), copy its slug from there and link it by hand. Running it again is
+            harmless:
           </p>
           <Pre>{LINK_TEAM}</Pre>
-          <p>
-            Running it again is harmless. Link only workspaces you trust: every linked workspace sees every connected
-            account.
-          </p>
         </Step>
         <Step title="Connect an account">
           <p>

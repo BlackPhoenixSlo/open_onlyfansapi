@@ -74,7 +74,7 @@ function WorkspaceCard({ team }: { team: Whoami['team'] }) {
             <p className="text-sm">Linked to the upstream</p>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Not linked — the operator links it with{' '}
+              Not linked. New workspaces are linked automatically; the operator can link this one with{' '}
               <code className="rounded bg-muted px-1 py-0.5">
                 docker compose exec gateway node dist/db/link-team.js {team.slug}
               </code>{' '}

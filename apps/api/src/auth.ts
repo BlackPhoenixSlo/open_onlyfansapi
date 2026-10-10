@@ -9,6 +9,7 @@ import * as schema from './db/schema.js';
 import { appOrigin, env } from './env.js';
 import { randomBase62 } from './lib/ids.js';
 import { sendMail } from './lib/mailer.js';
+import { linkTeam } from './lib/team-link.js';
 
 /** Header the Fastify bridge sets to the resolved client IP; client-sent values are dropped. */
 export const CLIENT_IP_HEADER = 'x-gateway-client-ip';
@@ -27,6 +28,8 @@ async function findMembership(userId: string) {
  * One workspace (better-auth "organization") per user. Runs right after sign-up and again on each dashboard session
  * load, so a failed sign-up insert cannot leave the user without one. Idempotent and race-safe: the unique index on
  * `member.user_id` lets exactly one concurrent caller insert; the others roll back their organization row.
+ * The caller that created the workspace then links it to the upstream. A failed link is logged, not thrown, so sign-up
+ * still succeeds; the workspace stays unlinked until the operator runs `link-team <slug>`.
  */
 export async function ensureWorkspace(user: { id: string; name: string; email: string }) {
   const existing = await findMembership(user.id);
@@ -34,6 +37,7 @@ export async function ensureWorkspace(user: { id: string; name: string; email: s
   const base = (user.name || user.email.split('@')[0] || 'workspace').trim();
   const slug = `${base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'ws'}-${randomBase62(6).toLowerCase()}`;
   const orgId = crypto.randomUUID();
+  let created = false;
   try {
     await db.transaction(async (tx) => {
       await tx.insert(schema.organization).values({ id: orgId, name: `${base}'s workspace`, slug, createdAt: new Date() });
@@ -48,12 +52,20 @@ export async function ensureWorkspace(user: { id: string; name: string; email: s
       // (it has no FK, so it survives an org delete): point every session of the user at this workspace.
       await tx.update(schema.session).set({ activeOrganizationId: orgId }).where(eq(schema.session.userId, user.id));
     });
+    created = true;
   } catch (err) {
     if (!(err instanceof TransactionRollbackError)) throw err;
   }
-  const created = await findMembership(user.id);
-  if (!created) throw new Error(`workspace for user ${user.id} was not created`);
-  return created;
+  if (created) {
+    try {
+      await linkTeam(orgId);
+    } catch (err) {
+      console.error(`workspace ${slug} (${orgId}) was not linked to the upstream; run link-team ${slug}:`, err);
+    }
+  }
+  const membership = await findMembership(user.id);
+  if (!membership) throw new Error(`workspace for user ${user.id} was not created`);
+  return membership;
 }
 
 /**

@@ -4,7 +4,7 @@ import { organization, user } from './auth-schema.js';
 
 export * from './auth-schema.js';
 
-/** A workspace that may reach the upstream. Set only by `link-team`. */
+/** A workspace that may reach the upstream. Set when the workspace is created, or by `link-team`. */
 export const teamBackend = pgTable('team_backend', {
   teamId: text('team_id')
     .primaryKey()

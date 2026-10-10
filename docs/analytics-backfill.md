@@ -63,8 +63,8 @@ docker compose exec -e ANALYTICS_REQUESTS_PER_HOUR=300 gateway node dist/cli/ana
    `0015` (`account_workspace.refreshed_at`).
 2. **Upgrade the upstream.** The backfill reads the welcome message from `GET /of/settings/welcome-message`, which is
    new in this release. An older upstream answers 404 and the run fails before it reads any chat.
-3. **Link the workspace** if it is not linked yet: `pnpm --filter @gateway/api link-team <workspace-slug>`. It prints
-   the workspace id (`linked workspace <slug> (<teamId>)`), which the other commands take.
+3. **Get the workspace id.** Sign-up links the workspace; `pnpm --filter @gateway/api link-team <workspace-slug>`
+   links it if it is not and prints the workspace id (`linked workspace <slug> (<teamId>)`), which the other commands take.
 4. **Allow the account on a key** (CLI only: the dashboard button needs neither this nor step 5). The workspace needs a
    live API key whose account allowlist names the account (Dashboard → API keys); `analytics:backfill` checks it on
    every run that stores rows. An account named by another workspace's keys is refused with `account_workspace_conflict`.
