@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { BrowserLoginDialog } from '@/features/accounts/BrowserLoginDialog';
 import { ConnectDialog } from '@/features/accounts/ConnectDialog';
 import { DisconnectDialog } from '@/features/accounts/DisconnectDialog';
 import { EditAccountDialog } from '@/features/accounts/EditAccountDialog';
@@ -26,6 +27,7 @@ export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
 function Accounts() {
   const accounts = useQuery(accountsQuery);
   const [connecting, setConnecting] = useState(false);
+  const [browserLogin, setBrowserLogin] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [disconnecting, setDisconnecting] = useState<Account | null>(null);
   const unlinked = accounts.error instanceof ApiError && accounts.error.code === 'team_not_linked';
@@ -34,7 +36,14 @@ function Accounts() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Accounts</h1>
-        {!unlinked && <Button onClick={() => setConnecting(true)}>Connect account</Button>}
+        {!unlinked && (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setBrowserLogin(true)}>
+              Browser login
+            </Button>
+            <Button onClick={() => setConnecting(true)}>Connect account</Button>
+          </div>
+        )}
       </div>
       {accounts.isPending ? (
         <p className="text-muted-foreground">Loading…</p>
@@ -116,6 +125,8 @@ function Accounts() {
       {editing && <EditAccountDialog key={editing.id} account={editing} onClose={() => setEditing(null)} />}
       {/* Mounted only while open: closing it drops the cURL (live cookies) from React state. */}
       {connecting && <ConnectDialog onClose={() => setConnecting(false)} />}
+      {/* Mounted only while open: closing it drops the password from React state. */}
+      {browserLogin && <BrowserLoginDialog onClose={() => setBrowserLogin(false)} />}
       {disconnecting && (
         <DisconnectDialog key={disconnecting.id} account={disconnecting} onClose={() => setDisconnecting(null)} />
       )}

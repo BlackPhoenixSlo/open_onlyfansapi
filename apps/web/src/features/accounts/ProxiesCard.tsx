@@ -1,4 +1,4 @@
-import type { Account, CreateProxyBody, ProxyInfo } from '@api/contracts';
+import type { Account, BulkProxiesResult, CreateProxyBody, ProxyInfo } from '@api/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
@@ -9,9 +9,11 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { api, bulkProxies, proxiesQuery } from '@/lib/api';
 import { formatAgo } from '@/features/stats/series';
-import { api, proxiesQuery } from '@/lib/api';
 
 /** The last transport error is newer than the last response through the proxy (or it never answered). */
 const failing = (p: ProxyInfo) =>
@@ -26,6 +28,7 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
   const queryClient = useQueryClient();
   const proxies = useQuery(proxiesQuery);
   const [adding, setAdding] = useState(false);
+  const [pasting, setPasting] = useState(false);
   const probe = useMutation({
     mutationFn: (label: string) => api<{ proxy: ProxyInfo }>(`/api/proxies/${encodeURIComponent(label)}/probe`, { method: 'POST' }),
     onSuccess: ({ proxy }) => {
@@ -48,7 +51,10 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Proxies</CardTitle>
-        <CardAction>
+        <CardAction className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setPasting(true)}>
+            Paste proxies
+          </Button>
           <Button size="sm" onClick={() => setAdding(true)}>
             Add proxy
           </Button>
@@ -149,7 +155,102 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
       </CardContent>
       {/* Mounted only while open: closing it drops the proxy URL (its password) from React state. */}
       {adding && <AddProxyDialog onClose={() => setAdding(false)} />}
+      {pasting && <PasteProxiesDialog onClose={() => setPasting(false)} />}
     </Card>
+  );
+}
+
+const SCHEMES = ['http', 'https', 'socks5', 'socks5h'] as const;
+
+/** Paste many proxies at once, one per line; they are registered unbound and bound in an account's Edit dialog. */
+function PasteProxiesDialog({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [text, setText] = useState('');
+  const [scheme, setScheme] = useState<(typeof SCHEMES)[number]>('http');
+  const [result, setResult] = useState<BulkProxiesResult | null>(null);
+
+  const add = useMutation({
+    mutationFn: () => bulkProxies({ text, scheme }),
+    // The text holds proxy passwords: don't keep it in the mutation cache once the dialog is gone.
+    gcTime: 0,
+    onSuccess: ({ result }) => {
+      setResult(result);
+      toast.success(`Added ${result.added.length}${result.errors.length ? `, ${result.errors.length} failed` : ''}`);
+      void queryClient.invalidateQueries({ queryKey: proxiesQuery.queryKey });
+      if (result.errors.length === 0) onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !add.isPending && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <form
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            if (text.trim()) add.mutate();
+          }}
+          className="min-w-0 space-y-4"
+        >
+          <DialogHeader>
+            <DialogTitle>Paste proxies</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="bulk-proxies">One proxy per line</Label>
+            <Textarea
+              id="bulk-proxies"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={'host:port:user:pass\nuser:pass@host:port\nsocks5h://user:pass@host:port label'}
+              className="h-40 resize-y font-mono text-xs [field-sizing:fixed]"
+              spellCheck={false}
+              autoComplete="off"
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Accepts host:port, host:port:user:pass, host:port@user:pass, user:pass@host:port or scheme://… , with an
+              optional label after a space. Blank lines and # comments are skipped.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="bulk-scheme">Default scheme (for lines without one)</Label>
+            <Select value={scheme} onValueChange={(v) => setScheme(v as (typeof SCHEMES)[number])}>
+              <SelectTrigger id="bulk-scheme" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEMES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {result && result.errors.length > 0 && (
+            <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+              <p className="text-sm">Added {result.added.length}. These lines were skipped:</p>
+              <ul className="space-y-0.5 text-xs text-destructive">
+                {result.errors.map((err) => (
+                  <li key={err.line} className="font-mono break-all">
+                    Line {err.line}: {err.reason} ({err.textRedacted})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={add.isPending}>
+              {result ? 'Close' : 'Cancel'}
+            </Button>
+            <Button type="submit" disabled={add.isPending || !text.trim()}>
+              {add.isPending && <LoaderCircle className="animate-spin" />}
+              Add all
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

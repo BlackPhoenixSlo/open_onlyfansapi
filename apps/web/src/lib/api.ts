@@ -1,6 +1,12 @@
 import type {
   Account,
   ApiKey,
+  BrowserLoginInputBody,
+  BrowserLoginJob,
+  BrowserLoginStarted,
+  BrowserLoginStartBody,
+  BulkProxiesBody,
+  BulkProxiesResult,
   DeliveryStatus,
   ErrorBody,
   GatewayEvent,
@@ -97,6 +103,35 @@ export const proxiesQuery = queryOptions({
   queryFn: () => api<{ items: ProxyInfo[] }>('/api/proxies'),
   refetchInterval: 30_000,
 });
+
+/** Bulk-register pasted proxies (dashboard only). The text carries passwords; it is never logged. */
+export const bulkProxies = (body: BulkProxiesBody) =>
+  api<{ result: BulkProxiesResult }>('/api/proxies/bulk', { method: 'POST', body });
+
+/** Remote-browser login (plan direct-login §C): start, poll, feed input, cancel, and the SSE URL. */
+export const startBrowserLogin = (body: BrowserLoginStartBody) =>
+  api<BrowserLoginStarted>('/api/accounts/login/browser/start', { method: 'POST', body });
+
+export const browserLoginJobQuery = (jobId: string) =>
+  queryOptions({
+    queryKey: ['browser-login', jobId],
+    queryFn: () => api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}`),
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state === 'done' || state === 'error' || state === 'cancelled' ? false : 1000;
+    },
+    gcTime: 0,
+  });
+
+export const sendBrowserLoginInput = (jobId: string, body: BrowserLoginInputBody) =>
+  api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}/input`, { method: 'POST', body });
+
+export const cancelBrowserLogin = (jobId: string) =>
+  api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+
+/** EventSource (same-origin, cookie-free): the per-job stream token rides in the query string. */
+export const browserLoginStreamUrl = (jobId: string, token: string) =>
+  `/api/accounts/login/browser/${encodeURIComponent(jobId)}/stream?token=${encodeURIComponent(token)}`;
 
 export const whoamiQuery = queryOptions({
   queryKey: ['whoami'],
