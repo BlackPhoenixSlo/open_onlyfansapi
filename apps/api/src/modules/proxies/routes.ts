@@ -1,10 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { createProxyBody, proxyLabel, proxyList } from '../../contracts.js';
+import { bulkProxiesBody, type BulkProxiesResult, createProxyBody, proxyLabel, proxyList } from '../../contracts.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { passThrough } from '../../lib/upstream.js';
 import { assertProxyUsable, listUsableProxies, parse, toProxy, type UpstreamProxy } from './service.js';
+
+type UpstreamBulkResult = {
+  added: { label: string; host: string; port: number; scheme: string; username: string | null }[];
+  errors: { line: number; text_redacted: string; reason: string }[];
+};
 
 /**
  * Dashboard-only proxy registry (session cookie + CSRF), mounted at /api: the upstream's proxies with their bound
@@ -26,6 +31,19 @@ export default async function proxiesRoutes(app: FastifyInstance) {
     const res = await app.upstream.createProxy(JSON.stringify(request.body), request.id);
     if (!res.ok) return passThrough(reply, res);
     return reply.send({ proxy: toProxy(parse<UpstreamProxy>(res, 'proxy')) });
+  });
+
+  // The text carries proxy passwords: `/api` is outside the request log, and it is only forwarded.
+  r.post('/proxies/bulk', { schema: { tags: ['dashboard'], body: bulkProxiesBody } }, async (request, reply) => {
+    await assertTeamLinked(request.session.teamId);
+    const res = await app.upstream.bulkProxies(JSON.stringify(request.body), request.id);
+    if (!res.ok) return passThrough(reply, res);
+    const raw = parse<UpstreamBulkResult>(res, 'bulk result');
+    const result: BulkProxiesResult = {
+      added: raw.added.map((a) => ({ label: a.label, host: a.host, port: a.port, scheme: a.scheme, username: a.username ?? null })),
+      errors: raw.errors.map((e) => ({ line: e.line, textRedacted: e.text_redacted, reason: e.reason })),
+    };
+    return reply.send({ result });
   });
 
   r.post(

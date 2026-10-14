@@ -9,6 +9,7 @@ import { createUpstream, type Upstream } from './lib/upstream.js';
 import { AppError, errorHandler, notFoundHandler } from './lib/errors.js';
 import { newId } from './lib/ids.js';
 import accountsConnectRoutes from './modules/accounts/connect.js';
+import accountsLoginRoutes from './modules/accounts/login.js';
 import accountsRoutes from './modules/accounts/routes.js';
 import keysRoutes from './modules/keys/routes.js';
 import { captureRequestLogs } from './modules/logs/capture.js';
@@ -75,6 +76,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(keysRoutes, { prefix: '/api/keys' });
   await app.register(logsRoutes, { prefix: '/api/logs' });
   await app.register(accountsConnectRoutes, { prefix: '/api/accounts' });
+  await app.register(accountsLoginRoutes, { prefix: '/api/accounts/login' });
   await app.register(proxiesRoutes, { prefix: '/api' });
   await app.register(usageRoutes, { prefix: '/api' });
   await app.register(webhookStreamRoutes, { ...opts.stream, prefix: '/api' });

@@ -164,6 +164,33 @@ describe('POST /api/proxies', () => {
   });
 });
 
+describe('POST /api/proxies/bulk', () => {
+  const bulk = (payload: unknown, headers: Record<string, string> = dashboard(linked.cookie)) =>
+    app.inject({ method: 'POST', url: '/api/proxies/bulk', headers, payload: payload as object });
+
+  it('forwards the pasted text and maps the per-line result to camelCase without a password', async () => {
+    const text = ['203.0.113.10:8080:user:top-secret pool-a', 'nonsense line'].join('\n');
+    const res = await bulk({ text });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('top-secret');
+    const { result } = res.json();
+    expect(result.added).toEqual([{ label: 'pool-a', host: '203.0.113.10', port: 8080, scheme: 'http', username: 'user' }]);
+    expect(result.errors).toEqual([{ line: 2, textRedacted: 'nonsense line', reason: 'could not parse' }]);
+    const call = calls('/proxies/bulk').at(-1)!;
+    expect(call.method).toBe('POST');
+    expect(JSON.parse(call.body!)).toEqual({ text, scheme: 'http' });
+  });
+
+  it('needs a linked workspace, the dashboard session, CSRF and rejects an API key', async () => {
+    const before = upstream.requests.length;
+    expect((await bulk({ text: 'x' }, dashboard(unlinked.cookie))).json().error.code).toBe('team_not_linked');
+    expect((await bulk({ text: 'x' }, { cookie: linked.cookie })).json().error.code).toBe('csrf_failed');
+    expect((await bulk({ text: 'x' }, bearer(key))).statusCode).toBe(401);
+    expect((await bulk({})).statusCode).toBe(400);
+    expect(upstream.requests.length).toBe(before);
+  });
+});
+
 describe('POST /api/proxies/:label/probe', () => {
   const probe = (label: string, headers: Record<string, string> = dashboard(linked.cookie)) =>
     app.inject({ method: 'POST', url: `/api/proxies/${label}/probe`, headers });

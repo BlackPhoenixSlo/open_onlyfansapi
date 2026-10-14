@@ -34,8 +34,20 @@ export interface Upstream {
   listProxies(requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/proxies` with a JSON `{ label, url }` body → the new (unbound) entry, or 409 `proxy_exists`. */
   createProxy(body: string, requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/proxies/bulk` with a JSON `{ text, scheme? }` body → `{ added, errors }` (never a password). */
+  bulkProxies(body: string, requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/proxies/{label}/probe` → the entry with its fresh egress IP, or 502 `proxy_error`. */
   probeProxy(label: string, requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/login/browser/start` (`x-login-principal: <teamId>`) → `{ jobId, streamToken, ... }`. */
+  startBrowserLogin(body: string, principal: string, requestId: string): Promise<UpstreamResponse>;
+  /** `GET {origin}/login/browser/{jobId}` (`x-login-principal`) → the job snapshot, or 404. */
+  browserLoginStatus(jobId: string, principal: string, requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/login/browser/{jobId}/input` (`x-login-principal`) with a JSON input event. */
+  browserLoginInput(jobId: string, body: string, principal: string, requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/login/browser/{jobId}/cancel` (`x-login-principal`) → the job snapshot. */
+  cancelBrowserLogin(jobId: string, principal: string, requestId: string): Promise<UpstreamResponse>;
+  /** The raw (unbuffered) SSE response for `GET {origin}/login/browser/{jobId}/stream?token=…`, to pipe to the client. */
+  browserLoginStream(jobId: string, token: string): Promise<Response>;
   /** `{method} {origin}/of{path}` with `x-of-proxy-account-id: {accountId}`. */
   forward(req: ForwardRequest): Promise<UpstreamResponse>;
   /** `GET {origin}/docs/json` → OpenAPI 3 document. It is optional: without it the gateway serves its own routes only. */
@@ -102,6 +114,48 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
         body,
+      }),
+    bulkProxies: (body, requestId) =>
+      request(new URL('/proxies/bulk', origin), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-request-id': requestId },
+        body,
+      }),
+    startBrowserLogin: (body, principal, requestId) =>
+      request(new URL('/login/browser/start', origin), {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'x-login-principal': principal,
+          'x-request-id': requestId,
+        },
+        body,
+      }),
+    browserLoginStatus: (jobId, principal, requestId) =>
+      request(new URL(`/login/browser/${encodeURIComponent(jobId)}`, origin), {
+        headers: { accept: 'application/json', 'x-login-principal': principal, 'x-request-id': requestId },
+      }),
+    browserLoginInput: (jobId, body, principal, requestId) =>
+      request(new URL(`/login/browser/${encodeURIComponent(jobId)}/input`, origin), {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'x-login-principal': principal,
+          'x-request-id': requestId,
+        },
+        body,
+      }),
+    cancelBrowserLogin: (jobId, principal, requestId) =>
+      request(new URL(`/login/browser/${encodeURIComponent(jobId)}/cancel`, origin), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'x-login-principal': principal, 'x-request-id': requestId },
+      }),
+    // Not buffered: the SSE body is piped straight to the dashboard. No timeout — the stream is long-lived.
+    browserLoginStream: (jobId, token) =>
+      fetch(new URL(`/login/browser/${encodeURIComponent(jobId)}/stream?token=${encodeURIComponent(token)}`, origin), {
+        headers: { accept: 'text/event-stream', authorization: `Bearer ${opts.token}` },
       }),
     probeProxy: (label, requestId) =>
       request(new URL(`/proxies/${encodeURIComponent(label)}/probe`, origin), {

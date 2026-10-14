@@ -120,6 +120,74 @@ export const proxy = z.object({
 export type ProxyInfo = z.infer<typeof proxy>;
 export const proxyList = z.object({ items: z.array(proxy) });
 
+/**
+ * `POST /api/proxies/bulk` (dashboard only): paste many proxies, one per line, in any of the formats
+ * `scheme://user:pass@host:port`, `user:pass@host:port`, `host:port:user:pass`, `host:port@user:pass`,
+ * `host:port`, with an optional trailing label. Blank lines and `#` comments are skipped. The passwords
+ * are forwarded to the upstream and never logged (this route is outside the `/v1` log scope).
+ */
+export const bulkProxiesBody = z.object({
+  text: z.string().min(1).max(200_000),
+  scheme: z.enum(['http', 'https', 'socks5', 'socks5h']).default('http'),
+});
+export type BulkProxiesBody = z.input<typeof bulkProxiesBody>;
+
+/** Per-line outcome of a bulk paste: the registered proxies and the lines that failed (password-redacted). */
+export const bulkProxiesResult = z.object({
+  added: z.array(
+    z.object({
+      label: z.string(),
+      host: z.string(),
+      port: z.number().int(),
+      scheme: z.string(),
+      username: z.string().nullable(),
+    }),
+  ),
+  errors: z.array(z.object({ line: z.number().int(), textRedacted: z.string(), reason: z.string() })),
+});
+export type BulkProxiesResult = z.infer<typeof bulkProxiesResult>;
+
+/**
+ * Remote-browser login (dashboard only): a real browser logs the account in through its proxy and a
+ * human solves any Cloudflare/Turnstile/captcha challenge or enters 2FA. The password and live cookies
+ * never leave the upstream and are never logged (this route is outside the `/v1` log scope).
+ */
+export const browserLoginStartBody = z.object({
+  email: z.string().trim().min(1).max(320),
+  password: z.string().min(1).max(1024),
+  /** A proxy line in any bulk-paste format; required when the upstream has OF_REQUIRE_PROXY on. */
+  proxy: z.string().trim().min(1).max(2048).optional(),
+});
+export type BrowserLoginStartBody = z.infer<typeof browserLoginStartBody>;
+
+/** A human input into the live browser: a click (canvas coords), typed text, a 2FA code, or cancel. */
+export const browserLoginInputBody = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('click'), x: z.number().int(), y: z.number().int() }),
+  z.object({ type: z.literal('text'), text: z.string().max(4096) }),
+  z.object({ type: z.literal('otp'), code: z.string().trim().min(1).max(32) }),
+  z.object({ type: z.literal('cancel') }),
+]);
+export type BrowserLoginInputBody = z.infer<typeof browserLoginInputBody>;
+
+export const browserLoginChallenge = z.object({ kind: z.string(), w: z.number().int(), h: z.number().int() });
+
+/** The job's current state (`starting → typing → [challenge ↔ typing] → [otp → typing] → capturing → done|error|cancelled`). */
+export const browserLoginJob = z.object({
+  jobId: z.string(),
+  state: z.enum(['starting', 'typing', 'challenge', 'otp', 'capturing', 'done', 'error', 'cancelled']),
+  message: z.string().nullable(),
+  challenge: browserLoginChallenge.nullable(),
+  needsOtp: z.boolean(),
+  accountId: z.number().int().nullable(),
+  username: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type BrowserLoginJob = z.infer<typeof browserLoginJob>;
+
+/** The start response: the job plus the per-job SSE stream token the dashboard puts in the EventSource query. */
+export const browserLoginStarted = browserLoginJob.extend({ streamToken: z.string() });
+export type BrowserLoginStarted = z.infer<typeof browserLoginStarted>;
+
 export const whoami = z.object({
   team: z.object({
     id: z.string(),

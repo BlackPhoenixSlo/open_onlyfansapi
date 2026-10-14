@@ -274,6 +274,67 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     proxies.push(entry);
     return entry;
   });
+  app.post('/proxies/bulk', async (request, reply) => {
+    const { text } = JSON.parse(String(request.body)) as { text: string; scheme?: string };
+    const added: unknown[] = [];
+    const errors: unknown[] = [];
+    text.split('\n').forEach((raw, i) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return;
+      const m = /^(\d+\.\d+\.\d+\.\d+):(\d+)(?::([^:]+):(\S+))?(?:\s+(\S+))?$/.exec(line);
+      if (!m) {
+        errors.push({ line: i + 1, text_redacted: line.replace(/(:[^:@\s]+){1,2}$/, (s) => s.replace(/[^:]+/g, '***')), reason: 'could not parse' });
+        return;
+      }
+      const [, host, port, user, , label] = m;
+      added.push({ label: label ?? `${host}:${port}`, host, port: Number(port), scheme: 'http', username: user ?? null });
+    });
+    return reply.send({ added, errors });
+  });
+  // Remote-browser login: a scripted job keyed by id; the principal and stream token gate access.
+  type Job = { id: string; principal: string; streamToken: string; polls: number };
+  const browserJobs = new Map<string, Job>();
+  app.post('/login/browser/start', async (request, reply) => {
+    const principal = String(request.headers['x-login-principal'] ?? '');
+    if (!principal) return reply.status(400).send({ error: { code: 'missing_principal' } });
+    const { proxy } = JSON.parse(String(request.body)) as { email: string; password: string; proxy?: string };
+    if (!proxy) return reply.status(409).send({ error: { code: 'proxy_required' } });
+    const job: Job = { id: `job-${browserJobs.size + 1}`, principal, streamToken: `tok-${browserJobs.size + 1}`, polls: 0 };
+    browserJobs.set(job.id, job);
+    return reply.send({ jobId: job.id, streamToken: job.streamToken, state: 'starting', message: null, challenge: null, needsOtp: false, accountId: null, username: null, error: null });
+  });
+  const jobFor = (request: { params: unknown; headers: Record<string, unknown> }, reply: { status: (n: number) => { send: (b: unknown) => unknown } }) => {
+    const job = browserJobs.get((request.params as { jobId: string }).jobId);
+    if (!job || job.principal !== String(request.headers['x-login-principal'] ?? '')) {
+      reply.status(404).send({ error: { code: 'job_not_found' } });
+      return null;
+    }
+    return job;
+  };
+  const snapshot = (job: Job, over: Record<string, unknown> = {}) => ({
+    jobId: job.id, state: 'typing', message: null, challenge: null, needsOtp: false, accountId: null, username: null, error: null, ...over,
+  });
+  app.get('/login/browser/:id', async (request, reply) => {
+    const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);
+    if (!job) return reply;
+    job.polls++;
+    // Second poll reports success, so a test can see the account get claimed.
+    return reply.send(job.polls >= 2 ? snapshot(job, { state: 'done', accountId: 2002, username: 'browser_acct' }) : snapshot(job));
+  });
+  app.post('/login/browser/:id/input', async (request, reply) => {
+    const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);
+    return job ? reply.send(snapshot(job, { state: 'challenge', challenge: { kind: 'turnstile', w: 320, h: 240 } })) : reply;
+  });
+  app.post('/login/browser/:id/cancel', async (request, reply) => {
+    const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);
+    return job ? reply.send(snapshot(job, { state: 'cancelled' })) : reply;
+  });
+  app.get('/login/browser/:id/stream', async (request, reply) => {
+    const job = browserJobs.get((request.params as { id: string }).id);
+    const token = (request.query as { token?: string }).token;
+    if (!job || job.streamToken !== token) return reply.status(404).send({ error: { code: 'job_not_found' } });
+    return reply.header('content-type', 'text/event-stream').send('data: {"state":"done","frame":{"w":320,"h":240,"png":"UE5H"}}\n\n');
+  });
   app.post('/proxies/:label/probe', async (request, reply) => {
     const entry = proxies.find((p) => p.label === (request.params as { label: string }).label);
     if (!entry) return reply.status(404).send({ error: { code: 'proxy_not_found' } });
