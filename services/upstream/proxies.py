@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -43,6 +44,107 @@ from config import PROXIES_PATH, STATE_DIR, ensure_dir
 
 
 _lock = threading.Lock()
+
+SCHEMES = ("http", "https", "socks5", "socks5h")
+_WS = re.compile(r"\s+")
+
+
+class ProxyLineError(ValueError):
+    """One pasted proxy line could not be parsed. Its message never carries the password."""
+
+
+def _split_host_port(hostport: str) -> tuple[str, str]:
+    host, sep, port = hostport.rpartition(":")
+    if not sep:
+        raise ProxyLineError("expected host:port")
+    return host, port
+
+
+def parse_line(line: str, scheme_default: str = "http") -> tuple[dict[str, Any], str | None]:
+    """Parse one pasted proxy line into (entry, label).
+
+    Accepts, with an optional trailing label after whitespace (defaults to `host:port`):
+      * ``scheme://user:pass@host:port``
+      * ``user:pass@host:port``
+      * ``host:port:user:pass``
+      * ``host:port@user:pass``
+      * ``host:port``
+    `username`/`password` are "" when absent (so an upsert clears what a previous URL had).
+    Raises `ProxyLineError` on a bad line; the message never includes the password."""
+    s = line.strip()
+    if not s:
+        raise ProxyLineError("blank line")
+    parts = _WS.split(s, 1)
+    proxy = parts[0]
+    label = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+
+    if "://" in proxy:
+        scheme, _, rest = proxy.partition("://")
+        scheme = scheme.lower()
+    else:
+        scheme, rest = scheme_default.lower(), proxy
+    if scheme not in SCHEMES:
+        raise ProxyLineError(f"unsupported scheme {scheme!r}; use one of {', '.join(SCHEMES)}")
+
+    username = password = ""
+    if "@" in rest:
+        # scheme://user:pass@host:port  /  user:pass@host:port  /  host:port@user:pass
+        left, _, right = rest.rpartition("@")
+        if ":" in right and not right.rsplit(":", 1)[-1].isdigit():
+            # host:port@user:pass — the port is on the left of the @
+            host, port = _split_host_port(left)
+            username, _, password = right.partition(":")
+        else:
+            username, _, password = left.partition(":")
+            host, port = _split_host_port(right)
+    else:
+        segs = rest.split(":")
+        if len(segs) == 2:
+            host, port = segs
+        elif len(segs) == 4:
+            host, port, username, password = segs
+        else:
+            raise ProxyLineError(
+                "expected host:port, host:port:user:pass or [scheme://][user:pass@]host:port")
+
+    if not host:
+        raise ProxyLineError("missing host")
+    if not port.isdigit() or not (1 <= int(port) <= 65535):
+        raise ProxyLineError(f"invalid port {port!r}")
+    entry = {"scheme": scheme, "host": host, "port": int(port),
+             "username": username, "password": password}
+    return entry, (label or f"{host}:{port}")
+
+
+def redact_line(text: str) -> str:
+    """Mask the password in a proxy line so a failed-line echo never leaks it: the `:value`
+    after the user when an `@` is present, else the segments after the 2nd colon in
+    `host:port:user:pass`. Best-effort — if the line is too malformed to split, it is masked whole."""
+    s = text.strip()
+    parts = _WS.split(s, 1)
+    proxy = parts[0]
+    trailer = f" {parts[1]}" if len(parts) > 1 else ""
+    try:
+        if "@" in proxy:
+            left, _, right = proxy.rpartition("@")
+            scheme, sep, userinfo = left.rpartition("://")
+            prefix = f"{scheme}://" if sep else ""
+            if right and ":" in right and not right.rsplit(":", 1)[-1].isdigit():
+                # host:port@user:pass
+                user, colon, _pw = right.partition(":")
+                masked_right = f"{user}:***" if colon else right
+                return f"{prefix}{userinfo}@{masked_right}{trailer}"
+            user, colon, _pw = userinfo.partition(":")
+            masked = f"{user}:***" if colon else userinfo
+            return f"{prefix}{masked}@{right}{trailer}"
+        scheme, sep, rest = proxy.rpartition("://")
+        prefix = f"{scheme}://" if sep else ""
+        segs = rest.split(":")
+        if len(segs) > 2:
+            segs = [*segs[:2], *(["***"] * (len(segs) - 2))]
+        return f"{prefix}{':'.join(segs)}{trailer}"
+    except Exception:
+        return "***"
 
 
 def _empty() -> dict[str, Any]:

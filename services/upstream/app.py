@@ -13,31 +13,31 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from curl_cffi.requests import exceptions as curl_errors
-from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, Request, WebSocket
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import accounts
+import browser_login
 import client_pool
 import config
-import events
 import mass_poller
 import proxies
 import proxy_stats
 import sent_poller
 import session_bootstrap
+import session_commit
 from deps import (  # noqa: F401  (tests override account_client)
     ApiError,
     account_client,
     note_of_response,
 )
-from of_client import OFAPIError, OFClient
+from of_client import OFAPIError
 from pump import Hub, Supervisor
 from routes import ROUTERS
 
@@ -191,6 +191,15 @@ class Bootstrap(BaseModel):
     nickname: str | None = None
     static_param: str | None = None
     proxy_url: str | None = None
+    # An inline proxy line in any of the bulk-paste formats (scheme://user:pass@host:port,
+    # user:pass@host:port, host:port:user:pass, host:port@user:pass, host:port) with an optional
+    # trailing label. Registered then bound before the OFClient is created, like proxy_url.
+    proxy: str | None = None
+
+
+# `_bind_own_proxy` moved to session_commit; kept as a module alias so `_update_account` and the
+# existing tests keep working unchanged.
+_bind_own_proxy = session_commit.bind_own_proxy
 
 
 def _proxy_entry(url: str) -> dict:
@@ -206,61 +215,27 @@ def _proxy_entry(url: str) -> dict:
             "username": u.username or "", "password": u.password or ""}
 
 
-_ENDPOINT_KEYS = ("scheme", "host", "port", "username", "password")
+def _resolve_connect_proxy(uid: str, body: Bootstrap) -> tuple[dict | None, dict | None, str | None]:
+    """The proxy to mint through for a connect: `(entry, new_entry, bind_label)`.
 
-
-def _bind_own_proxy(uid: str, entry: dict) -> None:
-    """Store `entry` (from `_proxy_entry`) as the account's own `acct-<uid>` proxy and move the account onto it.
-
-    The upsert keeps the accounts already bound to `acct-<uid>` (uid included), and until the assign `uid` stays
-    on its previous proxy, so it never runs unproxied in between. A changed endpoint drops the last probe and the
-    traffic counters: they described the old one."""
-    label = f"acct-{uid}"
-    old = proxies.get_by_label(label)
-    if old is not None and any(str(old.get(k) or "") != str(entry.get(k) or "") for k in _ENDPOINT_KEYS):
-        entry = {**entry, "verified_ip": None, "verified_at": None, "verified_geo": None,
-                 "verified_of_reachable": None, "verified_of_error": None}
-        proxy_stats.clear(label)
-    proxies.upsert({"label": label, **entry})
-    proxies.assign_account(label, uid)
-
-
-# from_curl rewrites these in place; everything else it writes is a new file.
-_REWRITTEN = ("latest.json", "meta.json")
-
-
-def _snapshot_account(uid: str) -> tuple[set[str], dict[str, tuple[bytes, int, int]]] | None:
-    """The account dir's file names, plus latest.json's and meta.json's bytes and
-    (atime, mtime) in ns; None when the account has no dir yet."""
-    adir = accounts.account_dir(uid)
-    try:
-        names = {p.name for p in adir.iterdir()}
-    except FileNotFoundError:
-        return None
-    kept = {}
-    for name in _REWRITTEN:
-        if name in names:
-            st = (adir / name).stat()
-            kept[name] = (adir / name).read_bytes(), st.st_atime_ns, st.st_mtime_ns
-    return names, kept
-
-
-def _rollback_account(uid: str, snapshot: tuple[set[str], dict[str, tuple[bytes, int, int]]] | None) -> None:
-    """Undo a failed bootstrap: a new account is deleted outright; otherwise delete every
-    file it created (session, chunk) and put latest.json and meta.json back byte- and
-    mtime-exact, so the pump key (and an expired session's mark) and the nickname are
-    unchanged."""
-    if snapshot is None:
-        accounts.delete_account(uid)
-        return
-    adir = accounts.account_dir(uid)
-    names, kept = snapshot
-    for p in adir.iterdir():
-        if p.name not in names:
-            p.unlink(missing_ok=True)
-    for name, (data, atime_ns, mtime_ns) in kept.items():
-        (adir / name).write_bytes(data)
-        os.utime(adir / name, ns=(atime_ns, mtime_ns))
+    `proxy_url` (a URL) and an inline `proxy` line with no trailing label both bind as the account's
+    own `acct-<uid>` (`new_entry`). An inline `proxy` line *with* a label registers that named proxy
+    now and binds the account to it after the session validates (`bind_label`) — "bind as if a label
+    had been passed". With neither, the account's already-assigned proxy is reused."""
+    if body.proxy_url:
+        entry = _proxy_entry(body.proxy_url)
+        return entry, entry, None
+    if body.proxy:
+        try:
+            parsed, label = proxies.parse_line(body.proxy)
+        except proxies.ProxyLineError as e:
+            raise ApiError(400, "invalid_proxy_url", str(e)) from e
+        if label and label != f"{parsed['host']}:{parsed['port']}" and not re.fullmatch(r"acct-\d+", label):
+            stored = proxies.upsert({"label": label, **parsed})
+            return stored, None, label
+        return parsed, parsed, None
+    reused = proxies.get_for_account(uid)
+    return reused, None, None
 
 
 def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
@@ -279,13 +254,12 @@ def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
         raise ApiError(400, "invalid_curl", "the curl has no -b cookies; use DevTools "
                        "'Copy as cURL (bash)' (a -H 'cookie: ...' header is not supported)")
 
-    new_entry = _proxy_entry(body.proxy_url) if body.proxy_url else None
-    entry = new_entry or proxies.get_for_account(uid)
+    entry, new_entry, bind_label = _resolve_connect_proxy(uid, body)
     if entry is None and supervisor.require_proxy:
         raise ApiError(409, "proxy_required", "pass proxy_url: OF_REQUIRE_PROXY is on")
     proxy_url = proxies.proxy_url(entry) if entry else None
 
-    snapshot = _snapshot_account(uid)
+    snapshot = session_commit.snapshot_account(uid)
     had_session = accounts.latest_session_path(uid) is not None
     try:
         path = session_bootstrap.from_curl(
@@ -294,27 +268,13 @@ def _bootstrap(body: Bootstrap) -> tuple[dict, dict]:
     except (ValueError, RuntimeError) as e:
         raise ApiError(400, "bootstrap_failed", str(e)) from e
 
-    try:
-        probe = OFClient.from_session_file(
-            path, proxies=proxies.proxies_dict_for_requests(entry) if entry else None,
-            proxy_label=entry.get("label") if entry else None)
-        me = probe.me()
-    except Exception:
-        log.warning("bootstrap: me() failed for account=%s; previous session restored", uid)
-        _rollback_account(uid, snapshot)
-        raise
-
-    if new_entry is not None:
-        _bind_own_proxy(uid, new_entry)
-    client_pool.evict(uid)
-    meta = accounts.load_meta(uid) or {"id": uid}
-    meta.update(username=me.get("username"), name=me.get("name"), avatar=me.get("avatar"))
-    accounts.save_meta(uid, meta)
-    key = supervisor.key(uid)
-    assert key is not None, "from_curl wrote no session"
-    frame = events.account_event("accounts.reconnected" if had_session else "accounts.connected", int(uid),
-                                 key[0], "authenticated", events.iso(datetime.now(UTC)))
-    return {"accountId": int(uid), "username": me.get("username")}, frame
+    result, frame = session_commit.commit_captured_session(
+        uid, session_path=path, entry=entry, new_entry=new_entry,
+        snapshot=snapshot, had_session=had_session, supervisor=supervisor)
+    if bind_label is not None:
+        proxies.assign_account(bind_label, uid)
+        client_pool.evict(uid)
+    return result, frame
 
 
 @app.post("/session/bootstrap", tags=["operator"], operation_id="session.bootstrap")
@@ -441,6 +401,51 @@ async def proxies_create(body: NewProxy) -> dict:
     return await asyncio.to_thread(_create_proxy, body)
 
 
+class BulkProxies(BaseModel):
+    text: str = Field(max_length=200_000)
+    scheme: str = "http"
+
+
+def _bulk_proxies(body: BulkProxies) -> dict:
+    """Register many pasted proxies, one per line. Blank lines and `#` comments are skipped. Each good
+    line is upserted (unbound, bind it with PATCH /of-accounts/{id}); a `acct-<id>` label is reserved.
+    Returns per-line results with 1-based line numbers; a failed line's echo is password-redacted."""
+    scheme = body.scheme.strip().lower() or "http"
+    if scheme not in proxies.SCHEMES:
+        raise ApiError(400, "invalid_proxy_url", f"unsupported scheme {scheme!r}")
+    added: list[dict] = []
+    errors: list[dict] = []
+    seen: set[str] = set()
+    for n, raw in enumerate(body.text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            entry, label = proxies.parse_line(line, scheme_default=scheme)
+        except proxies.ProxyLineError as e:
+            errors.append({"line": n, "text_redacted": proxies.redact_line(line), "reason": str(e)})
+            continue
+        if re.fullmatch(r"acct-\d+", label or ""):
+            errors.append({"line": n, "text_redacted": proxies.redact_line(line),
+                           "reason": "acct-<id> labels are reserved for per-account proxies"})
+            continue
+        if label in seen:
+            errors.append({"line": n, "text_redacted": proxies.redact_line(line),
+                           "reason": f"duplicate label {label!r} in this paste"})
+            continue
+        seen.add(label)
+        stored = proxies.upsert({"label": label, **entry})
+        added.append({"label": stored["label"], "host": stored["host"], "port": stored["port"],
+                      "scheme": stored.get("scheme") or "http", "username": stored.get("username") or None})
+    return {"added": added, "errors": errors}
+
+
+@app.post("/proxies/bulk", tags=["operator"], operation_id="proxies.bulk")
+async def proxies_bulk(body: BulkProxies) -> dict:
+    """Bulk-register pasted proxies, one per line; returns `{added, errors}` with 1-based line numbers."""
+    return await asyncio.to_thread(_bulk_proxies, body)
+
+
 def _probe(label: str) -> dict:
     """Probe and store the result (network and an fsync: run it in a thread)."""
     p = proxies.get_by_label(label)
@@ -459,6 +464,169 @@ async def proxies_probe(label: str) -> dict:
     """Fetch the proxy's egress IP (through it, as OF traffic goes) and geo, and check that it tunnels to
     onlyfans.com (`verified_of_reachable`); store the result and return the entry. 502 when no IP comes back."""
     return await asyncio.to_thread(_probe, label)
+
+
+# ─── Remote-browser login (plan direct-login §C) ─────────────────────
+#
+# A real browser logs the creator in through its proxy; a human solves any Cloudflare/Turnstile/
+# captcha challenge or enters 2FA over the screencast + input channel. On success the captured
+# cookies + signed request flow through the SAME pipeline a pasted cURL uses. Never logs the
+# password or cookies; the challenge is surfaced, never solved here.
+
+
+def _browser_driver() -> browser_login.LoginDriver:
+    # Lazy: Playwright + Chromium only exist on a host with a browser, not the slim image.
+    from browser_login_playwright import PlaywrightDriver
+    return PlaywrightDriver()
+
+
+def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None) -> tuple[dict, dict]:
+    """Turn a captured browser login into a committed session via the shared capture pipeline — the
+    same derivation + record shape + post-capture tail as a pasted cURL. Binds the account to the
+    proxy the browser used, so cookies minted through it are used through it."""
+    curl = browser_login.build_login_curl(captured)
+    try:
+        parsed = session_bootstrap.parse_curl(curl)
+    except ValueError as e:
+        raise ApiError(400, "capture_failed", str(e)) from e
+    uid = str(parsed["headers"].get("user-id") or "")
+    if not uid.isdigit():
+        raise ApiError(400, "capture_failed", "the captured request has no numeric user-id")
+    entry = _proxy_entry(proxy_url) if proxy_url else None
+    snapshot = session_commit.snapshot_account(uid)
+    had_session = accounts.latest_session_path(uid) is not None
+    try:
+        path = session_bootstrap.from_curl(
+            curl, static_param_override=captured.static_param or None, proxy_url=proxy_url)
+    except (ValueError, RuntimeError) as e:
+        raise ApiError(400, "capture_failed", str(e)) from e
+    return session_commit.commit_captured_session(
+        uid, session_path=path, entry=entry, new_entry=entry,
+        snapshot=snapshot, had_session=had_session, supervisor=supervisor)
+
+
+async def _finalize_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None) -> dict:
+    result, frame = await run_in_threadpool(_finish_browser_login, captured, proxy_url)
+    supervisor.hub.publish(frame)
+    await supervisor.reconcile()
+    return result
+
+
+login_manager = browser_login.LoginManager(_browser_driver, _finalize_browser_login)
+
+
+class BrowserLoginStart(BaseModel):
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+    # A proxy line in any bulk-paste format; required when OF_REQUIRE_PROXY is on.
+    proxy: str | None = None
+
+
+class BrowserLoginInput(BaseModel):
+    type: str = Field(pattern=r"^(click|text|otp|cancel)$")
+    x: int | None = None
+    y: int | None = None
+    text: str | None = None
+    code: str | None = None
+
+
+def _principal(x_login_principal: str | None) -> str:
+    principal = (x_login_principal or "").strip()
+    if not principal:
+        raise ApiError(400, "missing_principal", "x-login-principal header is required")
+    return principal
+
+
+@app.post("/login/browser/start", tags=["operator"], operation_id="login.browser.start")
+async def browser_login_start(
+    body: BrowserLoginStart,
+    x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> dict:
+    """Start a remote-browser login. Returns the job id and the per-job SSE stream token."""
+    principal = _principal(x_login_principal)
+    proxy_url: str | None = None
+    if body.proxy and body.proxy.strip():
+        try:
+            entry, _label = proxies.parse_line(body.proxy)
+        except proxies.ProxyLineError as e:
+            raise ApiError(400, "invalid_proxy_url", str(e)) from e
+        proxy_url = proxies.proxy_url(entry)
+    elif supervisor.require_proxy:
+        raise ApiError(409, "proxy_required", "pass proxy: OF_REQUIRE_PROXY is on")
+    job = login_manager.start(principal=principal, email=body.email, password=body.password,
+                              proxy_url=proxy_url)
+    return {"jobId": job.id, "streamToken": job.stream_token, **job.snapshot()}
+
+
+@app.get("/login/browser/{job_id}", tags=["operator"], operation_id="login.browser.status")
+async def browser_login_status(
+    job_id: str, x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> dict:
+    try:
+        return login_manager.get(job_id, _principal(x_login_principal)).snapshot()
+    except KeyError:
+        raise ApiError(404, "job_not_found") from None
+
+
+@app.post("/login/browser/{job_id}/input", tags=["operator"], operation_id="login.browser.input")
+async def browser_login_input(
+    job_id: str, body: BrowserLoginInput,
+    x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> dict:
+    try:
+        job = login_manager.get(job_id, _principal(x_login_principal))
+    except KeyError:
+        raise ApiError(404, "job_not_found") from None
+    try:
+        job.submit_input(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise ApiError(409, "job_not_live", str(e)) from e
+    return job.snapshot()
+
+
+@app.post("/login/browser/{job_id}/cancel", tags=["operator"], operation_id="login.browser.cancel")
+async def browser_login_cancel(
+    job_id: str, x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> dict:
+    try:
+        job = login_manager.get(job_id, _principal(x_login_principal))
+    except KeyError:
+        raise ApiError(404, "job_not_found") from None
+    if not job.terminal:
+        job.submit_input({"type": "cancel"})
+    return job.snapshot()
+
+
+async def _event_stream(job: browser_login.LoginJob):
+    import base64
+    import json
+
+    def render() -> str:
+        snap = job.snapshot()
+        frame = None
+        if job.frame is not None:
+            png, w, h = job.frame
+            frame = {"w": w, "h": h, "png": base64.b64encode(png).decode()}
+        return f"data: {json.dumps({**snap, 'frame': frame})}\n\n"
+
+    version = job.version
+    yield render()
+    while not job.terminal:
+        version = await job.wait_update(version)
+        yield render()
+    yield render()
+
+
+@app.get("/login/browser/{job_id}/stream", tags=["operator"], operation_id="login.browser.stream")
+async def browser_login_stream(job_id: str, token: str = "") -> StreamingResponse:
+    """SSE screencast + state. EventSource cannot set headers, so it authenticates with the per-job
+    stream token in the query string."""
+    try:
+        job = login_manager.get_for_stream(job_id, token)
+    except KeyError:
+        raise ApiError(404, "job_not_found") from None
+    return StreamingResponse(_event_stream(job), media_type="text/event-stream",
+                             headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
 
 
 # ─── /ws ──────────────────────────────────────────────────────────

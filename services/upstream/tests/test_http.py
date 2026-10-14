@@ -448,6 +448,31 @@ def test_bootstrap_reuses_the_assigned_proxy(routed, bootstrap_fakes):
     assert proxies.get_for_account("100001")["label"] == "shared"
 
 
+def test_bootstrap_inline_proxy_line_binds_the_accounts_own_proxy(routed, bootstrap_fakes):
+    r = routed.post("/session/bootstrap", headers=AUTH, json={
+        "curl": CURL, "proxy": "203.0.113.10:8080:u:p"})  # host:port:user:pass, no label
+    assert r.status_code == 200, r.text
+    assert bootstrap_fakes["proxy_url"] == "http://u:p@203.0.113.10:8080"
+    p = proxies.get_for_account("100001")
+    assert (p["label"], p["host"], p["username"], p["password"]) == ("acct-100001", "203.0.113.10", "u", "p")
+
+
+def test_bootstrap_inline_proxy_with_a_label_registers_and_binds_that_named_proxy(routed, bootstrap_fakes):
+    r = routed.post("/session/bootstrap", headers=AUTH, json={
+        "curl": CURL, "proxy": "socks5h://u:p@203.0.113.20:1080  residential-7"})
+    assert r.status_code == 200, r.text
+    assert bootstrap_fakes["proxy_url"] == "socks5h://u:p@203.0.113.20:1080"
+    p = proxies.get_for_account("100001")
+    assert p["label"] == "residential-7"
+    assert proxies.get_by_label("acct-100001") is None  # bound to the named proxy, not a per-account one
+
+
+def test_bootstrap_rejects_a_bad_inline_proxy_line(routed, bootstrap_fakes):
+    r = routed.post("/session/bootstrap", headers=AUTH, json={"curl": CURL, "proxy": "not a proxy"})
+    assert (r.status_code, r.json()["error"]["code"]) == (400, "invalid_proxy_url")
+    assert bootstrap_fakes == {}  # nothing captured
+
+
 def test_bootstrap_clears_stale_proxy_credentials(routed, bootstrap_fakes):
     proxies.upsert({"label": "acct-100001", "scheme": "http", "host": "203.0.113.10", "port": 8080,
                     "username": "old", "password": "old"})
