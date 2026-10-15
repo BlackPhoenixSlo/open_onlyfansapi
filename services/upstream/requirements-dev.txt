@@ -1,7 +1,3 @@
 pytest==9.1.1
 httpx==0.28.1
 ruff==0.16.10
-
-# Remote-browser login (plan direct-login §C). Dev/host-only: runs on a box with Chromium,
-# not inside the slim runtime image. Install the browser once with `python -m playwright install chromium`.
-playwright==1.63.0

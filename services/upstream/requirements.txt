@@ -3,3 +3,6 @@ uvicorn[standard]==0.54.0
 curl_cffi==0.15.0
 websockets==16.0
 python-socks==2.5.1
+# Remote-browser login (plan direct-login §C). The Dockerfile installs Chromium + Xvfb; on a dev
+# host run `python -m playwright install chromium` once.
+playwright==1.63.0

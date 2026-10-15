@@ -475,7 +475,7 @@ async def proxies_probe(label: str) -> dict:
 
 
 def _browser_driver() -> browser_login.LoginDriver:
-    # Lazy: Playwright + Chromium only exist on a host with a browser, not the slim image.
+    # Lazy: only the remote-browser login needs Playwright + Chromium; keep them off the import path.
     from browser_login_playwright import PlaywrightDriver
     return PlaywrightDriver()
 
