@@ -15,11 +15,12 @@ RUN pip install -r requirements.txt
 
 # Remote-browser login launches Chromium headed (headless=False), so the image carries Playwright's
 # Chromium (+ its system deps) and Xvfb for a virtual display. Browsers live outside $HOME so the
-# non-root user can run them. tini is PID 1: xvfb-run hangs forever waiting for Xvfb's ready signal
-# when it is PID 1 itself, and -g forwards SIGTERM to uvicorn through the xvfb-run shell.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# non-root user can run them. tini is PID 1: it reaps Xvfb/Chromium children and forwards SIGTERM
+# to uvicorn.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    DISPLAY=:99
 RUN python -m playwright install --with-deps chromium \
- && apt-get update && apt-get install -y --no-install-recommends xvfb xauth tini \
+ && apt-get update && apt-get install -y --no-install-recommends xvfb tini \
  && rm -rf /var/lib/apt/lists/* \
  && chmod -R a+rX /ms-playwright
 
@@ -37,6 +38,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\") or 8000}/healthz', timeout=4)"
 
 # umask 077: session and proxy files (cookies, proxy passwords) are written 0600.
-# xvfb-run: a virtual display for the headed remote-browser login.
-ENTRYPOINT ["tini", "-g", "--"]
-CMD ["sh", "-c", "umask 077; exec xvfb-run -a --server-args='-screen 0 1440x900x24' uvicorn app:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers 1 --ws websockets-sansio"]
+# Xvfb: the display for the headed remote-browser login. The stale lock is removed so a `docker restart`
+# (same /tmp) doesn't leave Xvfb refusing display :99.
+ENTRYPOINT ["tini", "--"]
+CMD ["sh", "-c", "umask 077; rm -f /tmp/.X99-lock; Xvfb :99 -screen 0 1440x900x24 -nolisten tcp & exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers 1 --ws websockets-sansio"]
