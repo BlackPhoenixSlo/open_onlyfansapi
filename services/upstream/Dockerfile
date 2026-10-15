@@ -24,7 +24,7 @@ RUN python -m playwright install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/* \
  && chmod -R a+rX /ms-playwright
 
-RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin upstream \
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin upstream \
  && mkdir -p /data \
  && chown upstream:upstream /data \
  && chmod 700 /data
