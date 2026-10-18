@@ -1,6 +1,6 @@
 import type { Me, MemberFeature } from '@api/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Outlet, createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
+import { Link, Navigate, Outlet, createFileRoute, redirect, useLocation, useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -56,6 +56,10 @@ function AppLayout() {
   const me = useQuery(meQuery);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  // A page the nav hides from this user (a member typing /team, say) sends them Home, by the same rule.
+  const page = nav.find((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
+  const hidden = page !== undefined && !canSee(page.access, me.data);
   // The webhook stream is owner-only: not for a member, nor before /api/me answers.
   useDashboardStream(me.isPending || me.data?.role === 'member' ? undefined : session?.user.id);
   useDeliveryToasts();
@@ -98,7 +102,7 @@ function AppLayout() {
         </DropdownMenu>
       </aside>
       <main className="min-w-0 flex-1 p-8">
-        <Outlet />
+        {hidden ? <Navigate to="/dashboard" replace /> : <Outlet />}
       </main>
     </div>
   );
