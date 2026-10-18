@@ -50,7 +50,7 @@ const withIso = <T extends { createdAt: Date }>(row: T) => ({ ...row, createdAt:
 /** Dashboard request logs (session cookie). Mounted at /api/logs. */
 export default async function logsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', app.requireSession);
+  r.addHook('preHandler', app.requireOwner);
   const tags = ['dashboard'];
 
   r.get('/', { schema: { tags, querystring: listQuery, response: { 200: logList } } }, async (request) => {

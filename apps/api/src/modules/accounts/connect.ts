@@ -37,7 +37,7 @@ function curlAccountId(curl: string): number {
  */
 export default async function accountsConnectRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', app.requireSession);
+  r.addHook('preHandler', app.requireOwner);
 
   r.post('/connect', { schema: { tags: ['dashboard'], body: connectAccountBody } }, async (request, reply) => {
     await assertTeamLinked(request.session.teamId);

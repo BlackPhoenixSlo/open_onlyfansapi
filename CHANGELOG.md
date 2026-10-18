@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Team members ([docs/authentication.md](docs/authentication.md#team-members), plan [docs/spec/plan-team.md](docs/spec/plan-team.md)). The owner's new **Team** page creates invite links with a member's creators and features (`chats`, `mass_messages`, `vault`, `fans`, `stats`, `promo`, `settings`); a link (`/invite/<token>`) is shown once, works once for 7 days and can be revoked. The invitee picks a username and password (no email; the login form takes a username or an email) and joins the owner's workspace, also when `REGISTRATION_OPEN=false`. A member's session is scoped like an API key: their creators (all, some or none), the proxy routes of their features, the `GET /v1/stats*` reads with `stats`, `GET /v1/accounts` and `GET /v1/whoami`; every other `/v1` route (`_of/`, webhooks, `/v1/ws`, `PUT /v1/stats/config`, `POST /v1/stats/backfill`, and any new route by default) and every `/api` route (keys, logs, usage, accounts, proxies, the event stream, team) answer `403 owner_only`. Members cannot read the roster through better-auth's organization endpoints or change their username; invite tokens are redacted from log lines. The owner edits a member's permissions or removes the member. API: `GET`/`PATCH`/`DELETE /api/team/members[/:id]`, `GET`/`POST`/`DELETE /api/invites[/:id]`, `GET /api/invites/:token`, `POST /api/invites/:token/accept`, `GET /api/me` (any signed-in user: role, permissions, workspace name); `GET /v1/whoami` `user` adds `role`, `allowedAccountIds` and `features`. Migration `0016` adds `user.username`, `user.display_username`, `member.allowed_account_ids`, `member.features` and the `team_invite` table.
+
 ### Changed
 - Sign-up no longer needs email verification: registering signs the user in at once and lands on the dashboard. Email is used only for password reset. No migration.
 

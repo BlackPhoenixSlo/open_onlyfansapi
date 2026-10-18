@@ -45,7 +45,8 @@ function forActor(actor: Actor, endpoint: WebhookEndpoint): WebhookEndpoint {
 
 /**
  * Webhook endpoints and their deliveries (API key or dashboard session; writes need write scope). Mounted under /v1.
- * Keys limited to some accounts are refused: endpoints receive every account's events.
+ * Keys limited to some accounts are refused, and team members (no route here declares `config.member`): endpoints
+ * receive every account's events.
  */
 export default async function webhooksRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();

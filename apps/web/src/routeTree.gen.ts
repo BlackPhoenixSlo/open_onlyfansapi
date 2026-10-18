@@ -23,7 +23,9 @@ import { Route as AppPlaygroundRouteImport } from './routes/_app/playground'
 import { Route as AppRevenueRouteImport } from './routes/_app/revenue'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppStatsRouteImport } from './routes/_app/stats'
+import { Route as AppTeamRouteImport } from './routes/_app/team'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppLogsIndexRouteImport } from './routes/_app/logs.index'
 import { Route as AppLogsIdRouteImport } from './routes/_app/logs.$id'
 import { Route as AppWebhooksIndexRouteImport } from './routes/_app/webhooks.index'
@@ -98,10 +100,20 @@ const AppStatsRoute = AppStatsRouteImport.update({
   path: '/stats',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTeamRoute = AppTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppUsageRoute = AppUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
   getParentRoute: () => AppRoute,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AppLogsIndexRoute = AppLogsIndexRouteImport.update({
   id: '/logs/',
@@ -138,7 +150,9 @@ export interface FileRoutesByFullPath {
   '/revenue': typeof AppRevenueRoute
   '/settings': typeof AppSettingsRoute
   '/stats': typeof AppStatsRoute
+  '/team': typeof AppTeamRoute
   '/usage': typeof AppUsageRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/logs/$id': typeof AppLogsIdRoute
   '/webhooks/$id': typeof AppWebhooksIdRoute
   '/logs/': typeof AppLogsIndexRoute
@@ -158,7 +172,9 @@ export interface FileRoutesByTo {
   '/revenue': typeof AppRevenueRoute
   '/settings': typeof AppSettingsRoute
   '/stats': typeof AppStatsRoute
+  '/team': typeof AppTeamRoute
   '/usage': typeof AppUsageRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/logs/$id': typeof AppLogsIdRoute
   '/webhooks/$id': typeof AppWebhooksIdRoute
   '/logs': typeof AppLogsIndexRoute
@@ -180,7 +196,9 @@ export interface FileRoutesById {
   '/_app/revenue': typeof AppRevenueRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/stats': typeof AppStatsRoute
+  '/_app/team': typeof AppTeamRoute
   '/_app/usage': typeof AppUsageRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/_app/logs/$id': typeof AppLogsIdRoute
   '/_app/webhooks/$id': typeof AppWebhooksIdRoute
   '/_app/logs/': typeof AppLogsIndexRoute
@@ -202,7 +220,9 @@ export interface FileRouteTypes {
     | '/revenue'
     | '/settings'
     | '/stats'
+    | '/team'
     | '/usage'
+    | '/invite/$token'
     | '/logs/$id'
     | '/webhooks/$id'
     | '/logs/'
@@ -222,7 +242,9 @@ export interface FileRouteTypes {
     | '/revenue'
     | '/settings'
     | '/stats'
+    | '/team'
     | '/usage'
+    | '/invite/$token'
     | '/logs/$id'
     | '/webhooks/$id'
     | '/logs'
@@ -243,7 +265,9 @@ export interface FileRouteTypes {
     | '/_app/revenue'
     | '/_app/settings'
     | '/_app/stats'
+    | '/_app/team'
     | '/_app/usage'
+    | '/invite/$token'
     | '/_app/logs/$id'
     | '/_app/webhooks/$id'
     | '/_app/logs/'
@@ -257,6 +281,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  InviteTokenRoute: typeof InviteTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -359,12 +384,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStatsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/team': {
+      id: '/_app/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AppTeamRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/usage': {
       id: '/_app/usage'
       path: '/usage'
       fullPath: '/usage'
       preLoaderRoute: typeof AppUsageRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/logs/': {
       id: '/_app/logs/'
@@ -406,6 +445,7 @@ interface AppRouteChildren {
   AppRevenueRoute: typeof AppRevenueRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStatsRoute: typeof AppStatsRoute
+  AppTeamRoute: typeof AppTeamRoute
   AppUsageRoute: typeof AppUsageRoute
   AppLogsIdRoute: typeof AppLogsIdRoute
   AppWebhooksIdRoute: typeof AppWebhooksIdRoute
@@ -422,6 +462,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppRevenueRoute: AppRevenueRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStatsRoute: AppStatsRoute,
+  AppTeamRoute: AppTeamRoute,
   AppUsageRoute: AppUsageRoute,
   AppLogsIdRoute: AppLogsIdRoute,
   AppWebhooksIdRoute: AppWebhooksIdRoute,
@@ -438,6 +479,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  InviteTokenRoute: InviteTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

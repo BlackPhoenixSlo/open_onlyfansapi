@@ -4,6 +4,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
+import { AccountIdsField, INVALID_ACCOUNT_IDS, parseAccountIds } from '@/components/account-ids-field';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +36,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { accountsQuery, api, keysQuery } from '@/lib/api';
+import { formatDate } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/keys')({ component: Keys });
 
@@ -219,13 +221,11 @@ function KeyFormDialog({
     e.preventDefault();
     const allowedAccountIds = parseAccountIds(accountIds);
     if (allowedAccountIds === undefined) {
-      toast.error('Account IDs must be positive whole numbers separated by commas');
+      toast.error(INVALID_ACCOUNT_IDS);
       return;
     }
     save.mutate({ name: name.trim(), scope, allowedAccountIds });
   }
-
-  const available = accounts.data?.items ?? [];
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -250,20 +250,13 @@ function KeyFormDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="key-accounts">Allowed account IDs</Label>
-            <Input
-              id="key-accounts"
-              value={accountIds}
-              onChange={(e) => setAccountIds(e.target.value)}
-              placeholder="All accounts"
-            />
-            <p className="text-xs text-muted-foreground">
-              Comma-separated, e.g. 12, 34. Leave empty to allow all accounts.
-              {available.length > 0 &&
-                ` Available: ${available.map((a) => `${a.id} (${a.label ?? a.username ?? 'unnamed'})`).join(', ')}.`}
-            </p>
-          </div>
+          <AccountIdsField
+            id="key-accounts"
+            label="Allowed account IDs"
+            value={accountIds}
+            onChange={setAccountIds}
+            accounts={accounts.data?.items ?? []}
+          />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
@@ -276,19 +269,4 @@ function KeyFormDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-/** Empty → null (all accounts); invalid → undefined. */
-function parseAccountIds(text: string): number[] | null | undefined {
-  const parts = text
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return null;
-  const ids = parts.map(Number);
-  return ids.every((n) => Number.isInteger(n) && n > 0) ? ids : undefined;
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString();
 }

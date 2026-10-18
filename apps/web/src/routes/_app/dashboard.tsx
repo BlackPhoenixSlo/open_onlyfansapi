@@ -1,12 +1,58 @@
+import type { Me } from '@api/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { WebhookHealthBadge } from '@/components/webhook-health';
-import { overviewQuery } from '@/lib/api';
+import { accountLabel } from '@/components/account-ids-field';
+import { featureList } from '@/features/team/features';
+import { accountsQuery, meQuery, overviewQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/dashboard')({ component: Home });
 
+/** The owner's Home unless /api/me confirms a team member (also when it fails). */
 function Home() {
+  const me = useQuery(meQuery);
+  if (me.isPending) return <p className="text-muted-foreground">Loading…</p>;
+  return me.data?.role === 'member' ? <MemberHome me={me.data} /> : <OwnerHome />;
+}
+
+/** A team member's Home: what the owner gave them (the owner KPIs are owner-only). */
+function MemberHome({ me }: { me: Me }) {
+  const accounts = useQuery(accountsQuery);
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Home</h1>
+      <Card className="max-w-xl">
+        <CardHeader>
+          <CardTitle>Team member of {me.workspace.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div>
+            <div className="font-medium">Creators</div>
+            {accounts.isPending ? (
+              <p className="text-muted-foreground">Loading…</p>
+            ) : accounts.isError ? (
+              <p className="text-destructive">{accounts.error.message}</p>
+            ) : accounts.data.items.length === 0 ? (
+              <p className="text-muted-foreground">None yet.</p>
+            ) : (
+              <p>{accounts.data.items.map(accountLabel).join(', ')}</p>
+            )}
+          </div>
+          <div>
+            <div className="font-medium">Features</div>
+            <p>{featureList(me.features, 'None yet. Ask the owner.')}</p>
+          </div>
+          <Link to="/playground" className="underline">
+            Open the Playground
+          </Link>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerHome() {
   const overview = useQuery(overviewQuery);
   const o = overview.data;
 

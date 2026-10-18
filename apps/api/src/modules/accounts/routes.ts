@@ -19,7 +19,8 @@ export function toAccount(a: UpstreamAccount): Account {
 export default async function accountsRoutes(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().get(
     '/accounts',
-    { schema: { tags: ['gateway'], response: { 200: accountList } } },
+    // Members too: the list is narrowed to their creators.
+    { config: { member: 'allow' }, schema: { tags: ['gateway'], response: { 200: accountList } } },
     async (request) => {
       const { actor } = request;
       await assertTeamLinked(actor.teamId);

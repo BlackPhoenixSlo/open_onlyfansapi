@@ -5,7 +5,7 @@ import type { ApiKey, KeyScope } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { newId, newKeySecret } from '../../lib/ids.js';
 import { hashKey } from '../../plugins/actor.js';
-import { ownedAccountIds } from '../accounts/ownership.js';
+import { assertAllowlistOwned } from '../accounts/ownership.js';
 
 type Row = typeof apiKey.$inferSelect;
 
@@ -23,14 +23,6 @@ function toApiKey(row: Row): ApiKey {
 }
 
 const notFound = () => new AppError(404, 'not_found', 'API key not found');
-
-/** 403 `account_not_allowed` when an allowlist names an account the workspace does not own. */
-async function assertAllowlistOwned(teamId: string, ids: number[]): Promise<void> {
-  if (!ids.length) return;
-  const owned = new Set(await ownedAccountIds(teamId));
-  const foreign = ids.find((id) => !owned.has(id));
-  if (foreign !== undefined) throw new AppError(403, 'account_not_allowed', `Account ${foreign} is not owned by this workspace`);
-}
 
 export async function listKeys(teamId: string): Promise<ApiKey[]> {
   const rows = await db.select().from(apiKey).where(eq(apiKey.teamId, teamId)).orderBy(desc(apiKey.createdAt));

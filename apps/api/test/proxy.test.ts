@@ -2,7 +2,8 @@ import { createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
-import { isPassthrough, resolveUpstream } from '../src/modules/proxy/routes.js';
+import { isPassthrough } from '../src/modules/proxy/feature-gate.js';
+import { resolveUpstream } from '../src/modules/proxy/routes.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, ownAccounts, resetDb, signUp, waitForLogs } from './helpers.js';
 

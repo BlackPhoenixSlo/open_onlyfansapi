@@ -13,7 +13,7 @@ export type StreamOptions = {
   /** Keepalive comment interval. */
   heartbeatMs?: number;
   /**
-   * Each stream's lifetime, checked on the keepalive tick: EventSource then reconnects through requireSession, which
+   * Each stream's lifetime, checked on the keepalive tick: EventSource then reconnects through requireOwner, which
    * re-checks the session, and the workspace link is checked again.
    */
   maxMs?: number;
@@ -68,7 +68,7 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
     for (const l of [...listeners]) drop(l);
   });
 
-  app.get('/webhooks/stream', { preHandler: app.requireSession }, async (request, reply) => {
+  app.get('/webhooks/stream', { preHandler: app.requireOwner }, async (request, reply) => {
     const { teamId } = request.session;
     const linked = await isTeamLinked(teamId);
     reply.hijack();
@@ -89,7 +89,7 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
   });
 
   // The ledger has no team id; like the stream, a linked workspace sees the events of the accounts it owns.
-  app.get('/webhooks/stream/recent', { preHandler: app.requireSession }, async (request) => {
+  app.get('/webhooks/stream/recent', { preHandler: app.requireOwner }, async (request) => {
     const { teamId } = request.session;
     if (!(await isTeamLinked(teamId))) return { events: [] };
     const rows = await db
@@ -109,7 +109,7 @@ export default async function webhookStreamRoutes(app: FastifyInstance, opts: St
     return { events };
   });
 
-  app.post('/webhooks/stream/test', { preHandler: app.requireSession }, async (request, reply) => {
+  app.post('/webhooks/stream/test', { preHandler: app.requireOwner }, async (request, reply) => {
     const e: GatewayEvent = {
       id: newId('evt'),
       type: 'webhook.test',

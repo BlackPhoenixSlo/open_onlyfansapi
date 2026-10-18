@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { ensureWorkspace, ORG_WRITE_REFUSED, resetPasswordLink } from '../src/auth.js';
+import { ensureWorkspace, ORG_API_REFUSED, resetPasswordLink } from '../src/auth.js';
 import { db, pool } from '../src/db/index.js';
 import { member, organization, user } from '../src/db/schema.js';
 import { isTeamLinked } from '../src/lib/team-link.js';
@@ -61,13 +61,13 @@ describe('organization writes through the auth API', () => {
   ])('refuses %s', async (path, payload) => {
     const res = await orgPost(path, payload);
     expect(res.statusCode).toBe(403);
-    expect(res.json().message).toBe(ORG_WRITE_REFUSED);
+    expect(res.json().message).toBe(ORG_API_REFUSED);
   });
 
   it('refuses a slug change', async () => {
     const res = await orgPost('update', { organizationId: u.teamId, data: { slug: 'taken-over' } });
     expect(res.statusCode).toBe(403);
-    expect(res.json().message).toBe(ORG_WRITE_REFUSED);
+    expect(res.json().message).toBe(ORG_API_REFUSED);
   });
 
   it('keeps the slug and the single membership after refused writes', async () => {

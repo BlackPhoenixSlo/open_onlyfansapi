@@ -1,5 +1,8 @@
 // Wire types shared with apps/web (imported there via the `@api/contracts` alias, types only).
 import { z } from 'zod';
+import { memberPermissions, memberRole } from './team-contracts.js';
+
+export * from './team-contracts.js';
 
 export const keyScope = z.enum(['read', 'write']);
 export type KeyScope = z.infer<typeof keyScope>;
@@ -197,7 +200,8 @@ export const whoami = z.object({
     linked: z.boolean(),
   }),
   key: apiKey.pick({ id: true, name: true, scope: true, allowedAccountIds: true }).nullable(),
-  user: z.object({ id: z.string() }).nullable(),
+  /** The dashboard session's user and what it may use (every feature for the owner); null for an API key. */
+  user: memberPermissions.extend({ id: z.string(), role: memberRole }).nullable(),
 });
 export type Whoami = z.infer<typeof whoami>;
 

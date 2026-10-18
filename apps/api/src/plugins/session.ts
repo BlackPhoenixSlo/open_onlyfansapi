@@ -1,29 +1,33 @@
 import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { auth, CLIENT_IP_HEADER, ensureWorkspace } from '../auth.js';
+import { auth, CLIENT_IP_HEADER, sessionMembership } from '../auth.js';
+import { effectivePermissions } from '../contracts.js';
 import { env } from '../env.js';
-import { AppError } from '../lib/errors.js';
+import { AppError, ownerOnly } from '../lib/errors.js';
 import { assertCsrf } from './csrf.js';
 
-export type DashboardSession = { userId: string; teamId: string; role: string };
+export type DashboardSession = { userId: string; teamId: string };
 
 declare module 'fastify' {
   interface FastifyRequest {
     session: DashboardSession;
   }
   interface FastifyInstance {
-    requireSession: (request: FastifyRequest) => Promise<void>;
+    requireOwner: (request: FastifyRequest) => Promise<void>;
   }
 }
 
-/** Resolves the better-auth session cookie to `{ userId, teamId, role }`, or null when signed out. */
-export async function loadSession(request: FastifyRequest): Promise<DashboardSession | null> {
+/**
+ * Resolves the better-auth session cookie to the user and their membership row, or null when signed out (or a team
+ * member whose row is gone). Read on every request, so a member's edited permissions apply at once.
+ */
+export async function loadMembership(request: FastifyRequest) {
   const res = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
   if (!res) return null;
-  // The membership (one per user) is the source of truth; it is created here if sign-up failed to.
-  const m = await ensureWorkspace(res.user);
-  return { userId: res.user.id, teamId: m.organizationId, role: m.role };
+  // The membership (one per user) is the source of truth.
+  const membership = await sessionMembership(res.user);
+  return membership ? { userId: res.user.id, membership } : null;
 }
 
 export default fp(async (app: FastifyInstance) => {
@@ -55,11 +59,15 @@ export default fp(async (app: FastifyInstance) => {
   });
 
   app.decorateRequest('session', null as unknown as DashboardSession);
-  /** preHandler for dashboard-only routes: session cookie required, CSRF checked on writes. */
-  app.decorate('requireSession', async (request: FastifyRequest) => {
-    const session = await loadSession(request);
-    if (!session) throw new AppError(401, 'unauthorized', 'Sign in required');
+  /**
+   * preHandler for every dashboard-only `/api` route: session cookie required, CSRF checked on writes, and the
+   * workspace owner only (plan-team §1.6), so a team member cannot mint keys, connect accounts or read the logs.
+   */
+  app.decorate('requireOwner', async (request: FastifyRequest) => {
+    const s = await loadMembership(request);
+    if (!s) throw new AppError(401, 'unauthorized', 'Sign in required');
     assertCsrf(request);
-    request.session = session;
+    if (effectivePermissions(s.membership).role !== 'owner') throw ownerOnly();
+    request.session = { userId: s.userId, teamId: s.membership.organizationId };
   });
 });

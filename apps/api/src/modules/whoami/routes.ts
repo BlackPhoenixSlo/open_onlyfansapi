@@ -9,7 +9,7 @@ import { AppError } from '../../lib/errors.js';
 export default async function whoamiRoutes(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().get(
     '/whoami',
-    { schema: { tags: ['gateway'], response: { 200: whoami } } },
+    { config: { member: 'allow' }, schema: { tags: ['gateway'], response: { 200: whoami } } },
     async (request) => {
       const { actor } = request;
       const [team] = await db
@@ -27,9 +27,11 @@ export default async function whoamiRoutes(app: FastifyInstance) {
       return {
         team: { id: team.id, name: team.name, slug: team.slug, linked: team.linkedAt !== null },
         key: actor.keyId
-          ? { id: actor.keyId, name: actor.keyName ?? '', scope: actor.scope, allowedAccountIds: actor.accountIds }
+          ? { id: actor.keyId, name: actor.keyName, scope: actor.scope, allowedAccountIds: actor.accountIds }
           : null,
-        user: actor.userId ? { id: actor.userId } : null,
+        user: actor.role
+          ? { id: actor.userId, role: actor.role, allowedAccountIds: actor.accountIds, features: actor.features }
+          : null,
       };
     },
   );

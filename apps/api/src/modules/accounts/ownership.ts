@@ -43,6 +43,14 @@ export async function accountOwner(accountId: number): Promise<{ teamId: string;
   return row ? { teamId: row.teamId, linked: row.linked !== null } : null;
 }
 
+/** 403 `account_not_allowed` when an allowlist (a key's or a team member's) names an account the workspace does not own. */
+export async function assertAllowlistOwned(teamId: string, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  const owned = new Set(await ownedAccountIds(teamId));
+  const foreign = ids.find((id) => !owned.has(id));
+  if (foreign !== undefined) throw new AppError(403, 'account_not_allowed', `Account ${foreign} is not owned by this workspace`);
+}
+
 const notAllowed = (accountId: number, why: string) => new AppError(403, 'account_not_allowed', `Account ${accountId} ${why}`);
 
 /** 403 `account_not_allowed` unless workspace `teamId` owns `accountId` (unknown and foreign accounts alike). */
@@ -50,8 +58,13 @@ export async function assertAccountOwned(teamId: string, accountId: number): Pro
   if ((await accountOwner(accountId))?.teamId !== teamId) throw notAllowed(accountId, 'is not owned by this workspace');
 }
 
-/** The one account check of the `/v1` routes: 403 `account_not_allowed` outside the key's allowlist or the workspace. */
+/**
+ * The one account check of the `/v1` routes: 403 `account_not_allowed` outside the key's or team member's allowlist,
+ * or outside the workspace.
+ */
 export async function assertAccountAllowed(actor: Actor, accountId: number): Promise<void> {
-  if (actor.accountIds && !actor.accountIds.includes(accountId)) throw notAllowed(accountId, 'is not in this API key\'s allowlist');
+  if (actor.accountIds && !actor.accountIds.includes(accountId)) {
+    throw notAllowed(accountId, actor.keyId ? "is not in this API key's allowlist" : 'is not one of your team creators');
+  }
   await assertAccountOwned(actor.teamId, accountId);
 }
