@@ -7,7 +7,7 @@ import { createKey, listKeys, revokeKey, updateKey } from './service.js';
 /** Dashboard-only key management (session cookie). Mounted at /api/keys. */
 export default async function keysRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', app.requireSession);
+  r.addHook('preHandler', app.requireOwner);
   const params = z.object({ id: z.string() });
   const tags = ['dashboard'];
 

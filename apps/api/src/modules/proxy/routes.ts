@@ -1,9 +1,10 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { appOrigin } from '../../env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { assertWriteScope } from '../../plugins/actor.js';
 import { assertAccountAllowed } from '../accounts/ownership.js';
+import { isPassthrough, proxyFeature } from './feature-gate.js';
 
 const ENCODED_SEPARATOR = /%2f|%5c|\\/i;
 const MAX_ACCOUNT_ID = 2_147_483_647;
@@ -46,19 +47,6 @@ export function resolveUpstream(rawUrl: string): { accountId: number; path: stri
   return { accountId, path: `${rest}${query}` };
 }
 
-/**
- * Whether `/<rest>?<query>` (as returned by `resolveUpstream`) is the raw passthrough `/_of/…`: its first segment,
- * decoded, is `_of`, so `%5Fof` counts too. Passthrough responses are forwarded as they are (plan-v5 §2.2).
- */
-export function isPassthrough(rest: string): boolean {
-  const segment = rest.slice(1).split(/[/?]/, 1)[0] ?? '';
-  try {
-    return decodeURIComponent(segment) === '_of';
-  } catch {
-    return false;
-  }
-}
-
 /** An `x-next-page` value the wrapper accepts: a path on this account (`/…`), never `//host…` or a full URL. */
 const NEXT_PAGE = /^\/(?!\/)/;
 
@@ -99,7 +87,9 @@ export default async function proxyRoutes(app: FastifyInstance) {
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
-  app.all('/:account/*', async (request, reply) => {
+  // A team member needs the feature of the route's first path segment (feature-gate.ts).
+  const member = (request: FastifyRequest) => proxyFeature(resolveUpstream(request.raw.url ?? request.url).path);
+  app.all('/:account/*', { config: { member } }, async (request, reply) => {
     const { actor } = request;
     const { accountId, path } = resolveUpstream(request.raw.url ?? request.url);
     await assertTeamLinked(actor.teamId);

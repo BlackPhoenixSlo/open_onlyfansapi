@@ -19,8 +19,8 @@ type Query = z.infer<typeof querystring>;
 export default async function realtimeRoutes(app: FastifyInstance) {
   const hub = startHub(app.log);
   app.addHook('preClose', hub.stop);
-  /** The handshake's reply, for its elapsed time once the socket is open. */
-  const replies = new WeakMap<FastifyRequest, FastifyReply>();
+  /** The handshake's reply (for its elapsed time once the socket is open) and its key, checked by `refuse`. */
+  const handshakes = new WeakMap<FastifyRequest, { reply: FastifyReply; keyId: string }>();
 
   async function refuse(request: FastifyRequest<{ Querystring: Query }>, reply: FastifyReply) {
     const { actor } = request;
@@ -40,7 +40,7 @@ export default async function realtimeRoutes(app: FastifyInstance) {
     if (!(env.RUN_JOBS && env.UPSTREAM_WS_URL)) {
       throw new AppError(503, 'realtime_unavailable', 'Realtime events are not enabled on this gateway');
     }
-    replies.set(request, reply);
+    handshakes.set(request, { reply, keyId: actor.keyId });
   }
 
   app.withTypeProvider<ZodTypeProvider>().get(
@@ -49,7 +49,7 @@ export default async function realtimeRoutes(app: FastifyInstance) {
     (socket, request) => {
       const { actor } = request;
       const accountId = request.query.accountId ?? null;
-      const reply = replies.get(request)!;
+      const { reply, keyId } = handshakes.get(request)!;
       const durationMs = Math.round(reply.elapsedTime);
       const row = toRow(request, reply, {
         payload: undefined,
@@ -57,7 +57,7 @@ export default async function realtimeRoutes(app: FastifyInstance) {
         durationMs,
         createdAt: new Date(Date.now() - durationMs),
       });
-      hub.add(socket, { keyId: actor.keyId!, teamId: actor.teamId, allowed: actor.accountIds, accountId }, { ...row, statusCode: 101, accountId });
+      hub.add(socket, { keyId, teamId: actor.teamId, allowed: actor.accountIds, accountId }, { ...row, statusCode: 101, accountId });
     },
   );
 }

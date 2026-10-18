@@ -36,7 +36,7 @@ const GROUPS = {
 /** Dashboard usage and Home KPIs, aggregated straight from `request_log` (session cookie). Mounted at /api. */
 export default async function usageRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', app.requireSession);
+  r.addHook('preHandler', app.requireOwner);
   const tags = ['dashboard'];
 
   r.get('/usage', { schema: { tags, querystring: usageQuery, response: { 200: usage } } }, async (request): Promise<Usage> => {

@@ -1,5 +1,10 @@
 export { cn } from "cn"
 
+/** A timestamp in the browser's locale. */
+export function formatDate(iso: string) {
+  return new Date(iso).toLocaleString();
+}
+
 export function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;

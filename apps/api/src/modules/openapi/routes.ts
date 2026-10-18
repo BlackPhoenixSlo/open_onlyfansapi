@@ -1,6 +1,7 @@
 import scalar from '@scalar/fastify-api-reference';
 import type { FastifyInstance } from 'fastify';
-import { isPassthrough, JSON_TYPE } from '../proxy/routes.js';
+import { isPassthrough } from '../proxy/feature-gate.js';
+import { JSON_TYPE } from '../proxy/routes.js';
 
 const CACHE_MS = 10 * 60_000;
 const FAILURE_CACHE_MS = 60_000;

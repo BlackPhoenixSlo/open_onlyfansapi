@@ -73,7 +73,8 @@ const meta = (metric: string, cfg: StatsConfig, span: Span, asOf: Date) => ({ me
  * `/v1/stats/metrics`, `/v1/stats/scripts`, `/v1/stats/config` (spec §4.6), `/v1/stats/fans`, `/v1/stats/messages`,
  * `/v1/stats/revenue` and `/v1/stats/backfill`: reply time, reply SLA, openers, script candidates, the stored messages
  * per fan and revenue over the workspace's analytics store, scoped like `GET /v1/stats` and further to the workspace's
- * own rows. Mounted under /v1.
+ * own rows. A team member needs `stats` for the reads, and is refused the backfill and the config change (no
+ * `config.member`): both act for the whole workspace. Mounted under /v1.
  */
 export default async function statsMetricsRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -82,15 +83,16 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     assertWriteScope(request.actor, request.method);
   });
   const tags = ['gateway'];
+  const config = { member: 'stats' } as const;
   const params = z.object({ id: z.string() });
   /** `format=csv` sends the rows as `text/csv` (snake_case columns); the serializer never sees that string. */
   const seriesOrCsv = z.union([statsMetricSeries, z.string()]);
 
-  r.get('/stats/metrics', { schema: { tags, response: { 200: statsMetricList } } }, async () => ({ items: METRICS }));
+  r.get('/stats/metrics', { config, schema: { tags, response: { 200: statsMetricList } } }, async () => ({ items: METRICS }));
 
   r.get(
     '/stats/metrics/:id',
-    { schema: { tags, params, querystring: statsMetricQuery, response: { 200: seriesOrCsv } } },
+    { config, schema: { tags, params, querystring: statsMetricQuery, response: { 200: seriesOrCsv } } },
     async (request, reply) => {
       const { actor, query } = request;
       const id = metricId(request.params.id);
@@ -114,7 +116,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
 
   r.get(
     '/stats/metrics/:id/samples',
-    { schema: { tags, params, querystring: statsSamplesQuery, response: { 200: statsSamples } } },
+    { config, schema: { tags, params, querystring: statsSamplesQuery, response: { 200: statsSamples } } },
     async (request) => {
       const { actor, query } = request;
       const id = metricId(request.params.id);
@@ -130,7 +132,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     },
   );
 
-  r.get('/stats/scripts', { schema: { tags, querystring: statsScriptsQuery, response: { 200: statsScripts } } }, async (request) => {
+  r.get('/stats/scripts', { config, schema: { tags, querystring: statsScriptsQuery, response: { 200: statsScripts } } }, async (request) => {
     const { actor, query } = request;
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
@@ -139,7 +141,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     return { ...windowMeta(cfg, span, asOf), normaliserVersion: NORMALISER_VERSION, items: items.slice(0, query.limit) };
   });
 
-  r.get('/stats/fans', { schema: { tags, querystring: statsFansQuery, response: { 200: statsFans } } }, async (request) => {
+  r.get('/stats/fans', { config, schema: { tags, querystring: statsFansQuery, response: { 200: statsFans } } }, async (request) => {
     const { actor, query } = request;
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
@@ -148,7 +150,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     return { ...windowMeta(cfg, span, asOf), ...fans };
   });
 
-  r.get('/stats/revenue', { schema: { tags, querystring: statsRevenueQuery, response: { 200: statsRevenue } } }, async (request) => {
+  r.get('/stats/revenue', { config, schema: { tags, querystring: statsRevenueQuery, response: { 200: statsRevenue } } }, async (request) => {
     const { actor, query } = request;
     const cfg = await getStatsConfig(actor.teamId);
     const span = range(query, cfg.timezone);
@@ -162,7 +164,7 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
   const messagesOrCsv = z.union([statsMessages, z.string()]);
   r.get(
     '/stats/messages',
-    { schema: { tags, querystring: statsMessagesQuery, response: { 200: messagesOrCsv } } },
+    { config, schema: { tags, querystring: statsMessagesQuery, response: { 200: messagesOrCsv } } },
     async (request, reply) => {
       const { actor, query } = request;
       const cfg = await getStatsConfig(actor.teamId);
@@ -188,12 +190,13 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     },
   );
 
-  r.get('/stats/config', { schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => {
+  r.get('/stats/config', { config, schema: { tags, response: { 200: statsConfigGetResponse } } }, async (request) => {
     const { teamId } = request.actor;
     const [config, fresh] = await Promise.all([getStatsConfig(teamId), freshness(teamId, request.actor.accountIds)]);
     return { config, freshness: fresh };
   });
 
+  // Not for members: a backfill spends the workspace's upstream quota (plan-team §1.5).
   r.post(
     '/stats/backfill',
     { schema: { tags, body: statsBackfillBody, response: { 202: statsBackfillStarted } } },
@@ -214,12 +217,13 @@ export default async function statsMetricsRoutes(app: FastifyInstance) {
     },
   );
 
-  r.get('/stats/backfill', { schema: { tags, querystring: statsBackfillQuery, response: { 200: statsBackfillRun } } }, async (request) => {
+  r.get('/stats/backfill', { config, schema: { tags, querystring: statsBackfillQuery, response: { 200: statsBackfillRun } } }, async (request) => {
     const { actor, query } = request;
     await assertAccountAllowed(actor, query.accountId);
     return backfillRun(actor.teamId, query.accountId);
   });
 
+  // Not for members: the windows apply to everyone's stats in the workspace (plan-team §1.5).
   r.put('/stats/config', { schema: { tags, body: putStatsConfigBody, response: { 200: statsConfigResponse } } }, async (request) => ({
     config: await putStatsConfig(request.actor.teamId, request.body),
   }));

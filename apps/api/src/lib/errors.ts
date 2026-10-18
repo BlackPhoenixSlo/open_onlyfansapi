@@ -13,6 +13,9 @@ export class AppError extends Error {
   }
 }
 
+/** 403 `owner_only`: a team member asked for something that is the workspace owner's (and API keys'). */
+export const ownerOnly = () => new AppError(403, 'owner_only', 'This route is for the workspace owner, not team members');
+
 /** The driver's cause only, for logging a failed query: drizzle's own error message embeds the query parameters (fan message text). */
 export const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Error ? err.cause : err);
 

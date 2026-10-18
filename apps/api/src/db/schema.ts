@@ -32,6 +32,29 @@ export const apiKey = pgTable(
   (t) => [index('api_key_team_id_idx').on(t.teamId)],
 );
 
+/**
+ * A link that adds one member to a workspace (`inv_…`, plan-team §1.3). Only the token's SHA-256 is stored. Pending =
+ * not used, not revoked and not expired; the permissions are copied to the member row on accept.
+ */
+export const teamInvite = pgTable(
+  'team_invite',
+  {
+    id: text('id').primaryKey(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    allowedAccountIds: integer('allowed_account_ids').array(),
+    features: text('features').array().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('team_invite_team_id_idx').on(t.teamId)],
+);
+
 /** One row per authenticated `/v1` request. `id` is the request id (`req_…`, also the `x-request-id` header). */
 export const requestLog = pgTable(
   'request_log',

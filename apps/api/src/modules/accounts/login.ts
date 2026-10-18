@@ -59,7 +59,7 @@ export default async function accountsLoginRoutes(app: FastifyInstance) {
   // Session-gated routes (session cookie + CSRF on writes).
   await app.register(async (scope) => {
     const s = scope.withTypeProvider<ZodTypeProvider>();
-    s.addHook('preHandler', app.requireSession);
+    s.addHook('preHandler', app.requireOwner);
 
     s.post('/browser/start', { schema: { tags: ['dashboard'], body: browserLoginStartBody } }, async (request, reply) => {
       await assertTeamLinked(request.session.teamId);

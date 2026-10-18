@@ -13,6 +13,7 @@ import type {
   LogDetail,
   LogList,
   LogStatus,
+  Me,
   Overview,
   ProxyInfo,
   StatsBackfillRun,
@@ -25,6 +26,8 @@ import type {
   StatsMetricSeries,
   StatsRevenue,
   StatsScripts,
+  TeamInvite,
+  TeamMember,
   Usage,
   UsageGroupBy,
   WebhookDeliveryList,
@@ -132,6 +135,24 @@ export const cancelBrowserLogin = (jobId: string) =>
 /** EventSource (same-origin, cookie-free): the per-job stream token rides in the query string. */
 export const browserLoginStreamUrl = (jobId: string, token: string) =>
   `/api/accounts/login/browser/${encodeURIComponent(jobId)}/stream?token=${encodeURIComponent(token)}`;
+
+/** The workspace's members, the owner first (owner only). */
+export const teamMembersQuery = queryOptions({
+  queryKey: ['team', 'members'],
+  queryFn: () => api<{ items: TeamMember[] }>('/api/team/members'),
+});
+
+/** Pending invite links (owner only); the links themselves were shown once, at creation. */
+export const invitesQuery = queryOptions({
+  queryKey: ['team', 'invites'],
+  queryFn: () => api<{ items: TeamInvite[] }>('/api/invites'),
+});
+
+/** The signed-in user's role and permissions (owner or team member); the layout reads this, not /v1/whoami. */
+export const meQuery = queryOptions({
+  queryKey: ['me'],
+  queryFn: () => api<Me>('/api/me'),
+});
 
 export const whoamiQuery = queryOptions({
   queryKey: ['whoami'],

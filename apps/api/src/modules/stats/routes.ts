@@ -14,12 +14,12 @@ const day = sql<string>`to_char(${event.createdAt} at time zone 'UTC', 'YYYY-MM-
 
 /**
  * `GET /v1/stats`: sparse per (UTC day, account, type) counts and amounts from the event ledger, over the accounts the
- * workspace owns. Mounted under /v1.
+ * workspace owns. A team member needs `stats`. Mounted under /v1.
  */
 export default async function statsRoutes(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().get(
     '/stats',
-    { schema: { tags: ['gateway'], querystring: statsQuery, response: { 200: stats } } },
+    { config: { member: 'stats' }, schema: { tags: ['gateway'], querystring: statsQuery, response: { 200: stats } } },
     async (request): Promise<Stats> => {
       const { actor, query } = request;
       await assertTeamLinked(actor.teamId);

@@ -18,7 +18,7 @@ type UpstreamBulkResult = {
  */
 export default async function proxiesRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
-  r.addHook('preHandler', app.requireSession);
+  r.addHook('preHandler', app.requireOwner);
 
   r.get('/proxies', { schema: { tags: ['dashboard'], response: { 200: proxyList } } }, async (request) => {
     await assertTeamLinked(request.session.teamId);

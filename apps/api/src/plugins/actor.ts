@@ -3,24 +3,46 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import { db } from '../db/index.js';
 import { apiKey } from '../db/schema.js';
-import { AppError } from '../lib/errors.js';
-import type { KeyScope } from '../contracts.js';
+import { AppError, ownerOnly } from '../lib/errors.js';
+import { effectivePermissions, memberFeature, type KeyScope, type MemberFeature, type MemberRole } from '../contracts.js';
 import { assertCsrf } from './csrf.js';
-import { loadSession } from './session.js';
+import { loadMembership } from './session.js';
 
 export type Actor = {
   teamId: string;
-  keyId: string | null;
-  keyName: string | null;
-  userId: string | null;
   scope: KeyScope;
   /** null = every account the workspace can reach */
   accountIds: number[] | null;
-};
+  /**
+   * What the actor may use: every feature for API keys and the owner, a team member's own otherwise (plan-team §1.5),
+   * so a member is a person-bound key: `accountIds` and this list bound everything it reaches.
+   */
+  features: MemberFeature[];
+} & (
+  | { /** An API key. */ keyId: string; keyName: string; userId: null; role: null }
+  | {
+      /** A dashboard session: its user and their role in the workspace. */
+      keyId: null;
+      keyName: null;
+      userId: string;
+      role: MemberRole;
+    }
+);
+
+/**
+ * What a team member needs on a `/v1` route (plan-team §1.5), as the route's `config.member`: a feature, `'allow'`
+ * (every member; the route is still bounded by their creators), or a function of the request (the proxy, which
+ * reads its path) giving a feature, `'owner'` (owner only) or null (no feature names it). A route that declares nothing
+ * is refused to members: new routes are owner-and-key-only by default.
+ */
+type MemberAccess = MemberFeature | 'allow' | ((request: FastifyRequest) => MemberFeature | 'owner' | null);
 
 declare module 'fastify' {
   interface FastifyRequest {
     actor: Actor;
+  }
+  interface FastifyContextConfig {
+    member?: MemberAccess;
   }
 }
 
@@ -83,22 +105,44 @@ export async function authenticate(request: FastifyRequest): Promise<void> {
       keyName: key.name,
       userId: null,
       scope: key.scope,
+      role: null,
       accountIds: key.allowedAccountIds,
+      features: [...memberFeature.options],
     };
     return;
   }
 
-  const session = request.headers['x-dashboard'] === '1' ? await loadSession(request) : null;
+  const session = request.headers['x-dashboard'] === '1' ? await loadMembership(request) : null;
   if (!session) throw new AppError(401, 'unauthorized', 'Send an API key as `Authorization: Bearer <key>`');
   assertCsrf(request);
+  const { role, allowedAccountIds, features } = effectivePermissions(session.membership);
   request.actor = {
-    teamId: session.teamId,
+    teamId: session.membership.organizationId,
     keyId: null,
     keyName: null,
     userId: session.userId,
     scope: 'write',
-    accountIds: null,
+    role,
+    accountIds: allowedAccountIds,
+    features,
   };
+}
+
+/**
+ * `/v1` onRequest hook after `authenticate`: the one member check (plan-team §1.5). API keys and the owner pass; a
+ * team member passes only what the route's `config.member` grants (403 `owner_only` when it grants nothing, 403
+ * `feature_not_allowed` outside their features).
+ */
+export async function gateMember(request: FastifyRequest): Promise<void> {
+  if (request.actor.role !== 'member') return;
+  const access = request.routeOptions.config.member;
+  if (access === 'allow') return;
+  const feature = typeof access === 'function' ? access(request) : (access ?? 'owner');
+  if (feature === 'owner') throw ownerOnly();
+  if (feature === null) throw new AppError(403, 'feature_not_allowed', 'This route is not available to team members');
+  if (!request.actor.features.includes(feature)) {
+    throw new AppError(403, 'feature_not_allowed', `Your team permissions do not include ${feature}`);
+  }
 }
 
 /** 403 unless the actor may write. */

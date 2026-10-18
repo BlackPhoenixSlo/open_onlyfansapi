@@ -1,7 +1,7 @@
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import websocket from '@fastify/websocket';
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { env } from './env.js';
 import { registerJobs } from './jobs/index.js';
@@ -20,11 +20,12 @@ import proxyRoutes from './modules/proxy/routes.js';
 import realtimeRoutes from './modules/realtime/routes.js';
 import statsMetricsRoutes from './modules/stats/metrics-routes.js';
 import statsRoutes from './modules/stats/routes.js';
+import teamRoutes from './modules/team/routes.js';
 import usageRoutes from './modules/usage/routes.js';
 import webhooksRoutes from './modules/webhooks/routes.js';
 import webhookStreamRoutes, { type StreamOptions } from './modules/webhooks/stream.js';
 import whoamiRoutes from './modules/whoami/routes.js';
-import { authenticate } from './plugins/actor.js';
+import { authenticate, gateMember } from './plugins/actor.js';
 import sessionPlugin from './plugins/session.js';
 import webStatic from './plugins/web-static.js';
 
@@ -34,11 +35,34 @@ declare module 'fastify' {
   }
 }
 
-export type AppOptions = { upstreamUrl?: string; logger?: boolean; stream?: StreamOptions };
+export type AppOptions = {
+  upstreamUrl?: string;
+  logger?: boolean;
+  /** Where log lines go (tests); stdout by default. */
+  logStream?: { write(line: string): void };
+  stream?: StreamOptions;
+};
+
+/** An invite token is a credential (plan-team §1.3): log lines show `/api/invites/<redacted>…` and `/invite/<redacted>`. */
+function redactUrl(url: string): string {
+  return url.replace(/^(\/api\/invites\/|\/invite\/)[^/?#]+/, '$1<redacted>');
+}
+
+/** Fastify's default `req` log fields, with the URL redacted. */
+const logRequest = (request: FastifyRequest) => ({
+  method: request.method,
+  url: redactUrl(request.url),
+  host: request.host,
+  remoteAddress: request.ip,
+  remotePort: request.socket?.remotePort,
+});
 
 export async function buildApp(opts: AppOptions = {}) {
   const app = Fastify({
-    logger: opts.logger === false ? false : { level: env.LOG_LEVEL },
+    logger:
+      opts.logger === false
+        ? false
+        : { level: env.LOG_LEVEL, serializers: { req: logRequest }, ...(opts.logStream && { stream: opts.logStream }) },
     genReqId: () => newId('req'),
     requestIdHeader: false,
     trustProxy: env.TRUST_PROXY,
@@ -80,16 +104,19 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(proxiesRoutes, { prefix: '/api' });
   await app.register(usageRoutes, { prefix: '/api' });
   await app.register(webhookStreamRoutes, { ...opts.stream, prefix: '/api' });
+  await app.register(teamRoutes, { prefix: '/api' });
 
   await app.register(
     async (v1) => {
       v1.addHook('onRequest', authenticate);
+      // Members are refused every /v1 route that does not declare `config.member` (plan-team §1.5).
+      v1.addHook('onRequest', gateMember);
       captureRequestLogs(v1);
       await v1.register(rateLimit, {
         hook: 'preHandler',
         max: env.KEY_RATE_LIMIT_PER_MIN,
         timeWindow: 60_000,
-        keyGenerator: (req) => req.actor.keyId ?? `user:${req.actor.userId}`,
+        keyGenerator: ({ actor }) => (actor.keyId === null ? `user:${actor.userId}` : actor.keyId),
         // Only on 429s, so the upstream's x-ratelimit-* headers on proxied responses stay unambiguous.
         addHeadersOnExceeding: { 'x-ratelimit-limit': false, 'x-ratelimit-remaining': false, 'x-ratelimit-reset': false },
         errorResponseBuilder: (_req, ctx) =>

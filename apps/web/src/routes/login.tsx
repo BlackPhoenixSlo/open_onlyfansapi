@@ -20,13 +20,17 @@ export const Route = createFileRoute('/login')({
 function Login() {
   const navigate = useNavigate();
   const [pending, setPending] = useState(false);
-  const [email, setEmail] = useState('');
+  /** An email (the owner's) or a username (a team member's, who has no email). */
+  const [identifier, setIdentifier] = useState('');
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const form = new FormData(e.currentTarget);
+    const password = String(new FormData(e.currentTarget).get('password'));
+    const login = identifier.trim();
     setPending(true);
-    const { error } = await authClient.signIn.email({ email, password: String(form.get('password')) });
+    const { error } = login.includes('@')
+      ? await authClient.signIn.email({ email: login, password })
+      : await authClient.signIn.username({ username: login, password });
     setPending(false);
     if (error) {
       toast.error(error.message ?? 'Sign in failed');
@@ -49,15 +53,14 @@ function Login() {
     >
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
+          <Label htmlFor="login">Email or username</Label>
           <Input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
+            id="login"
+            name="login"
+            autoComplete="username"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
           />
         </div>
         <div className="space-y-2">
