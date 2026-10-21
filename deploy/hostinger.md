@@ -132,6 +132,7 @@ Leave the rest as `.env.example` sets it:
 | `UPSTREAM_WS_URL` | `ws://upstream:8000/ws` | The upstream's event socket. Empty turns events off: no upstream webhooks, and `/v1/ws` answers 503. |
 | `OF_REQUIRE_PROXY` | `false` | Accounts without their own proxy connect from the VPS IP. Set `true` to refuse such accounts. |
 | `STATIC_PARAM` | empty | OF's static signing parameter. Set it here once, or pass `--static-param` per account in §7. |
+| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | empty | Turn on **Try Browserbase login** on the Accounts page: a Browserbase browser logs the account in and you solve any Cloudflare / 2FA check in its live view. Empty = that option answers 503. |
 | `EVENT_RETENTION_DAYS` | `365` | Days of the event ledger behind `/v1/stats`. |
 
 `UPSTREAM_TOKEN` may contain only letters, digits and `-._~`, and needs at least 16 characters: it also travels as

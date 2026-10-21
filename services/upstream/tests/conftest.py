@@ -45,6 +45,20 @@ def clean_state():
     client_pool.evict()
 
 
+@pytest.fixture(autouse=True)
+def no_background_reconcile(monkeypatch):
+    """The app's lifespan loop does not reconcile. Its first pass would race the test's own setup:
+    one that sees an account made after `TestClient` started runs a pump on the patched client, and
+    that pump spends the test's queued OF replies. Tests call `supervisor.reconcile()` (or a route that
+    does) when they want pumps."""
+    import pump
+
+    async def idle(self, interval=None):
+        return
+
+    monkeypatch.setattr(pump.Supervisor, "run", idle)
+
+
 def make_account(aid: str, *, session: bool = True, proxy: bool = True, **meta) -> None:
     """An account dir as `from_curl` leaves it; `session=False` is a dir with meta only."""
     accounts.upsert_account(aid, nickname=meta.pop("nickname", f"Account {aid}"))

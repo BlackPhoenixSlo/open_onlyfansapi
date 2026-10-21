@@ -90,6 +90,8 @@ services:
       UPSTREAM_STATE_DIR: /data
       OF_REQUIRE_PROXY: ${OF_REQUIRE_PROXY:-false}
       STATIC_PARAM: ${STATIC_PARAM:-}
+      BROWSERBASE_API_KEY: ${BROWSERBASE_API_KEY:-}
+      BROWSERBASE_PROJECT_ID: ${BROWSERBASE_PROJECT_ID:-}
       SENT_POLL_INTERVAL_S: ${SENT_POLL_INTERVAL_S:-120}
       MASS_POLL_INTERVAL_S: ${MASS_POLL_INTERVAL_S:-120}
     # Sessions (cookies) and proxies.json (proxy passwords): credentials. Back up encrypted.
