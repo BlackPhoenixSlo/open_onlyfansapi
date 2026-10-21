@@ -132,6 +132,11 @@ class LoginJob:
         self.account_id: int | None = None
         self.username: str | None = None
         self.error: str | None = None
+        # Set by a driver that has them (Browserbase): the operator's live view, and whether the
+        # browser runs without the chosen proxy because the provider refused it.
+        self.live_view_url: str | None = None
+        self.proxy_fallback = False
+        self.proxy_fallback_status: int | None = None
 
         self.created_at = time.monotonic()
         self.deadline = self.created_at + JOB_TTL_S
@@ -173,6 +178,9 @@ class LoginJob:
             "accountId": self.account_id,
             "username": self.username,
             "error": self.error,
+            "liveViewUrl": self.live_view_url,
+            "proxyFallback": self.proxy_fallback,
+            "proxyFallbackStatus": self.proxy_fallback_status,
         }
 
     async def wait_update(self, since: int, timeout: float = POLL_INTERVAL_S) -> int:
@@ -224,6 +232,12 @@ class LoginJob:
         try:
             self._set_state(State.STARTING, "launching browser")
             await driver.launch(proxy_url=self._proxy_url, profile_dir=f"login-{self.id}")
+            self.live_view_url = getattr(driver, "live_view_url", None)
+            self.proxy_fallback = bool(getattr(driver, "proxy_fallback", False))
+            self.proxy_fallback_status = getattr(driver, "proxy_fallback_status", None)
+            if self.proxy_fallback:
+                log.info("browser login %s: proxy refused by the browser provider (%s); "
+                         "running from its own IP", self.id, self.proxy_fallback_status)
             self._set_state(State.TYPING, "entering credentials")
             await driver.submit_credentials(self._email, self._password)
             # Credentials are no longer needed in memory.
@@ -314,8 +328,11 @@ class LoginManager:
             del self._jobs[jid]
 
     def start(self, *, principal: str, email: str, password: str,
-              proxy_url: str | None, nickname: str | None = None) -> LoginJob:
-        """Begin a login. Replaces any live job the same principal still has open (one at a time)."""
+              proxy_url: str | None, nickname: str | None = None,
+              driver_factory: Any = None, finalize: Any = None) -> LoginJob:
+        """Begin a login. Replaces any live job the same principal still has open (one at a time).
+        `driver_factory` / `finalize` override the manager's for this job (e.g. the Browserbase
+        driver, or a finalize that binds a named proxy)."""
         self._prune()
         for jid, job in list(self._jobs.items()):
             if job.principal == principal and not job.terminal:
@@ -324,7 +341,8 @@ class LoginManager:
         job = LoginJob(principal=principal, email=email, password=password,
                        proxy_url=proxy_url, nickname=nickname)
         self._jobs[job.id] = job
-        job._task = asyncio.ensure_future(job.run(self._driver_factory(), self._finalize))
+        job._task = asyncio.ensure_future(job.run((driver_factory or self._driver_factory)(),
+                                                  finalize or self._finalize))
         return job
 
     def get(self, job_id: str, principal: str) -> LoginJob:

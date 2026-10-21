@@ -13,7 +13,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from curl_cffi.requests import exceptions as curl_errors
@@ -480,10 +480,19 @@ def _browser_driver() -> browser_login.LoginDriver:
     return PlaywrightDriver()
 
 
-def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None) -> tuple[dict, dict]:
+def _browserbase_driver() -> browser_login.LoginDriver:
+    # Lazy like `_browser_driver`; needs only the Playwright package (the browser runs on Browserbase).
+    from browser_login_browserbase import BrowserbaseDriver
+    return BrowserbaseDriver()
+
+
+def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None,
+                          bind_label: str | None = None) -> tuple[dict, dict]:
     """Turn a captured browser login into a committed session via the shared capture pipeline — the
     same derivation + record shape + post-capture tail as a pasted cURL. Binds the account to the
-    proxy the browser used, so cookies minted through it are used through it."""
+    proxy the browser used, so cookies minted through it are used through it. With `bind_label` the
+    account is bound to that registered proxy (as a labelled cURL connect does) instead of its own
+    `acct-<uid>` copy."""
     curl = browser_login.build_login_curl(captured)
     try:
         parsed = session_bootstrap.parse_curl(curl)
@@ -492,7 +501,13 @@ def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str 
     uid = str(parsed["headers"].get("user-id") or "")
     if not uid.isdigit():
         raise ApiError(400, "capture_failed", "the captured request has no numeric user-id")
-    entry = _proxy_entry(proxy_url) if proxy_url else None
+    if bind_label is not None:
+        entry = proxies.get_by_label(bind_label)
+        if entry is None:
+            raise ApiError(404, "proxy_not_found", f"no proxy with label {bind_label!r}")
+        new_entry = None
+    else:
+        entry = new_entry = _proxy_entry(proxy_url) if proxy_url else None
     snapshot = session_commit.snapshot_account(uid)
     had_session = accounts.latest_session_path(uid) is not None
     try:
@@ -500,13 +515,18 @@ def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str 
             curl, static_param_override=captured.static_param or None, proxy_url=proxy_url)
     except (ValueError, RuntimeError) as e:
         raise ApiError(400, "capture_failed", str(e)) from e
-    return session_commit.commit_captured_session(
-        uid, session_path=path, entry=entry, new_entry=entry,
+    committed = session_commit.commit_captured_session(
+        uid, session_path=path, entry=entry, new_entry=new_entry,
         snapshot=snapshot, had_session=had_session, supervisor=supervisor)
+    if bind_label is not None:
+        proxies.assign_account(bind_label, uid)
+        client_pool.evict(uid)
+    return committed
 
 
-async def _finalize_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None) -> dict:
-    result, frame = await run_in_threadpool(_finish_browser_login, captured, proxy_url)
+async def _finalize_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None,
+                                  bind_label: str | None = None) -> dict:
+    result, frame = await run_in_threadpool(_finish_browser_login, captured, proxy_url, bind_label)
     supervisor.hub.publish(frame)
     await supervisor.reconcile()
     return result
@@ -520,6 +540,10 @@ class BrowserLoginStart(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
     # A proxy line in any bulk-paste format; required when OF_REQUIRE_PROXY is on.
     proxy: str | None = None
+    # Or a registered proxy by label: the browser goes through it and the account is bound to it.
+    proxy_label: str | None = Field(default=None, min_length=1, max_length=200)
+    # Where the browser runs: a local headed Chromium, or a Browserbase session (live view).
+    backend: Literal["local", "browserbase"] = "local"
 
 
 class BrowserLoginInput(BaseModel):
@@ -545,7 +569,19 @@ async def browser_login_start(
     """Start a remote-browser login. Returns the job id and the per-job SSE stream token."""
     principal = _principal(x_login_principal)
     proxy_url: str | None = None
-    if body.proxy and body.proxy.strip():
+    if body.proxy_label is not None and body.proxy and body.proxy.strip():
+        raise ApiError(400, "invalid_proxy", "pass proxy or proxy_label, not both")
+    if body.backend == "browserbase":
+        from browser_login_browserbase import configured
+        if not configured():
+            raise ApiError(503, "browserbase_not_configured",
+                           "set BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID on the upstream")
+    if body.proxy_label is not None:
+        entry = proxies.get_by_label(body.proxy_label)
+        if entry is None:
+            raise ApiError(404, "proxy_not_found", f"no proxy with label {body.proxy_label!r}")
+        proxy_url = proxies.proxy_url(entry)
+    elif body.proxy and body.proxy.strip():
         try:
             entry, _label = proxies.parse_line(body.proxy)
         except proxies.ProxyLineError as e:
@@ -553,8 +589,11 @@ async def browser_login_start(
         proxy_url = proxies.proxy_url(entry)
     elif supervisor.require_proxy:
         raise ApiError(409, "proxy_required", "pass proxy: OF_REQUIRE_PROXY is on")
-    job = login_manager.start(principal=principal, email=body.email, password=body.password,
-                              proxy_url=proxy_url)
+    job = login_manager.start(
+        principal=principal, email=body.email, password=body.password, proxy_url=proxy_url,
+        driver_factory=_browserbase_driver if body.backend == "browserbase" else None,
+        finalize=functools.partial(_finalize_browser_login, bind_label=body.proxy_label)
+        if body.proxy_label is not None else None)
     return {"jobId": job.id, "streamToken": job.stream_token, **job.snapshot()}
 
 

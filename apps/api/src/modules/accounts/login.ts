@@ -6,6 +6,7 @@ import { browserLoginInputBody, browserLoginStartBody } from '../../contracts.js
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { passThrough } from '../../lib/upstream.js';
+import { assertProxyUsable } from '../proxies/service.js';
 import { claimAccount } from './ownership.js';
 
 /** A started remote-browser login the dashboard may poll, feed input to and stream. */
@@ -16,6 +17,8 @@ const JOB_TTL_MS = 11 * 60_000; // a little past the upstream's ~10-minute expir
 /**
  * Remote-browser login (dashboard only, plan direct-login §C), mounted at /api/accounts/login. A real
  * browser logs the account in through its proxy; a human solves any challenge / enters 2FA in a popup.
+ * `backend: 'browserbase'` runs that browser on Browserbase and the status carries its live view URL;
+ * a `proxyLabel` must be a proxy this workspace may use, and the account is bound to it on success.
  *
  * `/api` is outside the `/v1` request-log scope, so the password and the live cookies the upstream
  * captures are never stored; they are forwarded, and the upstream's statuses and bodies are returned
@@ -63,7 +66,13 @@ export default async function accountsLoginRoutes(app: FastifyInstance) {
 
     s.post('/browser/start', { schema: { tags: ['dashboard'], body: browserLoginStartBody } }, async (request, reply) => {
       await assertTeamLinked(request.session.teamId);
-      const res = await app.upstream.startBrowserLogin(JSON.stringify(request.body), request.session.teamId, request.id);
+      const { email, password, proxy, proxyLabel, backend } = request.body;
+      if (proxyLabel) await assertProxyUsable(app.upstream, request.session.teamId, proxyLabel, request.id);
+      const res = await app.upstream.startBrowserLogin(
+        JSON.stringify({ email, password, proxy, proxy_label: proxyLabel, backend }),
+        request.session.teamId,
+        request.id,
+      );
       if (!res.ok) return passThrough(reply, res);
       let body: { jobId?: unknown; streamToken?: unknown };
       try {

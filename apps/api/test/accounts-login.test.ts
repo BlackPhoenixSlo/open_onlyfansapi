@@ -3,7 +3,7 @@ import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
 import { accountOwner } from '../src/modules/accounts/ownership.js';
 import { startFakeUpstream } from './fake-upstream.js';
-import { bearer, createKey, dashboard, linkTeam, resetDb, signUp } from './helpers.js';
+import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
 const TOKEN = process.env.UPSTREAM_TOKEN!;
 const upstream = await startFakeUpstream(TOKEN, []);
@@ -54,6 +54,38 @@ describe('POST /api/accounts/login/browser/start', () => {
     expect((await start({ email: 'e', password: 'pw', proxy: PROXY }, dashboard(unlinked.cookie))).json().error.code).toBe('team_not_linked');
     expect((await start({ email: 'e', password: 'pw', proxy: PROXY }, { cookie: linked.cookie })).json().error.code).toBe('csrf_failed');
     expect((await start({ email: 'e', password: 'pw', proxy: PROXY }, bearer(key))).statusCode).toBe(401);
+  });
+});
+
+describe('Browserbase login (backend: browserbase, a registered proxy by label)', () => {
+  it('forwards backend and proxy_label, and polls the live view and the 402 proxy fallback through', async () => {
+    const res = await start({ email: 'e@x.test', password: 'bb-secret-pw', proxyLabel: 'proxy two', backend: 'browserbase' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('bb-secret-pw');
+    const call = upstream.requests.filter((r) => r.url === '/login/browser/start').at(-1)!;
+    expect(JSON.parse(call.body!)).toEqual({ email: 'e@x.test', password: 'bb-secret-pw', proxy_label: 'proxy two', backend: 'browserbase' });
+
+    const snap = (await app.inject({ method: 'GET', url: `/api/accounts/login/browser/${res.json().jobId}`, headers: dashboard(linked.cookie) })).json();
+    expect(snap).toMatchObject({ liveViewUrl: 'https://live.example.invalid/sess-1', proxyFallback: true, proxyFallbackStatus: 402 });
+    expect(JSON.stringify(snap)).not.toContain('bb-secret-pw');
+  });
+
+  it("refuses a proxy bound to another workspace's account before reaching the upstream", async () => {
+    const before = upstream.requests.filter((r) => r.url === '/login/browser/start').length;
+    const res = await start({ email: 'e', password: 'pw', proxyLabel: 'acct-1001', backend: 'browserbase' });
+    expect(res.json().error.code).toBe('account_not_allowed');
+    expect(res.statusCode).toBe(403);
+    expect(upstream.requests.filter((r) => r.url === '/login/browser/start').length).toBe(before);
+  });
+
+  it('never stores the password in request_log', async () => {
+    // A logged /v1 call after the starts: once its row is written, any row the starts produced would be too.
+    const logged = await app.inject({ method: 'GET', url: '/v1/accounts', headers: bearer(key) });
+    await waitForLogs([String(logged.headers['x-request-id'])]);
+    const { rows } = await pool.query(
+      `SELECT id FROM request_log r WHERE r.path LIKE '/api/accounts/login%' OR r::text LIKE '%bb-secret-pw%' OR r::text LIKE '%hunter2%'`,
+    );
+    expect(rows).toEqual([]);
   });
 });
 
