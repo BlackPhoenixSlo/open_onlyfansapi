@@ -3,7 +3,10 @@ fallback, password scrubbing, live view + fallback on the job, release, and that
 through the shared capture pipeline and binds the chosen (labelled) proxy. Browserbase HTTP is faked."""
 import asyncio
 import io
+import json
 import logging
+import shutil
+import subprocess
 import urllib.error
 from types import SimpleNamespace
 
@@ -90,6 +93,60 @@ def test_an_http_error_never_carries_the_proxy_password(monkeypatch):
         bb._request("/sessions", "POST", {"proxies": []}, ("proxy-secret",))
     assert e.value.status == 402
     assert "proxy-secret" not in str(e.value)
+
+
+def test_launch_installs_the_static_param_hook_before_any_navigation(bb_http, monkeypatch):
+    import playwright.async_api
+
+    events = []
+
+    class Page:
+        def on(self, *_):
+            pass
+
+    class Context:
+        def __init__(self):
+            self.pages = [Page()]
+
+        async def add_init_script(self, script):
+            events.append(("init", script))
+
+    class Chromium:
+        async def connect_over_cdp(self, url):
+            events.append(("connect", url))
+            return SimpleNamespace(contexts=[Context()])
+
+    class PW:
+        chromium = Chromium()
+
+        async def start(self):
+            return self
+
+    monkeypatch.setattr(playwright.async_api, "async_playwright", PW)
+    asyncio.run(bb.BrowserbaseDriver().launch(proxy_url=None, profile_dir="t"))
+    assert events == [("connect", "wss://connect.example.invalid/sess-1"), ("init", bb.STATIC_PARAM_HOOK)]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the page script")
+def test_the_static_param_hook_reads_the_sha1_input_and_leaves_the_hash_alone():
+    # A pre-runtime chunk carrying js-sha1 (module 89668), then webpack running its factory.
+    script = bb.STATIC_PARAM_HOOK + r"""
+    const sha1 = (s) => "h(" + s + ")";
+    sha1.hex = sha1;
+    const chunk = [[1], {89668: (module) => { module.exports = sha1; }}];
+    self.webpackChunkof_vue.push(chunk);
+    const module = {exports: {}};
+    self.webpackChunkof_vue[0][1][89668](module, module.exports, null);
+    const before = window.__static_param__ || null;
+    const out = module.exports("SP-1\n1700000000000\n/api2/v2/users/me\n42");
+    module.exports("not\na\nsign");
+    console.log(JSON.stringify({before, sp: window.__static_param__, out,
+                                hex: module.exports.hex === sha1, len: self.webpackChunkof_vue.length}));
+    """
+    r = subprocess.run(["node", "-e", "globalThis.window = globalThis.self = globalThis;" + script],
+                       capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(r.stdout) == {"before": None, "sp": "SP-1", "hex": True, "len": 1,
+                                    "out": "h(SP-1\n1700000000000\n/api2/v2/users/me\n42)"}
 
 
 def test_close_releases_the_session(bb_http):

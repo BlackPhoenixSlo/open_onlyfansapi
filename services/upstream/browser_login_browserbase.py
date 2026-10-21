@@ -32,6 +32,7 @@ from browser_login_playwright import (
     EMAIL_SELECTORS,
     LOGIN_URL,
     PASSWORD_SELECTORS,
+    STATIC_PARAM_HOOK,
     SUBMIT_SELECTORS,
     PlaywrightDriver,
 )
@@ -180,6 +181,7 @@ class BrowserbaseDriver(PlaywrightDriver):
         self._browser = await self._pw.chromium.connect_over_cdp(session["connectUrl"])
         contexts = self._browser.contexts
         self._context = contexts[0] if contexts else await self._browser.new_context()
+        await self._context.add_init_script(STATIC_PARAM_HOOK)
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         self._page.on("request", self._note_request)
 

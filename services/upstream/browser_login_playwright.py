@@ -38,6 +38,39 @@ CHALLENGE_SELECTORS = (
 # A 2FA / OTP prompt.
 OTP_SELECTORS = ("input[name='code']", "input[autocomplete='one-time-code']", "input[name='otp']")
 
+# OF signs with sha1(static_param + "\n" + time + "\n" + path + "\n" + user_id) from webpack module
+# 89668 (js-sha1); static_param is never on the wire. This init script wraps that module as its
+# (initial, pre-runtime) chunk is pushed and publishes the first line of a 4-line input as
+# `window.__static_param__`, which `harvest()` reads. It only observes: the hash is unchanged.
+STATIC_PARAM_HOOK = r"""
+(() => {
+  const chunks = (self.webpackChunkof_vue = self.webpackChunkof_vue || []);
+  const push = chunks.push;
+  chunks.push = function (chunk) {
+    const mods = chunk && chunk[1];
+    const orig = mods && mods[89668];
+    if (typeof orig === "function") {
+      mods[89668] = function (module, exports, require) {
+        orig.call(this, module, exports, require);
+        const sha1 = module.exports;
+        if (typeof sha1 !== "function") return;
+        const wrapped = function (input) {
+          try {
+            const lines = typeof input === "string" ? input.split("\n") : [];
+            if (lines.length === 4 && lines[0]) window.__static_param__ = lines[0];
+          } catch (_) {}
+          return sha1.apply(this, arguments);
+        };
+        Object.assign(wrapped, sha1);
+        wrapped.prototype = sha1.prototype;
+        module.exports = wrapped;
+      };
+    }
+    return push.apply(chunks, arguments);
+  };
+})();
+"""
+
 
 class PlaywrightDriver:
     def __init__(self) -> None:
@@ -61,6 +94,7 @@ class PlaywrightDriver:
         # A persistent context keeps the profile per account; headed is best for a human to help.
         self._context = await self._pw.chromium.launch_persistent_context(
             str(user_data), headless=False, proxy=proxy)
+        await self._context.add_init_script(STATIC_PARAM_HOOK)
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         self._page.on("request", self._note_request)
 
