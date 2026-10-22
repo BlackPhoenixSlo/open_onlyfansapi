@@ -17,15 +17,18 @@ const JOB_TTL_MS = 11 * 60_000; // a little past the upstream's ~10-minute expir
 /**
  * Remote-browser login (dashboard only, plan direct-login §C), mounted at /api/accounts/login. A real
  * browser logs the account in through its proxy; a human solves any challenge / enters 2FA in a popup.
- * `backend: 'browserbase'` runs that browser on Browserbase and the status carries its live view URL;
- * a `proxyLabel` must be a proxy this workspace may use, and the account is bound to it on success.
+ * `backend: 'browserbase'` runs that browser on Browserbase's managed proxies and the status carries its live view
+ * URL. The proxy is optional and bound after the login the way a pasted cURL binds it (none: the account keeps its
+ * proxy); a `proxyLabel` must be a proxy this workspace may use.
  *
  * `/api` is outside the `/v1` request-log scope, so the password and the live cookies the upstream
  * captures are never stored; they are forwarded, and the upstream's statuses and bodies are returned
  * unchanged. Writes need the dashboard session + CSRF. The SSE stream is instead gated by the per-job
  * stream token in the query string (EventSource cannot set headers). The gateway holds a jobId → team
  * map so only the workspace that started a job can poll, feed, cancel or stream it; once the login
- * succeeds the resulting OF account is claimed for that workspace.
+ * succeeds the resulting OF account is claimed for that workspace. A claim the workspace may not make (another
+ * workspace owns the account) turns the poll into an `error` state, so the login never reports success for an
+ * account the workspace cannot see.
  */
 export default async function accountsLoginRoutes(app: FastifyInstance) {
   const jobs = new Map<string, JobRecord>();
@@ -96,9 +99,16 @@ export default async function accountsLoginRoutes(app: FastifyInstance) {
         const res = await app.upstream.browserLoginStatus(request.params.jobId, request.session.teamId, request.id);
         if (!res.ok) return passThrough(reply, res);
         const snap = JSON.parse(res.body.toString()) as { accountId?: number | null };
-        // On success the OF account id is known: record it for this workspace, like a dashboard connect.
+        // On success the OF account id is known: record it for this workspace, like a dashboard connect. Any other
+        // failure (e.g. the database) throws, and the dashboard's next poll claims again.
         if (typeof snap.accountId === 'number') {
-          await claimAccount(request.session.teamId, snap.accountId).catch(() => undefined);
+          try {
+            await claimAccount(request.session.teamId, snap.accountId);
+          } catch (e) {
+            if (!(e instanceof AppError) || e.statusCode !== 409) throw e;
+            request.log.warn({ jobId: request.params.jobId, code: e.code }, 'browser login account not claimed');
+            return reply.send({ ...snap, state: 'error', error: `Signed in, but the account was not added: ${e.message}` });
+          }
         }
         return reply.send(snap);
       },

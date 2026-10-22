@@ -1,6 +1,7 @@
 """Remote-browser OnlyFans login (plan direct-login §C).
 
-A **real** browser logs the creator account in — through the account's proxy — by typing the
+A **real** browser logs the creator account in — the local backend through the account's proxy,
+Browserbase on its own managed proxies with the account's proxy bound afterwards — by typing the
 supplied email + password into OnlyFans' own login form. When OnlyFans shows a Cloudflare /
 Turnstile / reCAPTCHA / hCaptcha / GeeTest challenge, or asks for a 2FA code, the challenge is
 **surfaced to a human** over a screencast + input channel; it is never solved or bypassed here.
@@ -132,11 +133,8 @@ class LoginJob:
         self.account_id: int | None = None
         self.username: str | None = None
         self.error: str | None = None
-        # Set by a driver that has them (Browserbase): the operator's live view, and whether the
-        # browser runs without the chosen proxy because the provider refused it.
+        # Set by a driver that has one (Browserbase): the operator's live view.
         self.live_view_url: str | None = None
-        self.proxy_fallback = False
-        self.proxy_fallback_status: int | None = None
 
         self.created_at = time.monotonic()
         self.deadline = self.created_at + JOB_TTL_S
@@ -179,8 +177,6 @@ class LoginJob:
             "username": self.username,
             "error": self.error,
             "liveViewUrl": self.live_view_url,
-            "proxyFallback": self.proxy_fallback,
-            "proxyFallbackStatus": self.proxy_fallback_status,
         }
 
     async def wait_update(self, since: int, timeout: float = POLL_INTERVAL_S) -> int:
@@ -233,11 +229,6 @@ class LoginJob:
             self._set_state(State.STARTING, "launching browser")
             await driver.launch(proxy_url=self._proxy_url, profile_dir=f"login-{self.id}")
             self.live_view_url = getattr(driver, "live_view_url", None)
-            self.proxy_fallback = bool(getattr(driver, "proxy_fallback", False))
-            self.proxy_fallback_status = getattr(driver, "proxy_fallback_status", None)
-            if self.proxy_fallback:
-                log.info("browser login %s: proxy refused by the browser provider (%s); "
-                         "running from its own IP", self.id, self.proxy_fallback_status)
             self._set_state(State.TYPING, "entering credentials")
             await driver.submit_credentials(self._email, self._password)
             # Credentials are no longer needed in memory.

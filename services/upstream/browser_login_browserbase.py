@@ -6,13 +6,14 @@ own live view (`live_view_url`, the session's `debuggerFullscreenUrl`). Browserb
 forced off (`solveCaptchas: false`) and nothing here adds stealth or fingerprint spoofing: a human
 solves every challenge.
 
-Proxy policy: the chosen proxy is sent as a Browserbase *external* proxy. When Browserbase refuses it
-(402 on the free plan, or any other error creating a proxied session) the session is created again
-without proxies, so the login still works from Browserbase's IP; `proxy_fallback` records it. The
-captured session is still bound to the chosen proxy afterwards, like an extension-captured login.
+Proxy policy: the session runs on Browserbase's managed proxies (`proxies: true`); our proxy is never
+sent to Browserbase (residential/ISP proxies that work from the upstream answer Browserbase's CONNECT
+with 403). The proxy the operator picked is bound to the account after the login, the way a pasted
+cURL binds it, so every later call for the account egresses through it, like an extension-captured
+login. A session that can't be created, or an OnlyFans page that won't load, fails the job at once.
 
-`BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID` come from the environment only. Neither the OF
-password nor the proxy password is ever logged or put into an error message.
+`BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID` come from the environment only. The OF password is
+never logged or put into an error message.
 """
 from __future__ import annotations
 
@@ -25,23 +26,16 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
 
 import browser_login
-from browser_login_playwright import (
-    EMAIL_SELECTORS,
-    LOGIN_URL,
-    PASSWORD_SELECTORS,
-    STATIC_PARAM_HOOK,
-    SUBMIT_SELECTORS,
-    PlaywrightDriver,
-)
+from browser_login_playwright import STATIC_PARAM_HOOK, PlaywrightDriver
 
 log = logging.getLogger("upstream.browser_login.browserbase")
 
 BROWSERBASE_API = "https://api.browserbase.com/v1"
 HTTP_TIMEOUT_S = 30
-NAV_TIMEOUT_MS = 45_000
+# A common laptop viewport, so the live view stays readable on a phone (Browserbase's default is 2560x1440).
+VIEWPORT = {"width": 1280, "height": 800}
 
 
 class BrowserbaseError(RuntimeError):
@@ -63,8 +57,7 @@ def _env() -> tuple[str, str]:
     return key, project
 
 
-def _request(path: str, method: str = "GET", body: dict | None = None,
-             secrets: tuple[str, ...] = ()) -> dict[str, Any]:
+def _request(path: str, method: str = "GET", body: dict | None = None) -> dict[str, Any]:
     """One Browserbase REST call (blocking; run it in a thread). Tests replace this symbol."""
     key, _ = _env()
     req = urllib.request.Request(
@@ -76,9 +69,7 @@ def _request(path: str, method: str = "GET", body: dict | None = None,
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as r:
             raw = r.read()
     except urllib.error.HTTPError as e:
-        # The response body only (never the request, which carries the proxy password), scrubbed in
-        # case Browserbase echoes the proxy back.
-        detail = browser_login._scrub(e.read().decode(errors="replace")[:300], *secrets)
+        detail = e.read().decode(errors="replace")[:300]
         raise BrowserbaseError(f"Browserbase {method} {path} failed (HTTP {e.code}): {detail}",
                                e.code) from None
     except urllib.error.URLError as e:
@@ -86,52 +77,33 @@ def _request(path: str, method: str = "GET", body: dict | None = None,
     return json.loads(raw.decode() or "{}")
 
 
-async def _call(path: str, method: str = "GET", body: dict | None = None,
-                secrets: tuple[str, ...] = ()) -> dict[str, Any]:
-    return await asyncio.to_thread(_request, path, method, body, secrets)
+async def _call(path: str, method: str = "GET", body: dict | None = None) -> dict[str, Any]:
+    return await asyncio.to_thread(_request, path, method, body)
 
 
-def external_proxy(proxy_url: str) -> dict[str, str]:
-    """A proxy URL as Browserbase's external proxy: `{type, server, username?, password?}`."""
-    u = urlsplit(proxy_url)
-    out = {"type": "external", "server": f"{u.scheme}://{u.hostname}:{u.port}"}
-    if u.username:
-        out["username"] = u.username
-    if u.password:
-        out["password"] = u.password
-    return out
-
-
-def session_body(project_id: str, proxy_url: str | None) -> dict[str, Any]:
-    body: dict[str, Any] = {
+def session_body(project_id: str) -> dict[str, Any]:
+    return {
         "projectId": project_id,
+        # Browserbase's managed proxies; ours is bound to the account after the login.
+        "proxies": True,
         # A human solves challenges in the live view; Browserbase's solver defaults to on.
-        "browserSettings": {"solveCaptchas": False},
+        "browserSettings": {"solveCaptchas": False, "viewport": dict(VIEWPORT)},
         # Outlive the job (Browserbase's default is 300 s) so the human has the job's full window.
         "timeout": int(browser_login.JOB_TTL_S) + 60,
     }
-    if proxy_url:
-        body["proxies"] = [external_proxy(proxy_url)]
-    return body
 
 
-async def create_session(proxy_url: str | None) -> tuple[dict[str, Any], int | None, bool]:
-    """Create a session through `proxy_url`; when Browserbase refuses the proxy, create one without.
-    Returns `(session, fallback_status, fell_back)` (`fallback_status` is the refusal's HTTP status)."""
+async def create_session() -> dict[str, Any]:
+    """A session on Browserbase's managed proxies. Raises on any refusal: there is no fallback."""
     _, project = _env()
-    secrets = tuple(s for s in (urlsplit(proxy_url).password if proxy_url else None,) if s)
-    fell_back, status = False, None
     try:
-        session = await _call("/sessions", "POST", session_body(project, proxy_url), secrets)
+        session = await _call("/sessions", "POST", session_body(project))
     except BrowserbaseError as e:
-        if not proxy_url:
-            raise
-        fell_back, status = True, e.status
-        log.warning("browserbase refused the proxy (HTTP %s); retrying without proxies", e.status)
-        session = await _call("/sessions", "POST", session_body(project, None))
+        raise BrowserbaseError(f"couldn't start a Browserbase session on its managed proxies: {e}",
+                               e.status) from None
     if not session.get("id") or not session.get("connectUrl"):
         raise BrowserbaseError("Browserbase created a session without an id/connectUrl")
-    return session, status, fell_back
+    return session
 
 
 async def live_view_url(session_id: str) -> str | None:
@@ -163,16 +135,15 @@ class BrowserbaseDriver(PlaywrightDriver):
         super().__init__()
         self._on_session = on_session
         self._browser = None
-        self._pending: tuple[str, str] | None = None
         self.session_id: str | None = None
         self.live_view_url: str | None = None
-        self.proxy_fallback = False
-        self.proxy_fallback_status: int | None = None
 
     async def launch(self, *, proxy_url: str | None, profile_dir: str) -> None:
+        """`proxy_url` is deliberately unused: the browser runs on Browserbase's managed proxies and the
+        job binds the operator's proxy to the account after the login."""
         from playwright.async_api import async_playwright
 
-        session, self.proxy_fallback_status, self.proxy_fallback = await create_session(proxy_url)
+        session = await create_session()
         self.session_id = session["id"]
         self.live_view_url = await live_view_url(self.session_id)
         if self._on_session is not None:
@@ -185,48 +156,7 @@ class BrowserbaseDriver(PlaywrightDriver):
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         self._page.on("request", self._note_request)
 
-    async def submit_credentials(self, email: str, password: str) -> None:
-        """Open OnlyFans and fill the form once it renders. A challenge may come first, so a missing
-        form is not an error: `observe()` keeps trying until the human has cleared the challenge."""
-        with contextlib.suppress(Exception):  # a slow proxy: inspect the page anyway
-            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-        self._pending = (email, password)
-        await self._try_fill()
-
-    async def _first(self, selectors: tuple[str, ...]):
-        for sel in selectors:
-            el = await self._page.query_selector(sel)
-            if el is not None:
-                return el
-        return None
-
-    async def _try_fill(self) -> None:
-        if self._pending is None:
-            return
-        try:
-            em, pw = await self._first(EMAIL_SELECTORS), await self._first(PASSWORD_SELECTORS)
-            if em is None or pw is None:
-                return
-            email, password = self._pending
-            await em.fill(email)
-            await pw.fill(password)
-            self._pending = None  # credentials typed: drop them
-            submit = await self._first(SUBMIT_SELECTORS)
-            if submit is not None:
-                await submit.click()
-            else:
-                await pw.press("Enter")
-        except Exception as e:  # noqa: BLE001 — never surface a message that could echo the password
-            log.info("browserbase login form fill failed: %s", type(e).__name__)
-
-    async def observe(self) -> browser_login.Observation:
-        obs = await super().observe()
-        if obs.kind == "working" and self._pending is not None:
-            await self._try_fill()
-        return obs
-
     async def close(self) -> None:
-        self._pending = None
         for obj, closer in ((self._browser, "close"), (self._pw, "stop")):
             if obj is not None:
                 with contextlib.suppress(Exception):

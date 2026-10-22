@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { pool } from '../src/db/index.js';
-import { accountOwner } from '../src/modules/accounts/ownership.js';
+import { accountOwner, claimAccount } from '../src/modules/accounts/ownership.js';
 import { startFakeUpstream } from './fake-upstream.js';
 import { bearer, createKey, dashboard, linkTeam, resetDb, signUp, waitForLogs } from './helpers.js';
 
@@ -57,8 +57,8 @@ describe('POST /api/accounts/login/browser/start', () => {
   });
 });
 
-describe('Browserbase login (backend: browserbase, a registered proxy by label)', () => {
-  it('forwards backend and proxy_label, and polls the live view and the 402 proxy fallback through', async () => {
+describe('Browserbase login (backend: browserbase, an optional registered proxy by label)', () => {
+  it('forwards backend and proxy_label, and polls the live view through', async () => {
     const res = await start({ email: 'e@x.test', password: 'bb-secret-pw', proxyLabel: 'proxy two', backend: 'browserbase' });
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('bb-secret-pw');
@@ -66,8 +66,28 @@ describe('Browserbase login (backend: browserbase, a registered proxy by label)'
     expect(JSON.parse(call.body!)).toEqual({ email: 'e@x.test', password: 'bb-secret-pw', proxy_label: 'proxy two', backend: 'browserbase' });
 
     const snap = (await app.inject({ method: 'GET', url: `/api/accounts/login/browser/${res.json().jobId}`, headers: dashboard(linked.cookie) })).json();
-    expect(snap).toMatchObject({ liveViewUrl: 'https://live.example.invalid/sess-1', proxyFallback: true, proxyFallbackStatus: 402 });
+    expect(snap).toMatchObject({ liveViewUrl: 'https://live.example.invalid/sess-1' });
+    expect(snap).not.toHaveProperty('proxyFallback');
     expect(JSON.stringify(snap)).not.toContain('bb-secret-pw');
+  });
+
+  it('starts without a proxy: the upstream keeps the account on its own proxy', async () => {
+    const res = await start({ email: 'e@x.test', password: 'pw', backend: 'browserbase' });
+    expect(res.statusCode).toBe(200);
+    const call = upstream.requests.filter((r) => r.url === '/login/browser/start').at(-1)!;
+    expect(JSON.parse(call.body!)).toEqual({ email: 'e@x.test', password: 'pw', backend: 'browserbase' });
+  });
+
+  it('reports an error, not success, when the signed-in account belongs to another workspace', async () => {
+    await claimAccount(linked.teamId, 3003);
+    const { jobId } = (await start({ email: 'taken@x.test', password: 'pw', backend: 'browserbase' }, dashboard(other.cookie))).json();
+    const poll = () => app.inject({ method: 'GET', url: `/api/accounts/login/browser/${jobId}`, headers: dashboard(other.cookie) });
+    expect((await poll()).json().state).toBe('typing');
+    const res = await poll();
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ state: 'error', accountId: 3003 });
+    expect(res.json().error).toContain('belongs to another workspace');
+    expect((await accountOwner(3003))?.teamId).toBe(linked.teamId);
   });
 
   it("refuses a proxy bound to another workspace's account before reaching the upstream", async () => {
