@@ -19,10 +19,21 @@ log = logging.getLogger("upstream.browser_login.playwright")
 LOGIN_URL = "https://onlyfans.com/"
 API_RE = "**/api2/v2/**"
 
-# Email/password are found by selector first, then by input type as a fallback.
-EMAIL_SELECTORS = ("input[name='email']", "input[type='email']", "input#email")
+# OnlyFans renders its login form with JS after domcontentloaded (often seconds later on a remote
+# browser), so the fields are waited for, never looked up once. Each tuple is one CSS selector list.
+EMAIL_SELECTORS = ("input[name='email']", "input[type='email']", "input[autocomplete='username']", "input#email")
 PASSWORD_SELECTORS = ("input[name='password']", "input[type='password']", "input#password")
-SUBMIT_SELECTORS = ("button[type='submit']", "button.g-btn.m-rounded.m-flex")
+SUBMIT_SELECTORS = ("button[type='submit']",)
+# The cookie banner OnlyFans shows some egresses (EU): decline the optional cookies.
+COOKIE_ONLY_NECESSARY = "button:has-text('Only necessary cookies')"
+NAV_TIMEOUT_MS = 45_000
+FORM_WAIT_S = 30          # the login form must show within this
+FIELD_TIMEOUT_MS = 5_000  # one fill / read / click attempt
+FILL_ATTEMPTS = 3         # fill, then retype key by key, verifying the value each time
+
+
+class LoginFormError(RuntimeError):
+    """OnlyFans' login form could not be filled. The message never carries the typed values."""
 
 # Text OnlyFans/Cloudflare show on an interstitial challenge.
 CHALLENGE_TEXT = ("just a moment", "verify you are human", "checking your browser")
@@ -108,23 +119,49 @@ class PlaywrightDriver:
             self._last_url = url
 
     async def submit_credentials(self, email: str, password: str) -> None:
-        await self._page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        await self._fill(EMAIL_SELECTORS, email)
-        await self._fill(PASSWORD_SELECTORS, password)
-        for sel in SUBMIT_SELECTORS:
-            el = await self._page.query_selector(sel)
-            if el is not None:
-                await el.click()
-                return
-        await self._page.keyboard.press("Enter")
+        """Open OnlyFans, wait for its login form, type and verify the email then the password, and
+        submit. A page that won't load, a form that never shows, or a field that never takes its value
+        fails at once (no typed value in the message) instead of leaving the job on a half-filled form."""
+        try:
+            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        except Exception as e:  # noqa: BLE001 — nothing typed yet; the job scrubs the message anyway
+            raise RuntimeError(f"couldn't open OnlyFans in the browser: {str(e).splitlines()[0][:200]}") from None
+        await self.fill_login_form(email, password)
+        await self.submit_login_form()
 
-    async def _fill(self, selectors: tuple[str, ...], value: str) -> None:
-        for sel in selectors:
-            el = await self._page.query_selector(sel)
-            if el is not None:
-                await el.fill(value)
-                return
-        raise RuntimeError("could not find the login field on the page")
+    async def fill_login_form(self, email: str, password: str, *, wait_s: float = FORM_WAIT_S) -> None:
+        em = self._page.locator(", ".join(EMAIL_SELECTORS)).first
+        pw = self._page.locator(", ".join(PASSWORD_SELECTORS)).first
+        try:
+            await em.wait_for(state="visible", timeout=int(wait_s * 1000))
+        except Exception:  # noqa: BLE001
+            why = " (a human-verification check is on screen)" if await self._detect_challenge() else ""
+            raise LoginFormError(f"the OnlyFans login form did not appear within {wait_s:.0f}s{why}") from None
+        await self._dismiss_cookie_banner()
+        await _fill_verified(em, email, "email")
+        await _fill_verified(pw, password, "password")
+
+    async def _dismiss_cookie_banner(self) -> None:
+        # Best effort: the banner does not block the form, it only crowds the view.
+        try:
+            btn = self._page.locator(COOKIE_ONLY_NECESSARY).first
+            if await btn.is_visible():
+                await btn.click(timeout=FIELD_TIMEOUT_MS)
+        except Exception as e:  # noqa: BLE001
+            log.info("declining OnlyFans' optional cookies failed: %s", type(e).__name__)
+
+    async def submit_login_form(self) -> None:
+        """Click LOG IN (enabled once both fields hold a value), else press Enter in the password field.
+        A failed submit is left to the human watching the browser."""
+        try:
+            await self._page.locator(", ".join(SUBMIT_SELECTORS)).first.click(timeout=FIELD_TIMEOUT_MS)
+            return
+        except Exception as e:  # noqa: BLE001
+            log.info("clicking OnlyFans' LOG IN failed: %s", type(e).__name__)
+        try:
+            await self._page.locator(", ".join(PASSWORD_SELECTORS)).first.press("Enter", timeout=FIELD_TIMEOUT_MS)
+        except Exception as e:  # noqa: BLE001
+            log.info("pressing Enter in OnlyFans' password field failed: %s", type(e).__name__)
 
     async def observe(self) -> Observation:
         # A challenge first — never solve it, just report it.
@@ -217,3 +254,22 @@ class PlaywrightDriver:
             if obj is not None:
                 with contextlib.suppress(Exception):
                     await getattr(obj, closer)()
+
+
+async def _fill_verified(field, value: str, what: str) -> None:
+    """Type `value` into `field` and read it back; when the page swallowed it, clear and type it key by
+    key. Raises LoginFormError after FILL_ATTEMPTS. Only exception class names are logged: Playwright's
+    messages echo the value."""
+    for attempt in range(FILL_ATTEMPTS):
+        try:
+            if attempt == 0:
+                await field.fill(value, timeout=FIELD_TIMEOUT_MS)
+            else:
+                await field.click(timeout=FIELD_TIMEOUT_MS)
+                await field.fill("", timeout=FIELD_TIMEOUT_MS)
+                await field.press_sequentially(value, delay=30, timeout=FIELD_TIMEOUT_MS * 4)
+            if await field.input_value(timeout=FIELD_TIMEOUT_MS) == value:
+                return
+        except Exception as e:  # noqa: BLE001
+            log.info("filling the OnlyFans %s field, attempt %d: %s", what, attempt + 1, type(e).__name__)
+    raise LoginFormError(f"couldn't fill the OnlyFans {what} field — the login form did not take it")

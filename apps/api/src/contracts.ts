@@ -160,9 +160,15 @@ export const browserLoginStartBody = z.object({
   password: z.string().min(1).max(1024),
   /** A proxy line in any bulk-paste format; required when the upstream has OF_REQUIRE_PROXY on. */
   proxy: z.string().trim().min(1).max(2048).optional(),
-  /** Or a registered proxy by label (one this workspace may use); the account is bound to it on success. */
+  /**
+   * Or a registered proxy by label (one this workspace may use); the account is bound to it on success. With neither,
+   * the account keeps the proxy it is on (a new one connects from the upstream's IP), as with a pasted cURL.
+   */
   proxyLabel: z.string().trim().min(1).max(200).optional(),
-  /** Where the browser runs: the upstream's own Chromium (default) or a Browserbase session with a live view. */
+  /**
+   * Where the browser runs: the upstream's own Chromium (default, through the proxy) or a Browserbase session with a
+   * live view (on Browserbase's managed proxies; the proxy is only bound afterwards, never sent to Browserbase).
+   */
   backend: z.enum(['local', 'browserbase']).optional(),
 });
 export type BrowserLoginStartBody = z.infer<typeof browserLoginStartBody>;
@@ -190,9 +196,6 @@ export const browserLoginJob = z.object({
   error: z.string().nullable(),
   /** Browserbase only: the live view the operator opens to watch the browser and solve a challenge. */
   liveViewUrl: z.string().nullable().optional(),
-  /** Browserbase refused the proxy (`proxyFallbackStatus`, e.g. 402): the login runs from its own IP. The account is still bound to the chosen proxy. */
-  proxyFallback: z.boolean().optional(),
-  proxyFallbackStatus: z.number().int().nullable().optional(),
 });
 export type BrowserLoginJob = z.infer<typeof browserLoginJob>;
 

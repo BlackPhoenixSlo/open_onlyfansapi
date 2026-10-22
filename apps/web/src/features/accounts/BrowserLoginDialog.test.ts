@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canvasToFrame, proxyFallbackNotice } from './BrowserLoginDialog';
+import { canvasToFrame } from './BrowserLoginDialog';
 
 describe('canvasToFrame', () => {
   const rect = { left: 100, top: 50, width: 640, height: 480 };
@@ -20,14 +20,5 @@ describe('canvasToFrame', () => {
       x: Math.round((1 * 1000) / 640),
       y: Math.round((1 * 1000) / 480),
     });
-  });
-});
-
-describe('proxyFallbackNotice', () => {
-  it('names the refusal status and the proxy the session is bound to', () => {
-    expect(proxyFallbackNotice(402, 'res-1')).toBe(
-      "Browserbase rejected the proxy (402) — logged in via Browserbase's IP; session bound to proxy res-1",
-    );
-    expect(proxyFallbackNotice(null, 'res-1')).toContain('(error)');
   });
 });

@@ -73,7 +73,8 @@ function AppLayout() {
   }
 
   return (
-    <div className="flex min-h-screen">
+    // overflow-x-clip: a page wider than a phone must not widen the layout viewport (fixed dialogs center on it).
+    <div className="flex min-h-screen overflow-x-clip">
       <aside className="flex w-56 shrink-0 flex-col border-r p-4">
         <div className="mb-6 px-2 text-lg font-semibold">{PRODUCT_NAME}</div>
         <nav className="flex flex-1 flex-col gap-1">
@@ -101,7 +102,7 @@ function AppLayout() {
           </DropdownMenuContent>
         </DropdownMenu>
       </aside>
-      <main className="min-w-0 flex-1 p-8">
+      <main className="min-w-0 flex-1 p-4 md:p-8">
         {hidden ? <Navigate to="/dashboard" replace /> : <Outlet />}
       </main>
     </div>

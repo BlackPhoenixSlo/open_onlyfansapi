@@ -489,10 +489,10 @@ def _browserbase_driver() -> browser_login.LoginDriver:
 def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str | None,
                           bind_label: str | None = None) -> tuple[dict, dict]:
     """Turn a captured browser login into a committed session via the shared capture pipeline — the
-    same derivation + record shape + post-capture tail as a pasted cURL. Binds the account to the
-    proxy the browser used, so cookies minted through it are used through it. With `bind_label` the
-    account is bound to that registered proxy (as a labelled cURL connect does) instead of its own
-    `acct-<uid>` copy."""
+    same derivation + record shape + post-capture tail as a pasted cURL, and the same proxy binding:
+    `proxy_url` becomes the account's own `acct-<uid>`; with `bind_label` the account is bound to that
+    registered proxy (as a labelled cURL connect does); with neither, the account keeps the proxy it is
+    already on (none: the upstream's IP). The session is validated through that proxy (one egress)."""
     curl = browser_login.build_login_curl(captured)
     try:
         parsed = session_bootstrap.parse_curl(curl)
@@ -506,8 +506,11 @@ def _finish_browser_login(captured: browser_login.CapturedLogin, proxy_url: str 
         if entry is None:
             raise ApiError(404, "proxy_not_found", f"no proxy with label {bind_label!r}")
         new_entry = None
+    elif proxy_url:
+        entry = new_entry = _proxy_entry(proxy_url)
     else:
-        entry = new_entry = _proxy_entry(proxy_url) if proxy_url else None
+        entry, new_entry = proxies.get_for_account(uid), None
+        proxy_url = proxies.proxy_url(entry) if entry else None
     snapshot = session_commit.snapshot_account(uid)
     had_session = accounts.latest_session_path(uid) is not None
     try:
@@ -540,7 +543,8 @@ class BrowserLoginStart(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
     # A proxy line in any bulk-paste format; required when OF_REQUIRE_PROXY is on.
     proxy: str | None = None
-    # Or a registered proxy by label: the browser goes through it and the account is bound to it.
+    # Or a registered proxy by label: the account is bound to it after the login (the local browser
+    # also logs in through it; Browserbase uses its managed proxies). Neither: the account keeps its proxy.
     proxy_label: str | None = Field(default=None, min_length=1, max_length=200)
     # Where the browser runs: a local headed Chromium, or a Browserbase session (live view).
     backend: Literal["local", "browserbase"] = "local"

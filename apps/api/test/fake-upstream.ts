@@ -292,29 +292,24 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     return reply.send({ added, errors });
   });
   // Remote-browser login: a scripted job keyed by id; the principal and stream token gate access.
-  // A `backend: 'browserbase'` job also reports a live view and, for proxy `proxy two`, a 402 proxy fallback.
-  type Job = { id: string; principal: string; streamToken: string; polls: number; extra: Record<string, unknown> };
+  // A local job models OF_REQUIRE_PROXY on (no proxy: 409); a `backend: 'browserbase'` job takes an optional proxy
+  // and reports a live view. A job whose email starts with `taken@` signs in to account 3003.
+  type Job = { id: string; principal: string; streamToken: string; polls: number; accountId: number; extra: Record<string, unknown> };
   const browserJobs = new Map<string, Job>();
   app.post('/login/browser/start', async (request, reply) => {
     const principal = String(request.headers['x-login-principal'] ?? '');
     if (!principal) return reply.status(400).send({ error: { code: 'missing_principal' } });
-    const { proxy, proxy_label, backend } = JSON.parse(String(request.body)) as {
+    const { email, proxy, proxy_label, backend } = JSON.parse(String(request.body)) as {
       email: string;
       password: string;
       proxy?: string;
       proxy_label?: string;
       backend?: string;
     };
-    if (!proxy && !proxy_label) return reply.status(409).send({ error: { code: 'proxy_required' } });
-    const extra =
-      backend === 'browserbase'
-        ? {
-            liveViewUrl: 'https://live.example.invalid/sess-1',
-            proxyFallback: proxy_label === 'proxy two',
-            proxyFallbackStatus: proxy_label === 'proxy two' ? 402 : null,
-          }
-        : {};
-    const job: Job = { id: `job-${browserJobs.size + 1}`, principal, streamToken: `tok-${browserJobs.size + 1}`, polls: 0, extra };
+    if (!proxy && !proxy_label && backend !== 'browserbase') return reply.status(409).send({ error: { code: 'proxy_required' } });
+    const extra = backend === 'browserbase' ? { liveViewUrl: 'https://live.example.invalid/sess-1' } : {};
+    const accountId = email.startsWith('taken@') ? 3003 : 2002;
+    const job: Job = { id: `job-${browserJobs.size + 1}`, principal, streamToken: `tok-${browserJobs.size + 1}`, polls: 0, accountId, extra };
     browserJobs.set(job.id, job);
     return reply.send({ jobId: job.id, streamToken: job.streamToken, state: 'starting', message: null, challenge: null, needsOtp: false, accountId: null, username: null, error: null });
   });
@@ -334,7 +329,7 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     if (!job) return reply;
     job.polls++;
     // Second poll reports success, so a test can see the account get claimed.
-    return reply.send(job.polls >= 2 ? snapshot(job, { state: 'done', accountId: 2002, username: 'browser_acct' }) : snapshot(job));
+    return reply.send(job.polls >= 2 ? snapshot(job, { state: 'done', accountId: job.accountId, username: 'browser_acct' }) : snapshot(job));
   });
   app.post('/login/browser/:id/input', async (request, reply) => {
     const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);

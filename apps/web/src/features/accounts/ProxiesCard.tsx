@@ -51,7 +51,7 @@ export function ProxiesCard({ accounts }: { accounts: Account[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Proxies</CardTitle>
-        <CardAction className="flex gap-2">
+        <CardAction className="flex flex-wrap justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => setPasting(true)}>
             Paste proxies
           </Button>
