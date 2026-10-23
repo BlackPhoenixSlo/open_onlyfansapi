@@ -1,3 +1,4 @@
+import { readStored, writeStored } from '@/lib/storage';
 import type { Draft, Row } from './RequestForm';
 import type { Op, Param } from './spec';
 
@@ -71,30 +72,10 @@ const RECENT_KEY = 'gateway.playground.recent';
 const ACCOUNT_KEY = 'gateway.playground.account';
 const RECENT_MAX = 8;
 
-/** The stored value, or null when it is missing, unreadable or not of the expected shape. */
-function read<T>(key: string, is: (v: unknown) => v is T): T | null {
-  try {
-    const raw = localStorage.getItem(key);
-    const value: unknown = raw === null ? null : JSON.parse(raw);
-    return is(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function write(key: string, value: unknown) {
-  try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage full or disabled: remembering is best effort.
-  }
-}
-
 /** `op`'s defaults with the values last sent for it on top. */
 export function initialDraft(op: Op): Draft {
   const draft = defaultDraft(op);
-  const saved = read(opKey(op.id), isSaved);
+  const saved = readStored(opKey(op.id), isSaved);
   if (!saved) return draft;
   return { ...draft, params: saved.params, query: overlayRows(draft.query, saved.query), body: saved.body ?? draft.body };
 }
@@ -108,30 +89,30 @@ export function rememberDraft(op: Op, draft: Draft) {
   const query = rows.filter((row, i) => row.value !== defaults.query[i]?.value);
   const body = draft.body !== defaults.body ? draft.body : undefined;
   const empty = Object.keys(params).length === 0 && query.length === 0 && body === undefined;
-  write(opKey(op.id), empty ? null : { params, query, body });
+  writeStored(opKey(op.id), empty ? null : { params, query, body });
 }
 
 export function forgetDraft(op: Op) {
-  write(opKey(op.id), null);
+  writeStored(opKey(op.id), null);
 }
 
 /** The last used operation ids, most recent first. */
 export function recentOps(): string[] {
-  return read(RECENT_KEY, isStrings) ?? [];
+  return readStored(RECENT_KEY, isStrings) ?? [];
 }
 
 export function pushRecent(id: string): string[] {
   const ids = [id, ...recentOps().filter((r) => r !== id)].slice(0, RECENT_MAX);
-  write(RECENT_KEY, ids);
+  writeStored(RECENT_KEY, ids);
   return ids;
 }
 
 export function lastAccount(): string {
-  return read(ACCOUNT_KEY, isString) ?? '';
+  return readStored(ACCOUNT_KEY, isString) ?? '';
 }
 
 export function rememberAccount(id: string) {
-  write(ACCOUNT_KEY, id || null);
+  writeStored(ACCOUNT_KEY, id || null);
 }
 
 /** The account to preselect: the only one, else the last used if still listed, else the first. */

@@ -49,6 +49,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+      # The dashboard's help assistant (DeepSeek). Empty = no assistant, and no help button.
+      HELP_DEEPSEEK_API_KEY: ${HELP_DEEPSEEK_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

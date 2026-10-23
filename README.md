@@ -127,7 +127,7 @@ cd /opt/gateway/deploy
 cp .env.example .env && chmod 600 .env
 ```
 
-Fill in four values in `deploy/.env` (the rest default to the bundled upstream):
+Fill in these values in `deploy/.env`, the last one optional (the rest default to the bundled upstream):
 
 | Variable | Value |
 |---|---|
@@ -135,6 +135,7 @@ Fill in four values in `deploy/.env` (the rest default to the bundled upstream):
 | `POSTGRES_PASSWORD` | output of `openssl rand -hex 24` |
 | `BETTER_AUTH_SECRET` | output of `openssl rand -base64 32` |
 | `UPSTREAM_TOKEN` | output of `openssl rand -hex 32` (letters, digits and `-._~` only, so not base64) |
+| `HELP_DEEPSEEK_API_KEY` | optional: a DeepSeek API key turns on the dashboard's help assistant; empty = off |
 
 Start the stack. Migrations run on every start, and Caddy fetches a certificate on first boot.
 

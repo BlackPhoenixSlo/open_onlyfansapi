@@ -60,6 +60,20 @@ describe('hygiene', () => {
     expect(ws().data?.EVENT_RETENTION_DAYS).toBe(365);
   });
 
+  it('HELP_DEEPSEEK_API_KEY: empty or blank means unset, and the key is trimmed', () => {
+    const base = {
+      DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',
+      APP_URL: 'http://localhost:5173',
+      BETTER_AUTH_URL: 'http://localhost:4000',
+      BETTER_AUTH_SECRET: 'x'.repeat(16),
+      UPSTREAM_URL: 'http://upstream:8000',
+      UPSTREAM_TOKEN: 'x'.repeat(16),
+    };
+    const key = (HELP_DEEPSEEK_API_KEY?: string) => envSchema.parse({ ...base, HELP_DEEPSEEK_API_KEY }).HELP_DEEPSEEK_API_KEY;
+    expect([key(), key(''), key('  \t')]).toEqual([undefined, undefined, undefined]);
+    expect(key(' test-only-key\n')).toBe('test-only-key');
+  });
+
   it('SMTP: a host needs a sender address, a user needs a password', () => {
     const base = {
       DATABASE_URL: 'postgres://gateway@postgres:5432/gateway',

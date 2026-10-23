@@ -1,4 +1,3 @@
-import type { Me, MemberFeature } from '@api/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, Outlet, createFileRoute, redirect, useLocation, useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
@@ -10,11 +9,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { HelpWidget } from '@/features/help/HelpWidget';
 import { useDeliveryToasts } from '@/features/webhooks/delivery-toasts';
 import { meQuery } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
 import { useDashboardStream } from '@/lib/dashboard-stream';
 import { PRODUCT_NAME } from '@/lib/brand';
+import { canSee, nav } from '@/lib/nav';
 
 export const Route = createFileRoute('/_app')({
   beforeLoad: async () => {
@@ -23,33 +24,6 @@ export const Route = createFileRoute('/_app')({
   },
   component: AppLayout,
 });
-
-/** Who sees an item: everyone, the owner only, or team members holding a feature (plan-team §2.4). */
-type Access = 'all' | 'owner' | MemberFeature;
-
-const nav = [
-  { to: '/dashboard', label: 'Home', access: 'all' },
-  { to: '/accounts', label: 'Accounts', access: 'owner' },
-  { to: '/keys', label: 'API keys', access: 'owner' },
-  { to: '/team', label: 'Team', access: 'owner' },
-  { to: '/logs', label: 'Logs', access: 'owner' },
-  { to: '/usage', label: 'Usage', access: 'owner' },
-  { to: '/stats', label: 'Stats', access: 'stats' },
-  { to: '/conversations', label: 'Conversations', access: 'stats' },
-  { to: '/revenue', label: 'Revenue', access: 'stats' },
-  { to: '/webhooks', label: 'Webhooks', access: 'owner' },
-  { to: '/playground', label: 'Playground', access: 'all' },
-  { to: '/settings', label: 'Settings', access: 'owner' },
-] as const satisfies readonly { to: string; label: string; access: Access }[];
-
-/**
- * The owner's view unless /api/me confirms a team member, so the owner's nav never depends on it. The API enforces
- * the same rules; this only hides dead ends.
- */
-function canSee(access: Access, me: Me | undefined): boolean {
-  if (access === 'all' || me?.role !== 'member') return true;
-  return access !== 'owner' && me.features.includes(access);
-}
 
 function AppLayout() {
   const { data: session } = authClient.useSession();
@@ -105,6 +79,7 @@ function AppLayout() {
       <main className="min-w-0 flex-1 p-4 md:p-8">
         {hidden ? <Navigate to="/dashboard" replace /> : <Outlet />}
       </main>
+      <HelpWidget />
     </div>
   );
 }

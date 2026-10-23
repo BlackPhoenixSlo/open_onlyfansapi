@@ -2,18 +2,20 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { auth, CLIENT_IP_HEADER, sessionMembership } from '../auth.js';
-import { effectivePermissions } from '../contracts.js';
+import { effectivePermissions, type MemberFeature, type MemberRole } from '../contracts.js';
 import { env } from '../env.js';
 import { AppError, ownerOnly } from '../lib/errors.js';
 import { assertCsrf } from './csrf.js';
 
-export type DashboardSession = { userId: string; teamId: string };
+/** The signed-in dashboard user, with their role and features as enforced. */
+export type DashboardSession = { userId: string; teamId: string; role: MemberRole; features: MemberFeature[] };
 
 declare module 'fastify' {
   interface FastifyRequest {
     session: DashboardSession;
   }
   interface FastifyInstance {
+    requireSignedIn: (request: FastifyRequest) => Promise<void>;
     requireOwner: (request: FastifyRequest) => Promise<void>;
   }
 }
@@ -59,15 +61,21 @@ export default fp(async (app: FastifyInstance) => {
   });
 
   app.decorateRequest('session', null as unknown as DashboardSession);
-  /**
-   * preHandler for every dashboard-only `/api` route: session cookie required, CSRF checked on writes, and the
-   * workspace owner only (plan-team §1.6), so a team member cannot mint keys, connect accounts or read the logs.
-   */
-  app.decorate('requireOwner', async (request: FastifyRequest) => {
+  /** Hook for an `/api` route any signed-in user may use (members too): session cookie required, CSRF checked on writes. */
+  async function requireSignedIn(request: FastifyRequest) {
     const s = await loadMembership(request);
     if (!s) throw new AppError(401, 'unauthorized', 'Sign in required');
     assertCsrf(request);
-    if (effectivePermissions(s.membership).role !== 'owner') throw ownerOnly();
-    request.session = { userId: s.userId, teamId: s.membership.organizationId };
+    const { role, features } = effectivePermissions(s.membership);
+    request.session = { userId: s.userId, teamId: s.membership.organizationId, role, features };
+  }
+  app.decorate('requireSignedIn', requireSignedIn);
+  /**
+   * preHandler for every dashboard-only `/api` route: `requireSignedIn`, and the workspace owner only (plan-team §1.6),
+   * so a team member cannot mint keys, connect accounts or read the logs.
+   */
+  app.decorate('requireOwner', async (request: FastifyRequest) => {
+    await requireSignedIn(request);
+    if (request.session.role !== 'owner') throw ownerOnly();
   });
 });

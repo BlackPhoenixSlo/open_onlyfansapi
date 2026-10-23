@@ -16,6 +16,10 @@ export class AppError extends Error {
 /** 403 `owner_only`: a team member asked for something that is the workspace owner's (and API keys'). */
 export const ownerOnly = () => new AppError(403, 'owner_only', 'This route is for the workspace owner, not team members');
 
+/** `@fastify/rate-limit`'s `errorResponseBuilder`: 429 `rate_limited`. */
+export const rateLimited = (_request: FastifyRequest, ctx: { max: number; after: string }) =>
+  new AppError(429, 'rate_limited', `Rate limit of ${ctx.max} requests per minute exceeded; retry in ${ctx.after}`);
+
 /** The driver's cause only, for logging a failed query: drizzle's own error message embeds the query parameters (fan message text). */
 export const cause = (err: unknown) => (err instanceof Error && err.cause instanceof Error ? err.cause : err);
 

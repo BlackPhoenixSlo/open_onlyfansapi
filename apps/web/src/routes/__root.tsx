@@ -5,7 +5,8 @@ export const Route = createRootRoute({
   component: () => (
     <>
       <Outlet />
-      <Toaster />
+      {/* Top-center: clear of the help launcher and its dock, both bottom-right. */}
+      <Toaster position="top-center" />
     </>
   ),
 });

@@ -296,6 +296,27 @@ export const overview = z.object({
 });
 export type Overview = z.infer<typeof overview>;
 
+// Help assistant (/api/help)
+/** `GET /api/help`: whether this server has a help assistant (`HELP_DEEPSEEK_API_KEY` set). */
+export const helpStatus = z.object({ enabled: z.boolean() });
+export type HelpStatus = z.infer<typeof helpStatus>;
+/** One question, never the transcript. Empty or blank is answered (`empty_question`), not refused. */
+export const helpAsk = z.object({
+  question: z.string().max(1000),
+  /**
+   * The dashboard path the asker is on (`location.pathname`, percent-encoded): printable ASCII only, so no whitespace
+   * or line break can add a line to the model's prompt.
+   */
+  page: z.string().max(200).regex(/^\/[!-~]*$/).optional(),
+});
+export type HelpAsk = z.infer<typeof helpAsk>;
+/** `answer` is always a sentence to show; `error` tags why it is not the model's (null = it is). */
+export const helpAnswer = z.object({
+  answer: z.string(),
+  error: z.enum(['cap', 'config', 'provider', 'empty_answer', 'empty_question']).nullable(),
+});
+export type HelpAnswer = z.infer<typeof helpAnswer>;
+
 // Webhooks
 /**
  * The event catalogue (plan-v5 §1.12, §2.4): every in-scope event name of the reference API, plus our own
