@@ -6,11 +6,12 @@ import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fast
 import { env } from './env.js';
 import { registerJobs } from './jobs/index.js';
 import { createUpstream, type Upstream } from './lib/upstream.js';
-import { AppError, errorHandler, notFoundHandler } from './lib/errors.js';
+import { errorHandler, notFoundHandler, rateLimited } from './lib/errors.js';
 import { newId } from './lib/ids.js';
 import accountsConnectRoutes from './modules/accounts/connect.js';
 import accountsLoginRoutes from './modules/accounts/login.js';
 import accountsRoutes from './modules/accounts/routes.js';
+import helpRoutes from './modules/help/routes.js';
 import keysRoutes from './modules/keys/routes.js';
 import { captureRequestLogs } from './modules/logs/capture.js';
 import logsRoutes from './modules/logs/routes.js';
@@ -105,6 +106,7 @@ export async function buildApp(opts: AppOptions = {}) {
   await app.register(usageRoutes, { prefix: '/api' });
   await app.register(webhookStreamRoutes, { ...opts.stream, prefix: '/api' });
   await app.register(teamRoutes, { prefix: '/api' });
+  await app.register(helpRoutes, { prefix: '/api' });
 
   await app.register(
     async (v1) => {
@@ -119,8 +121,7 @@ export async function buildApp(opts: AppOptions = {}) {
         keyGenerator: ({ actor }) => (actor.keyId === null ? `user:${actor.userId}` : actor.keyId),
         // Only on 429s, so the upstream's x-ratelimit-* headers on proxied responses stay unambiguous.
         addHeadersOnExceeding: { 'x-ratelimit-limit': false, 'x-ratelimit-remaining': false, 'x-ratelimit-reset': false },
-        errorResponseBuilder: (_req, ctx) =>
-          new AppError(429, 'rate_limited', `Rate limit of ${ctx.max} requests per minute exceeded; retry in ${ctx.after}`),
+        errorResponseBuilder: rateLimited,
       });
       await v1.register(whoamiRoutes);
       await v1.register(accountsRoutes);

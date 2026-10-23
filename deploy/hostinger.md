@@ -134,6 +134,7 @@ Leave the rest as `.env.example` sets it:
 | `STATIC_PARAM` | empty | OF's static signing parameter. Set it here once, or pass `--static-param` per account in §7. |
 | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | empty | Turn on **Try Browserbase login** on the Accounts page: a Browserbase browser logs the account in and you solve any Cloudflare / 2FA check in its live view. It runs on Browserbase's managed proxies; the account's own proxy is bound only after the login. Empty = that option answers 503. |
 | `EVENT_RETENTION_DAYS` | `365` | Days of the event ledger behind `/v1/stats`. |
+| `HELP_DEEPSEEK_API_KEY` | empty | A DeepSeek API key turns on the dashboard's help assistant (a chat button bottom-right, 100 model calls per workspace per UTC day, failed ones included). Empty = no assistant. |
 
 `UPSTREAM_TOKEN` may contain only letters, digits and `-._~`, and needs at least 16 characters: it also travels as
 a WebSocket subprotocol, so a base64 value with `/` or `=` stops the gateway from booting. Use

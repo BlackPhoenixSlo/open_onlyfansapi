@@ -8,7 +8,7 @@ dashboard. This page covers both, plus scopes, account limits, rate limits and e
 | Path | Accepts |
 |---|---|
 | `/v1/*` | An API key (`Authorization: Bearer ...`), or the dashboard session with `x-dashboard: 1` |
-| `/api/*` | The workspace owner's dashboard session only. API keys and team members are not accepted. Exceptions: `GET /api/me` takes any signed-in user (owner or member); `GET /api/invites/<token>` and `POST /api/invites/<token>/accept` take no session (the invite token is the credential). |
+| `/api/*` | The workspace owner's dashboard session only. API keys and team members are not accepted. Exceptions: `GET /api/me`, `GET /api/help` and `POST /api/help/ask` take any signed-in user (owner or member); `GET /api/invites/<token>` and `POST /api/invites/<token>/accept` take no session (the invite token is the credential). |
 | `/openapi.json`, `/docs`, `/healthz` | Anyone. No credentials needed. |
 
 `/api/auth/*` handles sign-up, sign-in and the session itself. It checks the request origin against
@@ -114,7 +114,7 @@ A member's session works like an API key bound to that person:
 - Every other `/v1` route answers `403 owner_only`: the raw passthrough `_of/`, `/v1/webhooks*`, `/v1/ws`,
   `PUT /v1/stats/config` and `POST /v1/stats/backfill`. New `/v1` routes are refused to members unless they say
   otherwise. So does every `/api/*` route (keys, logs, usage, accounts, proxies, the event stream, the team itself)
-  except `GET /api/me`.
+  except `GET /api/me` and the help assistant (`/api/help`).
 - `GET /v1/accounts` lists only the member's creators, and `GET /v1/whoami` and `GET /api/me` return the role,
   `allowedAccountIds` and `features`.
 - better-auth's organization endpoints (`/api/auth/organization/*`), reads included, are the owner's.

@@ -91,6 +91,8 @@ export const envSchema = z.object({
   /** Sender address; defaults to SMTP_USER. */
   SMTP_FROM_EMAIL: optionalString,
   SMTP_FROM_NAME: optionalString,
+  /** The dashboard's help assistant (DeepSeek). Unset, empty or blank = no assistant: the launcher stays hidden. */
+  HELP_DEEPSEEK_API_KEY: z.string().optional().transform((v) => v?.trim() || undefined),
 }).superRefine((e, ctx) => {
   if (e.SMTP_HOST && !e.SMTP_FROM_EMAIL && !e.SMTP_USER) {
     ctx.addIssue({ code: 'custom', path: ['SMTP_FROM_EMAIL'], message: 'SMTP_HOST is set: set SMTP_FROM_EMAIL or SMTP_USER (the sender address)' });
