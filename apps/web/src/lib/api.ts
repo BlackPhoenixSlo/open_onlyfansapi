@@ -10,6 +10,9 @@ import type {
   DeliveryStatus,
   ErrorBody,
   GatewayEvent,
+  HelpAnswer,
+  HelpAsk,
+  HelpStatus,
   LogDetail,
   LogList,
   LogStatus,
@@ -153,6 +156,16 @@ export const meQuery = queryOptions({
   queryKey: ['me'],
   queryFn: () => api<Me>('/api/me'),
 });
+
+/** Whether this server has a help assistant; fixed for the server's lifetime. */
+export const helpStatusQuery = queryOptions({
+  queryKey: ['help'],
+  queryFn: () => api<HelpStatus>('/api/help'),
+  staleTime: Infinity,
+});
+
+/** One question to the help assistant; a used-up cap or a provider outage still answers 200 with a sentence. */
+export const askHelp = (body: HelpAsk) => api<HelpAnswer>('/api/help/ask', { method: 'POST', body });
 
 export const whoamiQuery = queryOptions({
   queryKey: ['whoami'],

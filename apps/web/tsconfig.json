@@ -14,7 +14,8 @@
     "noEmit": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@api/contracts": ["../api/src/contracts.ts"]
+      "@api/contracts": ["../api/src/contracts.ts"],
+      "@api/modules/help/*": ["../api/src/modules/help/*"]
     }
   },
   "include": ["src", "vite.config.ts"]
