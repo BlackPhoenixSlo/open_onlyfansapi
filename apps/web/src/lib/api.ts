@@ -164,7 +164,11 @@ export const helpStatusQuery = queryOptions({
   staleTime: Infinity,
 });
 
-/** One question to the help assistant; a used-up cap or a provider outage still answers 200 with a sentence. */
+/**
+ * One question to the help assistant; a used-up cap or a provider outage still answers 200 with a sentence.
+ * The request itself can still fail (400/401/403/429: validation, session, CSRF, the per-minute limit),
+ * which the widget shows as its "Couldn't reach the assistant" bubble.
+ */
 export const askHelp = (body: HelpAsk) => api<HelpAnswer>('/api/help/ask', { method: 'POST', body });
 
 export const whoamiQuery = queryOptions({
