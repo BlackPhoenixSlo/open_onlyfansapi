@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hmac
+import json
 import logging
 import os
 import re
@@ -551,11 +552,10 @@ class BrowserLoginStart(BaseModel):
 
 
 class BrowserLoginInput(BaseModel):
-    type: str = Field(pattern=r"^(click|text|otp|cancel)$")
+    type: str = Field(pattern=r"^(click|text|cancel)$")
     x: int | None = None
     y: int | None = None
     text: str | None = None
-    code: str | None = None
 
 
 def _principal(x_login_principal: str | None) -> str:
@@ -601,14 +601,51 @@ async def browser_login_start(
     return {"jobId": job.id, "streamToken": job.stream_token, **job.snapshot()}
 
 
+def _login_job(job_id: str, x_login_principal: str | None) -> browser_login.LoginJob:
+    """The started-principal check: 404 no such (or an expired) job, 403 another principal's."""
+    try:
+        return login_manager.get(job_id, _principal(x_login_principal))
+    except KeyError:
+        raise ApiError(404, "job_not_found", "this login has ended or was replaced — start it again") from None
+    except PermissionError:
+        raise ApiError(403, "job_forbidden", "this login was started by someone else") from None
+
+
 @app.get("/login/browser/{job_id}", tags=["operator"], operation_id="login.browser.status")
 async def browser_login_status(
     job_id: str, x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
 ) -> dict:
+    return _login_job(job_id, x_login_principal).snapshot()
+
+
+@app.post("/login/browser/{job_id}/otp", tags=["operator"], operation_id="login.browser.otp",
+          openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
+              "type": "object", "required": ["code"], "properties": {"code": {"type": "string"}}}}}}})
+async def browser_login_otp(
+    job_id: str, request: Request,
+    x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> dict:
+    """`{"code"}`: the 2FA code while the job is on OnlyFans' prompt. The worker types it; the status says
+    `otpChecking` until OnlyFans moves on, or `otpError` when it still asks. 409 when the job is not on
+    the prompt or a code is already being checked; 400 when it isn't 6 to 8 digits (spaces and dashes
+    dropped). The body is read by hand: a validation error would echo it, and nothing echoes the code."""
+    job = _login_job(job_id, x_login_principal)
+    if job.expired:  # the worker may still be in browser I/O; no code for a job past its time
+        raise ApiError(404, "job_not_found", "this login has ended or was replaced — start it again")
     try:
-        return login_manager.get(job_id, _principal(x_login_principal)).snapshot()
-    except KeyError:
-        raise ApiError(404, "job_not_found") from None
+        body = json.loads(await request.body())
+    except (ValueError, RecursionError):  # RecursionError: nesting deep enough to exhaust the stack
+        body = None
+    code = body.get("code") if isinstance(body, dict) else None
+    if not isinstance(code, str):
+        raise ApiError(400, "invalid_otp", 'the body is {"code": "<6 to 8 digits>"}')
+    try:
+        job.submit_otp(code)
+    except ValueError as e:
+        raise ApiError(400, "invalid_otp", str(e)) from None
+    except browser_login.OtpConflict as e:
+        raise ApiError(409, "otp_not_expected", str(e)) from None
+    return job.snapshot()
 
 
 @app.post("/login/browser/{job_id}/input", tags=["operator"], operation_id="login.browser.input")
@@ -616,10 +653,7 @@ async def browser_login_input(
     job_id: str, body: BrowserLoginInput,
     x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
 ) -> dict:
-    try:
-        job = login_manager.get(job_id, _principal(x_login_principal))
-    except KeyError:
-        raise ApiError(404, "job_not_found") from None
+    job = _login_job(job_id, x_login_principal)
     try:
         job.submit_input(body.model_dump(exclude_none=True))
     except ValueError as e:
@@ -631,10 +665,7 @@ async def browser_login_input(
 async def browser_login_cancel(
     job_id: str, x_login_principal: Annotated[str | None, Header(include_in_schema=False)] = None,
 ) -> dict:
-    try:
-        job = login_manager.get(job_id, _principal(x_login_principal))
-    except KeyError:
-        raise ApiError(404, "job_not_found") from None
+    job = _login_job(job_id, x_login_principal)
     if not job.terminal:
         job.submit_input({"type": "cancel"})
     return job.snapshot()
@@ -667,7 +698,7 @@ async def browser_login_stream(job_id: str, token: str = "") -> StreamingRespons
     try:
         job = login_manager.get_for_stream(job_id, token)
     except KeyError:
-        raise ApiError(404, "job_not_found") from None
+        raise ApiError(404, "job_not_found", "this login has ended or was replaced — start it again") from None
     return StreamingResponse(_event_stream(job), media_type="text/event-stream",
                              headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
 
