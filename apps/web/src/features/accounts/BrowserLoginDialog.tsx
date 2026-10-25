@@ -16,6 +16,7 @@ import {
   proxiesQuery,
   sendBrowserLoginInput,
   startBrowserLogin,
+  submitBrowserLoginOtp,
 } from '@/lib/api';
 
 export type BrowserLoginBackend = 'local' | 'browserbase';
@@ -45,9 +46,21 @@ export function canvasToFrame(
 }
 
 /**
+ * What the 2FA field keeps of what was typed or pasted: spaces and dashes dropped ("123 456" and "1234-5678" are codes),
+ * nothing else changed or cut, so a mistyped or overlong code stays visibly wrong instead of turning into another code.
+ */
+export function otpInput(raw: string): string {
+  return raw.replace(/[\s-]/g, '');
+}
+
+/** A code the upstream takes: 6 to 8 digits. */
+export const isOtpCode = (code: string) => /^[0-9]{6,8}$/.test(code);
+
+/**
  * Remote-browser login (plan direct-login §C). Mounted only while open: the password never outlives it.
  * `backend="browserbase"` runs the browser on Browserbase's network: the operator solves any challenge in Browserbase's
- * live view (embedded, and one tap away full screen), and the optional proxy is bound to the account afterwards. It
+ * live view (embedded, and one tap away full screen), and the optional proxy is bound to the account afterwards. When
+ * OnlyFans asks for the 2FA code, a code field shows above the live view (which stays as the fallback). It
  * needs no extension, so it is how an account is connected from a phone: there the form and its button fit the first
  * screen. Closing the dialog stops a running login, so it never connects an account nobody sees finish.
  */
@@ -123,7 +136,7 @@ function StartForm({ backend, onStarted }: { backend: BrowserLoginBackend; onSta
       )}
       <DialogDescription className={browserbase && !howOpen ? 'leading-relaxed max-sm:hidden' : 'leading-relaxed'}>
         {browserbase
-          ? "The login runs in a remote browser on Browserbase's network, so no extension is needed and it works on a phone. If OnlyFans shows a verification check or asks for a 2FA code, you solve it yourself in the live view; nothing is solved automatically."
+          ? "The login runs in a remote browser on Browserbase's network, so no extension is needed and it works on a phone. If OnlyFans shows a verification check, you solve it yourself in the live view; nothing is solved automatically. A 2FA code you enter here."
           : 'A real browser signs this account in through its proxy. If OnlyFans shows a captcha or a 2FA prompt, solve it here — it is shown to you, never solved automatically. The password is sent once and never stored.'}
       </DialogDescription>
       <div className="space-y-2">
@@ -214,9 +227,9 @@ const CHALLENGE_LABEL: Record<string, string> = {
 /** What each running state asks of the operator. */
 const STATE_TEXT: Record<string, string> = {
   starting: 'Starting the remote browser (about 10 to 20 seconds)…',
-  typing: 'Entering the email and password on OnlyFans…',
+  typing: 'Signing in on OnlyFans…', // the email and password, or (after a 2FA code) OnlyFans checking it
   challenge: 'OnlyFans is showing a verification check. Solve it in the live view.',
-  otp: 'OnlyFans is asking for the 2FA code. Type it in the live view or below.',
+  otp: 'OnlyFans is asking for the 2FA code. Enter it below (or in the live view).',
   capturing: 'Signed in. Saving the session…',
 };
 
@@ -236,7 +249,6 @@ function LiveLogin({
   const job = useQuery(browserLoginJobQuery(jobId));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<Frame | null>(null);
-  const [otp, setOtp] = useState('');
 
   // Screencast: draw each SSE frame onto the canvas at its native size.
   useEffect(() => {
@@ -294,6 +306,9 @@ function LiveLogin({
         </DialogDescription>
       </DialogHeader>
 
+      {/* Unmounted off the prompt and keyed by job: leaving the prompt or a new job clears the code and its error. */}
+      {state === 'otp' && <OtpForm key={jobId} jobId={jobId} checking={job.data?.otpChecking ?? false} rejected={job.data?.otpError ?? null} />}
+
       {liveViewUrl && (
         <div className="space-y-2">
           {/* Touch inside an iframe is awkward on a phone: the full-screen page is one tap away. */}
@@ -322,24 +337,6 @@ function LiveLogin({
           <canvas ref={canvasRef} onClick={onCanvasClick} className="w-full cursor-pointer rounded border" />
         </div>
       )}
-      {state === 'otp' && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (otp.trim()) sendInput.mutate({ type: 'otp', code: otp.trim() });
-          }}
-          className="space-y-2"
-        >
-          <Label htmlFor="bl-otp">2FA code</Label>
-          <div className="flex gap-2">
-            <Input id="bl-otp" value={otp} onChange={(e) => setOtp(e.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={32} />
-            <Button type="submit" disabled={!otp.trim() || sendInput.isPending}>
-              Submit
-            </Button>
-          </div>
-        </form>
-      )}
-
       {state === 'error' && <p className="text-sm text-destructive">{job.data?.error ?? 'The login failed'}</p>}
 
       <DialogFooter>
@@ -348,5 +345,76 @@ function LiveLogin({
         </Button>
       </DialogFooter>
     </div>
+  );
+}
+
+/**
+ * OnlyFans' 2FA code, sent to the job (which types it into OnlyFans' own field). Locked while the code is in flight: the
+ * POST, then `checking` until OnlyFans answers. `rejected` is the job's word when the prompt asks again (OnlyFans didn't
+ * take the code in time, or it couldn't be typed); a refused POST says why.
+ */
+function OtpForm({ jobId, checking, rejected }: { jobId: string; checking: boolean; rejected: string | null }) {
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const send = useMutation({
+    mutationFn: (c: string) => submitBrowserLoginOtp(jobId, c),
+    onSuccess: async (job, sent) => {
+      setCode((cur) => (cur === sent ? '' : cur));
+      // A poll still in flight was read before the code was in: it must not land after this and unlock the field.
+      const { queryKey } = browserLoginJobQuery(jobId);
+      await queryClient.cancelQueries({ queryKey });
+      // Unless a newer poll already saw the job move on: this reply is older than that.
+      const cached = queryClient.getQueryData(queryKey);
+      if (!cached || cached.state === 'otp') queryClient.setQueryData(queryKey, job);
+    },
+  });
+  const locked = send.isPending || checking;
+  const { reset } = send;
+  // The job moved on (checking, or asking again): an earlier send error no longer applies.
+  useEffect(() => reset(), [checking, rejected, reset]);
+  // Disabling the field drops its focus: give it back when it unlocks, so the next code can be typed at once.
+  useEffect(() => {
+    if (!locked) input.current?.focus();
+  }, [locked]);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (isOtpCode(code) && !locked) send.mutate(code);
+      }}
+      className="space-y-2"
+    >
+      <Label htmlFor="bl-otp">2FA code</Label>
+      <div className="flex gap-2">
+        <Input
+          id="bl-otp"
+          ref={input}
+          value={code}
+          onChange={(e) => setCode(otpInput(e.target.value))}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="[0-9]*"
+          placeholder="123456"
+          autoFocus
+          disabled={locked}
+          className="max-w-40 font-mono"
+        />
+        <Button type="submit" disabled={!isOtpCode(code) || locked}>
+          {send.isPending ? 'Sending…' : 'Submit code'}
+        </Button>
+      </div>
+      {checking && <p className="text-xs text-muted-foreground">Checking the code with OnlyFans…</p>}
+      {!checking && rejected && (
+        <p role="alert" className="text-sm text-destructive first-letter:uppercase">
+          {rejected}
+        </p>
+      )}
+      {send.error && (
+        <p role="alert" className="text-sm text-destructive">
+          Couldn't send the code: {send.error.message}
+        </p>
+      )}
+    </form>
   );
 }

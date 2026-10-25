@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# slop/run <scenario|all> [--fault <name>] | --list   — see slop/README.md
+set -euo pipefail
+SLOP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="${SLOP_PY:-$HOME/.cache/gateway-upstream-venv/bin/python}"
+exec "$PY" -u "$SLOP/lib/cli.py" "$@"

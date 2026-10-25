@@ -115,8 +115,11 @@ describe('job routes are scoped to the workspace that started them', () => {
     const status = (headers: Record<string, string>) =>
       app.inject({ method: 'GET', url: `/api/accounts/login/browser/${jobId}`, headers });
 
-    // Another workspace cannot see the job (started-principal check).
-    expect((await status(dashboard(other.cookie))).statusCode).toBe(404);
+    // Another workspace cannot see the job (started-principal check); an unknown job is a 404.
+    const foreign = await status(dashboard(other.cookie));
+    expect([foreign.statusCode, foreign.json().error.code]).toEqual([403, 'job_forbidden']);
+    const unknown = await app.inject({ method: 'GET', url: '/api/accounts/login/browser/no-such-job', headers: dashboard(linked.cookie) });
+    expect([unknown.statusCode, unknown.json().error.code]).toEqual([404, 'job_not_found']);
 
     // First poll is in-progress; the second reports done and the account is claimed for the workspace.
     expect((await status(dashboard(linked.cookie))).json().state).toBe('typing');
@@ -136,6 +139,97 @@ describe('job routes are scoped to the workspace that started them', () => {
 
     const cancel = await app.inject({ method: 'POST', url: `/api/accounts/login/browser/${jobId}/cancel`, headers: dashboard(linked.cookie) });
     expect(cancel.json().state).toBe('cancelled');
+  });
+});
+
+describe('POST /api/accounts/login/browser/:jobId/otp', () => {
+  const CODE = '739218';
+  const WRONG = '104857';
+
+  it('forwards the code to the job, checks owner, job and body, and never echoes or logs the code', async () => {
+    const lines: string[] = [];
+    const logged = await buildApp({ upstreamUrl: upstream.url, logStream: { write: (line) => void lines.push(line) } });
+    logged.log.level = 'trace'; // every line (tests run at LOG_LEVEL=warn)
+    try {
+      const { jobId } = (
+        await logged.inject({
+          method: 'POST',
+          url: '/api/accounts/login/browser/start',
+          headers: dashboard(linked.cookie),
+          payload: { email: 'otp@x.test', password: 'pw', backend: 'browserbase' },
+        })
+      ).json();
+      const otp = (payload: unknown, headers: Record<string, string> = dashboard(linked.cookie), id: string = jobId) =>
+        logged.inject({ method: 'POST', url: `/api/accounts/login/browser/${id}/otp`, headers, payload: payload as object });
+      const status = () => logged.inject({ method: 'GET', url: `/api/accounts/login/browser/${jobId}`, headers: dashboard(linked.cookie) });
+      const seen: string[] = [];
+      const expectError = async (res: Awaited<ReturnType<typeof otp>>, statusCode: number, code: string) => {
+        seen.push(res.body);
+        expect([res.statusCode, res.json().error.code]).toEqual([statusCode, code]);
+      };
+
+      expect((await status()).json()).toMatchObject({ state: 'otp', needsOtp: true, otpChecking: false, otpError: null });
+      await expectError(await otp({ code: CODE }, dashboard(other.cookie)), 403, 'job_forbidden');
+      await expectError(await otp({ code: CODE }, dashboard(linked.cookie), 'no-such-job'), 404, 'job_not_found');
+      await expectError(await otp({ code: CODE }, { cookie: linked.cookie }), 403, 'csrf_failed');
+      // Our own validation: no value in the message.
+      await expectError(await otp({ code: Number(CODE) }), 400, 'validation_error');
+      await expectError(await otp({ code: CODE.repeat(11) }), 400, 'validation_error');
+      await expectError(await otp({ otp: CODE }), 400, 'validation_error');
+      // A body that is not JSON: the parser's own message would quote it.
+      for (const raw of [`{"code":"${CODE}"x`, `{"code":${CODE}`]) {
+        const res = await logged.inject({
+          method: 'POST',
+          url: `/api/accounts/login/browser/${jobId}/otp`,
+          headers: { ...dashboard(linked.cookie), 'content-type': 'application/json' },
+          payload: raw,
+        });
+        seen.push(res.body);
+        expect(res.statusCode).toBe(400);
+      }
+      // The upstream's digit check, passed through.
+      await expectError(await otp({ code: '73a218' }), 400, 'invalid_otp');
+      const forwardedBefore = upstream.requests.filter((r) => r.url === `/login/browser/${jobId}/otp`).length;
+
+      const ok = await otp({ code: '739 218' });
+      seen.push(ok.body);
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json()).toMatchObject({ state: 'otp', otpChecking: true });
+      const calls = upstream.requests.filter((r) => r.url === `/login/browser/${jobId}/otp`);
+      expect(calls.length).toBe(forwardedBefore + 1);
+      expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ code: '739 218' });
+      expect(calls.at(-1)!.headers['x-login-principal']).toBe(linked.teamId);
+      await expectError(await otp({ code: WRONG }), 409, 'otp_not_expected');
+
+      const done = await status();
+      seen.push(done.body);
+      expect(done.json()).toMatchObject({ state: 'done', accountId: 2002 });
+
+      for (const body of seen) {
+        expect(body).not.toContain(CODE);
+        expect(body).not.toContain('739 218');
+        expect(body).not.toContain(WRONG);
+      }
+      const log = lines.join('');
+      expect(log).toContain(`/api/accounts/login/browser/${jobId}/otp`);
+      expect(log).not.toContain(CODE);
+      expect(log).not.toContain('739 218');
+      expect(log).not.toContain(WRONG);
+    } finally {
+      await logged.close();
+    }
+  });
+
+  it('no longer takes a code on /input', async () => {
+    const { jobId } = (await start({ email: 'otp@x.test', password: 'pw', backend: 'browserbase' })).json();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/login/browser/${jobId}/input`,
+      headers: dashboard(linked.cookie),
+      payload: { type: 'otp', code: CODE },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).not.toContain(CODE);
   });
 });
 

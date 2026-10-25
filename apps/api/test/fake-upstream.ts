@@ -293,8 +293,18 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
   });
   // Remote-browser login: a scripted job keyed by id; the principal and stream token gate access.
   // A local job models OF_REQUIRE_PROXY on (no proxy: 409); a `backend: 'browserbase'` job takes an optional proxy
-  // and reports a live view. A job whose email starts with `taken@` signs in to account 3003.
-  type Job = { id: string; principal: string; streamToken: string; polls: number; accountId: number; extra: Record<string, unknown> };
+  // and reports a live view. A job whose email starts with `taken@` signs in to account 3003. One whose email starts
+  // with `otp@` sits on the 2FA prompt until `/otp` takes a code (the upstream's rules: 6-8 digits once spaces and
+  // dashes are dropped, one code at a time), then finishes on the next poll.
+  type Job = {
+    id: string;
+    principal: string;
+    streamToken: string;
+    polls: number;
+    accountId: number;
+    extra: Record<string, unknown>;
+    otp: 'none' | 'asking' | 'checking';
+  };
   const browserJobs = new Map<string, Job>();
   app.post('/login/browser/start', async (request, reply) => {
     const principal = String(request.headers['x-login-principal'] ?? '');
@@ -309,27 +319,56 @@ export async function startFakeUpstream(token: string, accounts: FakeAccount[] =
     if (!proxy && !proxy_label && backend !== 'browserbase') return reply.status(409).send({ error: { code: 'proxy_required' } });
     const extra = backend === 'browserbase' ? { liveViewUrl: 'https://live.example.invalid/sess-1' } : {};
     const accountId = email.startsWith('taken@') ? 3003 : 2002;
-    const job: Job = { id: `job-${browserJobs.size + 1}`, principal, streamToken: `tok-${browserJobs.size + 1}`, polls: 0, accountId, extra };
+    const otp = email.startsWith('otp@') ? 'asking' : 'none';
+    const job: Job = { id: `job-${browserJobs.size + 1}`, principal, streamToken: `tok-${browserJobs.size + 1}`, polls: 0, accountId, extra, otp };
     browserJobs.set(job.id, job);
-    return reply.send({ jobId: job.id, streamToken: job.streamToken, state: 'starting', message: null, challenge: null, needsOtp: false, accountId: null, username: null, error: null });
+    return reply.send({ ...snapshot(job, { state: 'starting' }), streamToken: job.streamToken });
   });
   const jobFor = (request: { params: unknown; headers: Record<string, unknown> }, reply: { status: (n: number) => { send: (b: unknown) => unknown } }) => {
     const job = browserJobs.get((request.params as { jobId: string }).jobId);
-    if (!job || job.principal !== String(request.headers['x-login-principal'] ?? '')) {
+    if (!job) {
       reply.status(404).send({ error: { code: 'job_not_found' } });
+      return null;
+    }
+    if (job.principal !== String(request.headers['x-login-principal'] ?? '')) {
+      reply.status(403).send({ error: { code: 'job_forbidden' } });
       return null;
     }
     return job;
   };
   const snapshot = (job: Job, over: Record<string, unknown> = {}) => ({
-    jobId: job.id, state: 'typing', message: null, challenge: null, needsOtp: false, accountId: null, username: null, error: null, ...job.extra, ...over,
+    jobId: job.id,
+    state: job.otp === 'none' ? 'typing' : 'otp',
+    message: job.otp === 'checking' ? 'checking the 2FA code' : null,
+    challenge: null,
+    needsOtp: job.otp !== 'none',
+    otpChecking: job.otp === 'checking',
+    otpError: null,
+    accountId: null,
+    username: null,
+    error: null,
+    ...job.extra,
+    ...over,
   });
   app.get('/login/browser/:id', async (request, reply) => {
     const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);
     if (!job) return reply;
     job.polls++;
+    if (job.otp === 'asking') return reply.send(snapshot(job));
+    if (job.otp === 'checking') job.otp = 'none';
     // Second poll reports success, so a test can see the account get claimed.
     return reply.send(job.polls >= 2 ? snapshot(job, { state: 'done', accountId: job.accountId, username: 'browser_acct' }) : snapshot(job));
+  });
+  app.post('/login/browser/:id/otp', async (request, reply) => {
+    const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);
+    if (!job) return reply;
+    const code = (JSON.parse(String(request.body)) as { code?: unknown }).code;
+    if (typeof code !== 'string' || !/^[0-9]{6,8}$/.test(code.replace(/[\s-]/g, ''))) {
+      return reply.status(400).send({ error: { code: 'invalid_otp', message: 'the 2FA code is 6 to 8 digits' } });
+    }
+    if (job.otp !== 'asking') return reply.status(409).send({ error: { code: 'otp_not_expected', message: 'the login is not waiting for a 2FA code' } });
+    job.otp = 'checking';
+    return reply.send(snapshot(job));
   });
   app.post('/login/browser/:id/input', async (request, reply) => {
     const job = jobFor({ params: { jobId: (request.params as { id: string }).id }, headers: request.headers }, reply);

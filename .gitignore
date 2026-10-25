@@ -47,3 +47,6 @@ of-captures/
 # local agent notes and command scratch (never commit)
 scratchpad/
 ZZZZZZ_COMANDS
+
+# slop harness evidence (one folder per run)
+slop/runs/

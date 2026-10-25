@@ -173,14 +173,21 @@ export const browserLoginStartBody = z.object({
 });
 export type BrowserLoginStartBody = z.infer<typeof browserLoginStartBody>;
 
-/** A human input into the live browser: a click (canvas coords), typed text, a 2FA code, or cancel. */
+/** A human input into the live browser: a click (canvas coords), typed text, or cancel. A 2FA code goes to `/otp`. */
 export const browserLoginInputBody = z.discriminatedUnion('type', [
   z.object({ type: z.literal('click'), x: z.number().int(), y: z.number().int() }),
   z.object({ type: z.literal('text'), text: z.string().max(4096) }),
-  z.object({ type: z.literal('otp'), code: z.string().trim().min(1).max(32) }),
   z.object({ type: z.literal('cancel') }),
 ]);
 export type BrowserLoginInputBody = z.infer<typeof browserLoginInputBody>;
+
+/**
+ * OnlyFans' 2FA code, while the job is on the prompt (`state: 'otp'`). The upstream drops spaces and dashes and wants 6
+ * to 8 digits (400 `invalid_otp` otherwise); 409 `otp_not_expected` when the job is not on the prompt or a code is
+ * already being checked. No error, status or log line carries the code.
+ */
+export const browserLoginOtpBody = z.object({ code: z.string().max(64) });
+export type BrowserLoginOtpBody = z.infer<typeof browserLoginOtpBody>;
 
 export const browserLoginChallenge = z.object({ kind: z.string(), w: z.number().int(), h: z.number().int() });
 
@@ -191,6 +198,10 @@ export const browserLoginJob = z.object({
   message: z.string().nullable(),
   challenge: browserLoginChallenge.nullable(),
   needsOtp: z.boolean(),
+  /** A submitted 2FA code is being typed or waiting for OnlyFans' answer: the field takes no other code until then. */
+  otpChecking: z.boolean(),
+  /** Why the prompt asks again: OnlyFans didn't take the last code (in time), or it couldn't be typed. */
+  otpError: z.string().nullable(),
   accountId: z.number().int().nullable(),
   username: z.string().nullable(),
   error: z.string().nullable(),

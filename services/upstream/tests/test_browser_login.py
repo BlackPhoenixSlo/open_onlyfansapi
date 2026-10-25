@@ -55,14 +55,39 @@ class FakeDriver:
     async def type_text(self, text):
         self.texts.append(text)
 
-    async def submit_otp(self, code):
+    async def type_otp(self, code):
         self.otps.append(code)
+
+    async def send_otp(self):
+        self.otps.append("<send>")
 
     async def harvest(self):
         return self.captured
 
     async def close(self):
         self.closed = True
+
+
+class PromptDriver(FakeDriver):
+    """OnlyFans' 2FA prompt: `otp` until `right` is typed and sent, then `ready`. A wrong code keeps
+    the prompt up. `type_error` makes typing fail (the field won't take it)."""
+
+    def __init__(self, right="123456", *, type_error=None):
+        super().__init__([Observation("otp")])
+        self.right, self.type_error, self.typed, self.accepted = right, type_error, None, False
+
+    async def type_otp(self, code):
+        if self.type_error:
+            raise RuntimeError(self.type_error.format(code=code))
+        self.typed = code
+        self.otps.append(code)
+
+    async def send_otp(self):
+        self.otps.append("<send>")
+        self.accepted = self.typed == self.right
+
+    async def observe(self):
+        return Observation("ready" if self.accepted else "otp")
 
 
 async def _wait_state(job, state, tries=5000):
@@ -140,14 +165,14 @@ def test_a_human_click_is_forwarded_to_the_browser():
 
 def test_two_factor_pauses_for_the_human_code_then_continues():
     async def scenario():
-        driver = FakeDriver([Observation("otp"), Observation("ready")])
+        driver = PromptDriver()
         mgr = LoginManager(lambda: driver, _ok_finalize)
         job = mgr.start(principal="t", email="e", password="pw", proxy_url=None)
         await _wait_state(job, State.OTP)
         assert job.snapshot()["needsOtp"] is True
-        job.submit_input({"type": "otp", "code": "123456"})
+        job.submit_otp("123456")
         await job._task
-        assert driver.otps == ["123456"]
+        assert driver.otps == ["123456", "<send>"]
         assert job.state is State.DONE
 
     asyncio.run(scenario())
@@ -197,7 +222,7 @@ def test_one_live_job_per_principal_and_started_principal_check():
             mgr.get(job1.id, "team-1")
         assert mgr.get(job2.id, "team-1") is job2
         # Another principal cannot reach team-1's job (started-principal check).
-        with pytest.raises(KeyError):
+        with pytest.raises(PermissionError):
             mgr.get(job2.id, "team-2")
         await job2.cancel()
 
@@ -295,10 +320,12 @@ def test_browser_login_captures_a_session_like_a_pasted_curl(client, monkeypatch
     assert "secret-cookie" not in r.text
 
 
-def test_status_is_404_for_the_wrong_principal(client):
+def test_status_is_403_for_the_wrong_principal_and_404_for_no_job(client):
     body = client.post("/login/browser/start", headers={**AUTH, **PRINCIPAL},
                        json={"email": "e", "password": "pw", "proxy": PROXY}).json()
     r = client.get(f"/login/browser/{body['jobId']}", headers={**AUTH, "x-login-principal": "team-2"})
+    assert (r.status_code, r.json()["error"]["code"]) == (403, "job_forbidden")
+    r = client.get("/login/browser/no-such-job", headers={**AUTH, **PRINCIPAL})
     assert (r.status_code, r.json()["error"]["code"]) == (404, "job_not_found")
 
 

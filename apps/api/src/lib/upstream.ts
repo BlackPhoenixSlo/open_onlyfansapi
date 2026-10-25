@@ -40,10 +40,12 @@ export interface Upstream {
   probeProxy(label: string, requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/login/browser/start` (`x-login-principal: <teamId>`) → `{ jobId, streamToken, ... }`. */
   startBrowserLogin(body: string, principal: string, requestId: string): Promise<UpstreamResponse>;
-  /** `GET {origin}/login/browser/{jobId}` (`x-login-principal`) → the job snapshot, or 404. */
+  /** `GET {origin}/login/browser/{jobId}` (`x-login-principal`) → the job snapshot; 404 no such job, 403 another principal's. */
   browserLoginStatus(jobId: string, principal: string, requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/login/browser/{jobId}/input` (`x-login-principal`) with a JSON input event. */
   browserLoginInput(jobId: string, body: string, principal: string, requestId: string): Promise<UpstreamResponse>;
+  /** `POST {origin}/login/browser/{jobId}/otp` (`x-login-principal`) with a JSON `{ code }` → the job snapshot. */
+  browserLoginOtp(jobId: string, body: string, principal: string, requestId: string): Promise<UpstreamResponse>;
   /** `POST {origin}/login/browser/{jobId}/cancel` (`x-login-principal`) → the job snapshot. */
   cancelBrowserLogin(jobId: string, principal: string, requestId: string): Promise<UpstreamResponse>;
   /** The raw (unbuffered) SSE response for `GET {origin}/login/browser/{jobId}/stream?token=…`, to pipe to the client. */
@@ -138,6 +140,17 @@ export function createUpstream(opts: { url: string; token: string; timeoutMs: nu
       }),
     browserLoginInput: (jobId, body, principal, requestId) =>
       request(new URL(`/login/browser/${encodeURIComponent(jobId)}/input`, origin), {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'x-login-principal': principal,
+          'x-request-id': requestId,
+        },
+        body,
+      }),
+    browserLoginOtp: (jobId, body, principal, requestId) =>
+      request(new URL(`/login/browser/${encodeURIComponent(jobId)}/otp`, origin), {
         method: 'POST',
         headers: {
           accept: 'application/json',

@@ -14,14 +14,18 @@ The Playwright driver that drives a real Chromium is `PlaywrightDriver` (importe
 module loads on a box without Playwright or Chromium — it is meant to run on a host that has a
 browser, not inside the slim runtime image). Tests inject a fake driver.
 
-Nothing here logs the password or the live cookies, and `snapshot()` never carries them.
+Nothing here logs the password or the live cookies, and `snapshot()` never carries them. A 2FA code
+(`LoginJob.submit_otp`) waits in the job's one-code slot until the worker takes it and types it; it is
+never logged, never in the snapshot, and scrubbed from the job's error.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
+import re
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -33,6 +37,17 @@ log = logging.getLogger("upstream.browser_login")
 JOB_TTL_S = 600.0
 # How often the worker re-reads the page and refreshes the screencast frame.
 POLL_INTERVAL_S = 1.0
+
+# The 2FA code: 6 to 8 ASCII digits once spaces and dashes are dropped ("123 456", "123-456"). Not
+# `\d`: it also matches other scripts' digits, which OnlyFans' field would not take.
+OTP_CODE_RE = re.compile(r"[0-9]{6,8}")
+# Still on the 2FA prompt this long after a code was typed: ask again. A timer, not an OnlyFans answer,
+# hence the wording of OTP_REJECTED.
+OTP_VERIFY_S = 15.0
+OTP_ASK = "enter the 2FA code"
+OTP_CHECKING = "checking the 2FA code"
+OTP_REJECTED = "OnlyFans didn't accept that code (or hasn't answered yet) — try again"
+OTP_NOT_TYPED = "couldn't type the 2FA code — try again or type it in the live view"
 
 
 class State(str, Enum):
@@ -47,6 +62,14 @@ class State(str, Enum):
 
 
 TERMINAL = {State.DONE, State.ERROR, State.CANCELLED}
+
+
+class OtpConflict(RuntimeError):
+    """A 2FA code arrived while the job is not on the prompt, or while another code is being checked."""
+
+
+class _Cancelled(Exception):
+    """A cancel was seen in the middle of entering a 2FA code."""
 
 
 @dataclass
@@ -88,7 +111,10 @@ class LoginDriver(Protocol):
     async def screenshot(self) -> tuple[bytes, int, int]: ...
     async def click(self, x: int, y: int) -> None: ...
     async def type_text(self, text: str) -> None: ...
-    async def submit_otp(self, code: str) -> None: ...
+    async def type_otp(self, code: str) -> None:
+        """Type the code into the visible 2FA field in one short attempt; raise if it won't take it."""
+    async def send_otp(self) -> None:
+        """Submit the 2FA form: Enter in the field, else that form's own submit button."""
     async def harvest(self) -> CapturedLogin: ...
     async def close(self) -> None: ...
 
@@ -112,9 +138,11 @@ class LoginJob:
 
         starting → typing → [challenge ↔ typing] → [otp → typing] → capturing → done | error | cancelled
 
-    Inputs (a human's click / typed text / 2FA code / cancel) arrive on a queue and are applied by
-    the worker on the same loop that drives the browser. The latest screencast frame and a version
-    counter let the SSE stream push updates without polling the browser from another task."""
+    Inputs (a human's click / typed text / cancel) arrive on a queue and are applied by the worker on
+    the same loop that drives the browser. A 2FA code goes into a one-code slot instead
+    (`submit_otp`): the snapshot says it is being checked until the prompt asks again or goes away.
+    The latest screencast frame and a version counter let the SSE stream push updates without
+    polling the browser from another task."""
 
     def __init__(self, *, principal: str, email: str, password: str,
                  proxy_url: str | None, nickname: str | None = None) -> None:
@@ -135,6 +163,14 @@ class LoginJob:
         self.error: str | None = None
         # Set by a driver that has one (Browserbase): the operator's live view.
         self.live_view_url: str | None = None
+        # The 2FA slot. Routes only fill it (submit_otp); only the worker takes it (_take_otp).
+        # _otp_busy: a code is pending or being checked; _otp_seen: every code taken, for _scrub().
+        self._otp_lock = threading.Lock()
+        self._otp_code: str | None = None
+        self._otp_busy = False
+        self._otp_seen: set[str] = set()
+        self.otp_error: str | None = None
+        self._otp_sent_at: float | None = None
 
         self.created_at = time.monotonic()
         self.deadline = self.created_at + JOB_TTL_S
@@ -173,6 +209,9 @@ class LoginJob:
             "challenge": None if self.challenge is None
             else {"kind": self.challenge.kind, "w": self.challenge.w, "h": self.challenge.h},
             "needsOtp": self.needs_otp,
+            # A submitted code is waiting to be typed or for OnlyFans' answer; never the code itself.
+            "otpChecking": self._otp_busy,
+            "otpError": self.otp_error,
             "accountId": self.account_id,
             "username": self.username,
             "error": self.error,
@@ -193,8 +232,8 @@ class LoginJob:
     # ── input channel ──────────────────────────────────────────────
 
     def submit_input(self, event: dict) -> None:
-        """Queue a human input: {type: click, x, y} | {type: text, text} | {type: otp, code} |
-        {type: cancel}. Rejected once the job is terminal."""
+        """Queue a human input: {type: click, x, y} | {type: text, text} | {type: cancel}. Rejected
+        once the job is terminal."""
         if self.terminal:
             raise ValueError("job is no longer live")
         self._inputs.put_nowait(event)
@@ -214,11 +253,101 @@ class LoginJob:
                 await driver.click(int(event["x"]), int(event["y"]))
             elif kind == "text":
                 await driver.type_text(str(event["text"]))
-            elif kind == "otp":
-                await driver.submit_otp(str(event["code"]))
-                self.needs_otp = False
-                self._set_state(State.TYPING, "2FA code submitted")
         return cancelled
+
+    def _cancel_queued(self) -> bool:
+        """Whether a cancel is queued. Between typing the code and submitting it nothing else runs: a
+        queued click or text would land in (or next to) the code field. Other inputs stay queued."""
+        events = []
+        while True:
+            try:
+                events.append(self._inputs.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if any(e.get("type") == "cancel" for e in events):
+            return True
+        for e in events:
+            self._inputs.put_nowait(e)
+        return False
+
+    # ── the 2FA slot ───────────────────────────────────────────────
+
+    def submit_otp(self, code: str) -> None:
+        """Hand the worker a 2FA code to type. Spaces and dashes are dropped first. ValueError: not 6
+        to 8 digits; OtpConflict: the job is not on the 2FA prompt, or a code is already being checked.
+        Neither message carries the code."""
+        code = re.sub(r"[\s-]", "", code)
+        if not OTP_CODE_RE.fullmatch(code):
+            raise ValueError("the 2FA code is 6 to 8 digits")
+        with self._otp_lock:
+            if self.state is not State.OTP:
+                raise OtpConflict(f"the login is not waiting for a 2FA code (state: {self.state.value})")
+            if self._otp_busy:
+                raise OtpConflict("a code is already being checked")
+            self._otp_code, self._otp_busy = code, True
+            self._otp_seen.add(code)
+            self.otp_error = None
+        self._set_state(State.OTP, OTP_CHECKING)
+
+    def _take_otp(self) -> str | None:
+        """The pending code, emptying the slot (worker only)."""
+        with self._otp_lock:
+            code, self._otp_code = self._otp_code, None
+            return code
+
+    def _clear_otp(self, error: str | None = None) -> None:
+        """Empty the slot: the prompt asks again (with `error`) or is gone."""
+        with self._otp_lock:
+            self._otp_code, self._otp_busy = None, False
+            self.otp_error = error
+        self._otp_sent_at = None
+
+    async def _enter_otp(self, driver: LoginDriver, code: str) -> bool:
+        """Type `code`, check for a cancel, then submit the 2FA form. False when the field would not
+        take it. Only exception class names are logged: Playwright's messages echo the value."""
+        try:
+            await driver.type_otp(code)
+        except Exception as e:  # noqa: BLE001
+            log.info("browser login %s: typing the 2FA code failed: %s", self.id, type(e).__name__)
+            return False
+        if self._cancel_queued():
+            raise _Cancelled
+        try:
+            await driver.send_otp()
+        except Exception as e:  # noqa: BLE001 — the verify timer asks again
+            log.info("browser login %s: submitting the 2FA code failed: %s", self.id, type(e).__name__)
+        return True
+
+    async def _on_otp_prompt(self, driver: LoginDriver) -> None:
+        """One worker tick on the 2FA prompt: type a submitted code; after OTP_VERIFY_S still on the
+        prompt, ask again."""
+        code = self._take_otp()
+        if code is not None:
+            if await self._enter_otp(driver, code):
+                self._otp_sent_at = time.monotonic()
+            else:
+                self._clear_otp(OTP_NOT_TYPED)
+                self._set_state(State.OTP, OTP_NOT_TYPED)
+        elif not self.needs_otp:  # the prompt is (back) on screen
+            # Back soon after a code was sent (OnlyFans showed a spinner, then the prompt again): refused.
+            refused = self._otp_sent_at is not None and time.monotonic() - self._otp_sent_at < OTP_VERIFY_S
+            self.needs_otp = True
+            self._clear_otp(OTP_REJECTED if refused else None)
+            self._set_state(State.OTP, OTP_REJECTED if refused else OTP_ASK)
+        elif self._otp_sent_at is not None and time.monotonic() - self._otp_sent_at >= OTP_VERIFY_S:
+            self._clear_otp(OTP_REJECTED)
+            self._set_state(State.OTP, OTP_REJECTED)
+
+    def _left_otp(self) -> None:
+        """The page is off the 2FA prompt: forget any code (when a code was sent is kept, so a prompt
+        that comes back right away says the code was refused) and stop taking new ones."""
+        if self.needs_otp or self._otp_busy:
+            self.needs_otp = False
+            sent = self._otp_sent_at
+            self._clear_otp()
+            self._otp_sent_at = sent
+        if self.state is State.OTP:
+            self._set_state(State.TYPING, "waiting for OnlyFans")
 
     # ── the worker ─────────────────────────────────────────────────
 
@@ -241,6 +370,8 @@ class LoginJob:
                     self._set_state(State.CANCELLED, "cancelled")
                     return
                 obs = await driver.observe()
+                if obs.kind != "otp":
+                    self._left_otp()  # before any await: /otp takes no code once the page moved on
                 await self._refresh_frame(driver)
                 if obs.kind == "challenge":
                     if self.state is not State.CHALLENGE or self.challenge != obs.challenge:
@@ -248,12 +379,9 @@ class LoginJob:
                         self._set_state(State.CHALLENGE, "solve the challenge in the popup")
                 elif obs.kind == "otp":
                     self.challenge = None
-                    if not self.needs_otp:
-                        self.needs_otp = True
-                        self._set_state(State.OTP, "enter the 2FA code")
+                    await self._on_otp_prompt(driver)
                 elif obs.kind == "ready":
                     self.challenge = None
-                    self.needs_otp = False
                     self._set_state(State.CAPTURING, "capturing session")
                     captured = await driver.harvest()
                     result = await finalize(captured, self._proxy_url)
@@ -265,14 +393,19 @@ class LoginJob:
                     if self.state not in (State.TYPING, State.STARTING):
                         self._set_state(State.TYPING)
                 await asyncio.sleep(POLL_INTERVAL_S)
+        except _Cancelled:
+            self._set_state(State.CANCELLED, "cancelled")
         except asyncio.CancelledError:
             self._set_state(State.CANCELLED, "cancelled")
             raise
         except Exception as e:  # noqa: BLE001 — any driver/pipeline failure ends the job
-            self.error = _scrub(str(e), self._password) or e.__class__.__name__
+            self.error = _scrub(str(e), self._password, *self._otp_seen) or e.__class__.__name__
             log.warning("browser login %s failed: %s", self.id, self.error)
             self._set_state(State.ERROR, self.error)
         finally:
+            self.needs_otp = False
+            self._clear_otp()
+            self._otp_seen.clear()  # the error above is already scrubbed; no code outlives the worker
             with contextlib.suppress(Exception):
                 await driver.close()
 
@@ -337,10 +470,14 @@ class LoginManager:
         return job
 
     def get(self, job_id: str, principal: str) -> LoginJob:
-        """The job, if it exists and belongs to `principal` (the started-principal check)."""
+        """The job, if it exists and belongs to `principal` (the started-principal check). KeyError:
+        no such job (none started, or pruned once finished); PermissionError: another principal's job.
+        A job past its deadline is still returned: the worker marks it timed out."""
         job = self._jobs.get(job_id)
-        if job is None or job.principal != principal:
+        if job is None:
             raise KeyError(job_id)
+        if job.principal != principal:
+            raise PermissionError(job_id)
         return job
 
     def get_for_stream(self, job_id: str, stream_token: str) -> LoginJob:

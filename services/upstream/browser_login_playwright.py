@@ -46,8 +46,11 @@ CHALLENGE_SELECTORS = (
     ("iframe[src*='hcaptcha']", "hcaptcha"),
     ("iframe[src*='geetest']", "geetest"),
 )
-# A 2FA / OTP prompt.
+# A 2FA / OTP prompt. Only a visible field counts: a stale hidden code input left in the DOM is neither a
+# prompt nor where the code is typed.
 OTP_SELECTORS = ("input[name='code']", "input[autocomplete='one-time-code']", "input[name='otp']")
+OTP_FIELD = ", ".join(f"{s}:visible" for s in OTP_SELECTORS)
+OTP_STEP_TIMEOUT_MS = 2_000  # one fill / read / press on the 2FA field: short, so a cancel is seen soon
 
 # OF signs with sha1(static_param + "\n" + time + "\n" + path + "\n" + user_id) from webpack module
 # 89668 (js-sha1); static_param is never on the wire. This init script wraps that module as its
@@ -170,14 +173,19 @@ class PlaywrightDriver:
             vw = await self._page.evaluate("() => window.innerWidth") or 0
             vh = await self._page.evaluate("() => window.innerHeight") or 0
             return Observation("challenge", Challenge(kind, int(vw), int(vh)))
-        for sel in OTP_SELECTORS:
-            if await self._page.query_selector(sel) is not None:
-                return Observation("otp")
+        if await self._otp_visible():
+            return Observation("otp")
         # Logged in once the auth cookie is set and the page has signed an API call.
         cookies = await self._context.cookies()
         if any(c.get("name") == "auth_id" for c in cookies) and self._last_signed is not None:
             return Observation("ready")
         return Observation("working")
+
+    async def _otp_visible(self) -> bool:
+        try:
+            return bool(await self._page.locator(OTP_FIELD).first.is_visible())
+        except Exception:  # noqa: BLE001
+            return False
 
     async def _detect_challenge(self) -> str | None:
         try:
@@ -211,14 +219,34 @@ class PlaywrightDriver:
     async def type_text(self, text: str) -> None:
         await self._page.keyboard.type(text)
 
-    async def submit_otp(self, code: str) -> None:
-        for sel in OTP_SELECTORS:
-            el = await self._page.query_selector(sel)
-            if el is not None:
-                await el.fill(code)
-                await self._page.keyboard.press("Enter")
-                return
-        raise RuntimeError("no 2FA field on the page")
+    async def type_otp(self, code: str) -> None:
+        """Fill the visible 2FA field once and read it back. The error never carries the code."""
+        field = self._page.locator(OTP_FIELD).first
+        try:
+            await field.fill(code, timeout=OTP_STEP_TIMEOUT_MS)
+        except Exception as e:  # noqa: BLE001 — Playwright's message echoes the value
+            raise RuntimeError(f"the 2FA field would not take the code ({type(e).__name__})") from None
+        try:
+            took = await field.input_value(timeout=OTP_STEP_TIMEOUT_MS) == code
+        except Exception:  # noqa: BLE001
+            if not await self._otp_visible():
+                return  # the form submitted itself on the last digit: the code is in; the verify timer decides
+            raise RuntimeError("the 2FA field would not take the code") from None
+        if not took:
+            raise RuntimeError("the 2FA field would not take the code")
+
+    async def send_otp(self) -> None:
+        """Click the visible submit button of the 2FA field's own form (never the page's first button:
+        that could be the login form); with none, press Enter in the field. A field that is already
+        gone (it submitted itself) needs neither."""
+        field = self._page.locator(OTP_FIELD).first
+        if not await self._otp_visible():
+            return
+        button = field.locator("xpath=ancestor::form").locator(", ".join(f"{s}:visible" for s in SUBMIT_SELECTORS)).first
+        if await button.count():
+            await button.click(timeout=OTP_STEP_TIMEOUT_MS)
+        else:
+            await field.press("Enter", timeout=OTP_STEP_TIMEOUT_MS)
 
     async def harvest(self) -> CapturedLogin:
         if self._last_signed is None or self._last_url is None:

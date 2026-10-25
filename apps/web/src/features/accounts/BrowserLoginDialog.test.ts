@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canvasToFrame } from './BrowserLoginDialog';
+import { canvasToFrame, isOtpCode, otpInput } from './BrowserLoginDialog';
 
 describe('canvasToFrame', () => {
   const rect = { left: 100, top: 50, width: 640, height: 480 };
@@ -20,5 +20,23 @@ describe('canvasToFrame', () => {
       x: Math.round((1 * 1000) / 640),
       y: Math.round((1 * 1000) / 480),
     });
+  });
+});
+
+describe('the 2FA code field', () => {
+  it('drops spaces and dashes, so a pasted "123 456" or "1234-5678" is the code, and changes nothing else', () => {
+    expect(otpInput('123 456')).toBe('123456');
+    expect(otpInput('1234-5678')).toBe('12345678');
+    expect(isOtpCode(otpInput('1234-5678'))).toBe(true);
+    // Mistyped or overlong stays wrong (Submit stays off), never cut or filtered into a different valid code.
+    expect(otpInput('12a3456')).toBe('12a3456');
+    expect(isOtpCode(otpInput('12a3456'))).toBe(false);
+    expect(otpInput('123456789')).toBe('123456789');
+    expect(isOtpCode(otpInput('123456789'))).toBe(false);
+  });
+
+  it('takes 6 to 8 ASCII digits', () => {
+    expect(['123456', '1234567', '12345678'].every(isOtpCode)).toBe(true);
+    expect(['12345', '123456789', '12a456', '', '１２３４５６'].some(isOtpCode)).toBe(false);
   });
 });

@@ -114,7 +114,7 @@ export const proxiesQuery = queryOptions({
 export const bulkProxies = (body: BulkProxiesBody) =>
   api<{ result: BulkProxiesResult }>('/api/proxies/bulk', { method: 'POST', body });
 
-/** Remote-browser login (plan direct-login §C): start, poll, feed input, cancel, and the SSE URL. */
+/** Remote-browser login (plan direct-login §C): start, poll, feed input or a 2FA code, cancel, and the SSE URL. */
 export const startBrowserLogin = (body: BrowserLoginStartBody) =>
   api<BrowserLoginStarted>('/api/accounts/login/browser/start', { method: 'POST', body });
 
@@ -131,6 +131,10 @@ export const browserLoginJobQuery = (jobId: string) =>
 
 export const sendBrowserLoginInput = (jobId: string, body: BrowserLoginInputBody) =>
   api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}/input`, { method: 'POST', body });
+
+/** OnlyFans' 2FA code for a job on the prompt; the job types it in (`otpChecking` until OnlyFans answers). */
+export const submitBrowserLoginOtp = (jobId: string, code: string) =>
+  api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}/otp`, { method: 'POST', body: { code } });
 
 export const cancelBrowserLogin = (jobId: string) =>
   api<BrowserLoginJob>(`/api/accounts/login/browser/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });

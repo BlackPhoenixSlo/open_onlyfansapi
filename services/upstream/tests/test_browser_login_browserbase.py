@@ -1,7 +1,12 @@
 """Browserbase login: the session-create body (managed proxies, captcha solver off, 1280x800), a refused
 create failing loudly, waiting for and verifying the OnlyFans form, password scrubbing, the live view
 on the job, release, and that a success persists through the shared capture pipeline and binds the
-proxy the way a pasted cURL does. Browserbase HTTP is faked."""
+proxy the way a pasted cURL does. Browserbase HTTP is faked.
+
+The 2FA code: one code at a time in the job's slot (`otpChecking`), typed then sent, a code still on the
+prompt after OTP_VERIFY_S asked for again, a code that can't be typed, leaving the prompt, cancel
+between typing and sending, the /otp route's 403/404/409/400, and that the code is never logged, never
+in a status or error. The `:visible` field rule runs on a real headless Chromium when one is installed."""
 import asyncio
 import io
 import json
@@ -17,16 +22,20 @@ from fastapi.testclient import TestClient
 from test_browser_login import (  # noqa: F401
     PRINCIPAL,
     FakeDriver,
+    PromptDriver,
     _fast,
+    _ok_finalize,
     _poll_until,
+    _wait_state,
     login_fakes,
 )
 
 import app as upstream
+import browser_login
 import browser_login_browserbase as bb
 import proxies
-from browser_login import Observation
-from browser_login_playwright import LoginFormError, PlaywrightDriver
+from browser_login import LoginManager, Observation, OtpConflict, State
+from browser_login_playwright import OTP_FIELD, LoginFormError, PlaywrightDriver
 
 PROXY_URL = "http://puser:proxy-secret@198.51.100.20:3128"
 
@@ -350,3 +359,460 @@ def test_start_validates_the_proxy_label_and_the_browserbase_env(bb_client, monk
     monkeypatch.delenv("BROWSERBASE_API_KEY")
     r = _start(bb_client, proxy=PROXY_URL)
     assert (r.status_code, r.json()["error"]["code"]) == (503, "browserbase_not_configured")
+
+
+# ─── the 2FA code ──────────────────────────────────────────────────
+
+CODE = "739218"
+WRONG = "104857"
+
+
+def _otp_job(driver):
+    mgr = LoginManager(lambda: driver, _ok_finalize)
+    return mgr.start(principal="t", email="e", password="pw", proxy_url=None)
+
+
+async def _until(pred, tries=5000):
+    for _ in range(tries):
+        if pred():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never held")
+
+
+def test_a_code_is_typed_then_sent_and_the_status_says_checking_never_the_code(caplog):
+    async def scenario():
+        driver = PromptDriver(CODE)
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        snap = job.snapshot()
+        assert (snap["needsOtp"], snap["otpChecking"], snap["otpError"]) == (True, False, None)
+        job.submit_otp("739 218")  # spaces (and dashes) are dropped
+        snap = job.snapshot()
+        assert (snap["state"], snap["otpChecking"], snap["message"]) == ("otp", True, browser_login.OTP_CHECKING)
+        assert CODE not in json.dumps(snap)
+        await job._task
+        assert driver.otps == [CODE, "<send>"]
+        assert job.state is State.DONE and job.snapshot()["otpChecking"] is False
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(scenario())
+    assert CODE not in caplog.text
+
+
+@pytest.mark.parametrize("raw", ["12345", "123456789", "12a456", "", "１２３４５６", "123_456"])
+def test_a_malformed_code_is_refused_without_echoing_it(raw):
+    async def scenario():
+        job = _otp_job(PromptDriver(CODE))
+        await _wait_state(job, State.OTP)
+        with pytest.raises(ValueError) as e:
+            job.submit_otp(raw)
+        assert str(e.value) == "the 2FA code is 6 to 8 digits"
+        assert job.snapshot()["otpChecking"] is False
+        await job.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_dashes_are_dropped_and_eight_digits_are_fine():
+    async def scenario():
+        driver = PromptDriver("12345678")
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp("1234-5678")
+        await job._task
+        assert driver.otps[0] == "12345678" and job.state is State.DONE
+
+    asyncio.run(scenario())
+
+
+def test_one_code_at_a_time_and_only_on_the_prompt():
+    async def scenario():
+        driver = FakeDriver([Observation("working")])
+        job = _otp_job(driver)
+        await _wait_state(job, State.TYPING)
+        with pytest.raises(OtpConflict, match=r"not waiting for a 2FA code \(state: typing\)"):
+            job.submit_otp(CODE)
+        await job.cancel()
+
+        driver = PromptDriver(CODE)
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp(WRONG)
+        with pytest.raises(OtpConflict, match="already being checked") as e:
+            job.submit_otp(CODE)
+        assert CODE not in str(e.value) and WRONG not in str(e.value)
+        await job.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_code_still_on_the_prompt_after_the_verify_timeout_is_asked_again(monkeypatch):
+    monkeypatch.setattr(browser_login, "OTP_VERIFY_S", 0)
+
+    async def scenario():
+        driver = PromptDriver(CODE)
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp(WRONG)
+        await _until(lambda: job.snapshot()["otpError"] is not None)
+        snap = job.snapshot()
+        assert (snap["state"], snap["otpChecking"], snap["message"], snap["otpError"]) == (
+            "otp", False, browser_login.OTP_REJECTED, browser_login.OTP_REJECTED)
+        assert snap["otpError"] == "OnlyFans didn't accept that code (or hasn't answered yet) — try again"
+        job.submit_otp(CODE)  # the slot is free again
+        assert job.snapshot()["otpError"] is None
+        await job._task
+        assert driver.otps == [WRONG, "<send>", CODE, "<send>"] and job.state is State.DONE
+
+    asyncio.run(scenario())
+
+
+def test_a_code_that_cant_be_typed_says_so_and_frees_the_slot(caplog):
+    async def scenario():
+        driver = PromptDriver(CODE, type_error="locator.fill: Timeout 2000ms exceeded — fill('{code}')")
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp(CODE)
+        await _until(lambda: job.snapshot()["otpError"] is not None)
+        snap = job.snapshot()
+        assert (snap["state"], snap["otpChecking"], snap["otpError"]) == ("otp", False, browser_login.OTP_NOT_TYPED)
+        driver.type_error = None
+        job.submit_otp(CODE)
+        await job._task
+        assert job.state is State.DONE
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(scenario())
+    assert CODE not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_leaving_the_prompt_empties_the_slot_and_a_prompt_that_comes_back_asks_at_once():
+    async def scenario():
+        driver = FakeDriver([Observation("otp")])
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        # A code waits in the slot, but the page moves on before the worker takes it.
+        driver.script = [Observation("working")]
+        job.submit_otp(CODE)
+        await _wait_state(job, State.TYPING)
+        snap = job.snapshot()
+        assert (snap["needsOtp"], snap["otpChecking"]) == (False, False)
+        assert job._take_otp() is None and driver.otps == []
+        # The prompt is back: otp right away, asking for a code.
+        driver.script = [Observation("otp")]
+        await _wait_state(job, State.OTP)
+        assert job.message == browser_login.OTP_ASK and job.snapshot()["needsOtp"] is True
+        job.submit_otp(CODE)  # accepted: the slot was emptied
+        await job.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_prompt_back_soon_after_a_code_was_sent_says_it_was_refused():
+    async def scenario():
+        driver = FakeDriver([Observation("otp")])
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp(WRONG)
+        await _until(lambda: driver.otps == [WRONG, "<send>"])
+        driver.script = [Observation("working")]  # OnlyFans' spinner
+        await _wait_state(job, State.TYPING)
+        driver.script = [Observation("otp")]  # and the prompt again
+        await _wait_state(job, State.OTP)
+        snap = job.snapshot()
+        assert (snap["otpError"], snap["message"], snap["otpChecking"]) == (
+            browser_login.OTP_REJECTED, browser_login.OTP_REJECTED, False)
+        await job.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_no_code_is_taken_once_the_page_has_left_the_prompt():
+    async def scenario():
+        driver = FakeDriver([Observation("otp")])
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        observe, gate = driver.observe, asyncio.Event()
+
+        async def observe_then_slow_frame():
+            obs = await observe()
+            if obs.kind == "working":
+                gate.set()
+            return obs
+
+        driver.observe = observe_then_slow_frame
+        refresh = job._refresh_frame
+
+        async def slow_refresh(d):
+            if gate.is_set():
+                await asyncio.sleep(0.2)  # a Browserbase screenshot takes a while
+            await refresh(d)
+
+        job._refresh_frame = slow_refresh
+        driver.script = [Observation("working")]
+        await gate.wait()
+        await asyncio.sleep(0)
+        with pytest.raises(browser_login.OtpConflict):  # the worker saw the page move on: no 200 for a lost code
+            job.submit_otp(CODE)
+        await job.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_text_input_queued_while_the_code_is_typed_is_not_applied_before_the_submit():
+    async def scenario():
+        driver = PromptDriver(CODE)
+        job = _otp_job(driver)
+        typed = driver.type_otp
+
+        async def type_then_queue(code):
+            await typed(code)
+            job.submit_input({"type": "text", "text": "x"})
+
+        async def type_text(text):
+            driver.otps.append(f"<text {text}>")
+
+        driver.type_otp, driver.type_text = type_then_queue, type_text
+        await _wait_state(job, State.OTP)
+        job.submit_otp(CODE)
+        await job._task
+        assert driver.otps == [CODE, "<send>", "<text x>"]  # the submit came first; the text waited its turn
+
+    asyncio.run(scenario())
+
+
+def test_a_cancel_between_typing_and_sending_stops_before_the_submit():
+    async def scenario():
+        driver = PromptDriver(CODE)
+        job = _otp_job(driver)
+        typed = driver.type_otp
+
+        async def type_then_cancel(code):
+            await typed(code)
+            job.submit_input({"type": "cancel"})
+
+        driver.type_otp = type_then_cancel
+        await _wait_state(job, State.OTP)
+        job.submit_otp(CODE)
+        await job._task
+        assert job.state is State.CANCELLED
+        assert driver.otps == [CODE] and driver.closed is True  # never sent
+
+    asyncio.run(scenario())
+
+
+def test_every_code_is_scrubbed_from_a_job_error(caplog, monkeypatch):
+    monkeypatch.setattr(browser_login, "OTP_VERIFY_S", 0)
+
+    async def scenario():
+        driver = PromptDriver(CODE)
+
+        async def harvest():
+            raise RuntimeError(f"capture failed: field held {WRONG}, then {CODE}")
+
+        driver.harvest = harvest
+        job = _otp_job(driver)
+        await _wait_state(job, State.OTP)
+        job.submit_otp(WRONG)
+        await _until(lambda: job.snapshot()["otpError"] is not None)
+        job.submit_otp(CODE)
+        await job._task
+        return job
+
+    with caplog.at_level(logging.DEBUG):
+        job = asyncio.run(scenario())
+    assert job.state is State.ERROR and job.error == "capture failed: field held ***, then ***"
+    for code in (CODE, WRONG):
+        assert code not in caplog.text and code not in json.dumps(job.snapshot())
+
+
+def test_an_expired_job_takes_no_code(bb_client, monkeypatch):
+    monkeypatch.setattr(upstream.supervisor, "require_proxy", False)
+    bb_client.holder["driver"] = BBPromptDriver(CODE)
+    job_id = _start(bb_client).json()["jobId"]
+    _poll_until(bb_client, job_id, "otp")
+    job = upstream.login_manager.get(job_id, PRINCIPAL["x-login-principal"])
+    job.deadline = 0  # past its time; the worker has not marked it yet
+    r = _otp(bb_client, job_id, {"code": CODE})
+    assert (r.status_code, r.json()["error"]["code"]) == (404, "job_not_found")
+    assert job._otp_code is None and CODE not in r.text
+
+
+# ─── the driver: only a visible field counts, and its own form is submitted ─
+
+class _OtpPage:
+    def __init__(self, field):
+        self.field, self.selectors = field, []
+
+    def locator(self, sel):
+        self.selectors.append(sel)
+        return self.field
+
+
+class _FormField(_Field):
+    """The 2FA field; `buttons` is how many visible submit buttons its own form has."""
+
+    def __init__(self, buttons=1, **kw):
+        super().__init__(**kw)
+        self.buttons, self.form_selectors = buttons, []
+
+    def locator(self, sel):
+        self.form_selectors.append(sel)
+        return self
+
+    async def count(self):
+        return self.buttons
+
+
+def test_the_otp_selectors_are_visible_only():
+    assert OTP_FIELD == ("input[name='code']:visible, input[autocomplete='one-time-code']:visible, "
+                         "input[name='otp']:visible")
+
+
+def test_typing_reads_the_code_back_and_never_puts_it_in_the_error():
+    page = _OtpPage(_Field(swallow=1))
+    with pytest.raises(RuntimeError) as e:
+        asyncio.run(_driver(page).type_otp(CODE))
+    assert CODE not in str(e.value) and page.selectors == [OTP_FIELD]
+    page = _OtpPage(_Field())
+    asyncio.run(_driver(page).type_otp(CODE))
+    assert page.field.value == CODE
+
+
+def test_send_clicks_the_2fa_forms_own_visible_submit_else_presses_enter():
+    field = _FormField()
+    asyncio.run(_driver(_OtpPage(field)).send_otp())
+    assert field.form_selectors == ["xpath=ancestor::form", "button[type='submit']:visible"]
+    assert field.actions == ["click"]
+    field = _FormField(buttons=0)
+    asyncio.run(_driver(_OtpPage(field)).send_otp())
+    assert field.actions == ["press:Enter"]
+    field = _FormField(visible=False)  # it submitted itself on the last digit
+    asyncio.run(_driver(_OtpPage(field)).send_otp())
+    assert field.actions == []
+
+
+def test_a_field_that_submits_itself_on_the_last_digit_counts_as_typed():
+    class Gone(_Field):
+        async def input_value(self, timeout=None):
+            self.visible = False
+            raise TimeoutError("waiting for locator")
+
+    asyncio.run(_driver(_OtpPage(Gone())).type_otp(CODE))  # no error: the code went in
+    class Stuck(Gone):
+        async def input_value(self, timeout=None):
+            raise TimeoutError(f"waiting for locator to have value {CODE}")
+
+    with pytest.raises(RuntimeError) as e:
+        asyncio.run(_driver(_OtpPage(Stuck())).type_otp(CODE))
+    assert CODE not in str(e.value)
+
+
+def _chromium_or_skip():
+    try:
+        from playwright.async_api import async_playwright  # noqa: F401
+    except ImportError:
+        pytest.skip("needs playwright")
+
+
+TWO_FORMS = """
+<form id="login" onsubmit="event.preventDefault(); window.submitted.push('login')">
+  <input name="email"><button type="submit">LOG IN</button></form>
+<form id="otp" onsubmit="event.preventDefault(); window.submitted.push('otp:' + this.querySelector('#real').value)">
+  <input name="code" id="stale" style="display:none" value="">
+  <input name="code" id="real" autocomplete="one-time-code"><button type="submit">Verify</button></form>
+<script>window.submitted = []</script>
+"""
+
+
+def test_on_a_real_page_a_hidden_stale_input_is_neither_the_prompt_nor_the_fill_target():
+    _chromium_or_skip()
+    from playwright.async_api import async_playwright
+
+    async def scenario():
+        async with async_playwright() as pw:
+            try:
+                browser = await pw.chromium.launch(headless=True)
+            except Exception as e:  # noqa: BLE001
+                pytest.skip(f"no Chromium: {type(e).__name__}")
+            page = await browser.new_page()
+            d = PlaywrightDriver()
+            d._page = page
+            await page.set_content('<input name="code" style="display:none">')
+            assert await d._otp_visible() is False
+            await page.set_content(TWO_FORMS)
+            assert await d._otp_visible() is True
+            await d.type_otp(CODE)
+            await d.send_otp()
+            out = await page.evaluate(
+                "() => [document.querySelector('#stale').value, document.querySelector('#real').value, window.submitted]")
+            await browser.close()
+            return out
+
+    stale, real, submitted = asyncio.run(scenario())
+    assert (stale, real) == ("", CODE)
+    assert submitted == [f"otp:{CODE}"]  # the 2FA form, not the page's first (login) form
+
+
+# ─── HTTP: POST /login/browser/{id}/otp ────────────────────────────
+
+class BBPromptDriver(PromptDriver):
+    def __init__(self, right):
+        super().__init__(right)
+        self.live_view_url = "https://live.example.invalid/sess-1"
+
+
+def _otp(client, job_id, body, principal=PRINCIPAL, raw=None):
+    kw = {"content": raw, "headers": {**AUTH, **principal, "content-type": "application/json"}} if raw is not None \
+        else {"json": body, "headers": {**AUTH, **principal}}
+    return client.post(f"/login/browser/{job_id}/otp", **kw)
+
+
+def test_the_otp_route_checks_the_owner_the_job_and_the_code_and_never_echoes_it(bb_client, monkeypatch, caplog):
+    monkeypatch.setattr(upstream.supervisor, "require_proxy", False)
+    bb_client.holder["driver"] = BBPromptDriver(CODE)
+    job_id = _start(bb_client).json()["jobId"]
+    _poll_until(bb_client, job_id, "otp")
+    seen = []
+    with caplog.at_level(logging.DEBUG):
+        r = _otp(bb_client, "no-such-job", {"code": CODE})
+        seen.append(r.text)
+        assert (r.status_code, r.json()["error"]["code"]) == (404, "job_not_found")
+        r = _otp(bb_client, job_id, {"code": CODE}, principal={"x-login-principal": "team-2"})
+        seen.append(r.text)
+        assert (r.status_code, r.json()["error"]["code"]) == (403, "job_forbidden")
+        for body, raw in (({"code": "73921"}, None), ({"code": "73a218"}, None), ({"code": 739218}, None),
+                          ({"otp": CODE}, None), ([CODE], None), (None, CODE), (None, "{not json " + CODE),
+                          (None, "[" * 100_000 + CODE)):
+            r = _otp(bb_client, job_id, body, raw=raw)
+            seen.append(r.text)
+            assert (r.status_code, r.json()["error"]["code"]) == (400, "invalid_otp"), (body, raw, r.text)
+        # Hold the worker off the slot so a second code meets the one in flight.
+        with pytest.MonkeyPatch.context() as hold:
+            hold.setattr(browser_login.LoginJob, "_take_otp", lambda self: None)
+            r = _otp(bb_client, job_id, {"code": "739-218"})
+            seen.append(r.text)
+            assert r.status_code == 200 and r.json()["otpChecking"] is True and r.json()["state"] == "otp"
+            r = _otp(bb_client, job_id, {"code": WRONG})
+            seen.append(r.text)
+            assert (r.status_code, r.json()["error"]["code"]) == (409, "otp_not_expected")
+            seen.append(bb_client.get(f"/login/browser/{job_id}", headers={**AUTH, **PRINCIPAL}).text)
+        snap = _poll_until(bb_client, job_id, "done")
+        seen.append(json.dumps(snap))
+        r = _otp(bb_client, job_id, {"code": CODE})
+        seen.append(r.text)
+        assert (r.status_code, r.json()["error"]["code"]) == (409, "otp_not_expected")
+    for text in seen:
+        assert CODE not in text and WRONG not in text, text
+    assert CODE not in caplog.text and WRONG not in caplog.text
+
+
+def test_input_no_longer_takes_a_code(bb_client, monkeypatch):
+    monkeypatch.setattr(upstream.supervisor, "require_proxy", False)
+    bb_client.holder["driver"] = BBPromptDriver(CODE)
+    job_id = _start(bb_client).json()["jobId"]
+    _poll_until(bb_client, job_id, "otp")
+    r = bb_client.post(f"/login/browser/{job_id}/input", headers={**AUTH, **PRINCIPAL},
+                       json={"type": "otp", "code": CODE})
+    assert r.status_code == 422

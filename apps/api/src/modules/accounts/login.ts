@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { browserLoginInputBody, browserLoginStartBody } from '../../contracts.js';
+import { browserLoginInputBody, browserLoginOtpBody, browserLoginStartBody } from '../../contracts.js';
 import { AppError } from '../../lib/errors.js';
 import { assertTeamLinked } from '../../lib/team-link.js';
 import { passThrough } from '../../lib/upstream.js';
@@ -25,10 +25,14 @@ const JOB_TTL_MS = 11 * 60_000; // a little past the upstream's ~10-minute expir
  * captures are never stored; they are forwarded, and the upstream's statuses and bodies are returned
  * unchanged. Writes need the dashboard session + CSRF. The SSE stream is instead gated by the per-job
  * stream token in the query string (EventSource cannot set headers). The gateway holds a jobId → team
- * map so only the workspace that started a job can poll, feed, cancel or stream it; once the login
+ * map so only the workspace that started a job can poll, feed, cancel or stream it (403 for another workspace's job,
+ * 404 for an unknown or expired one); once the login
  * succeeds the resulting OF account is claimed for that workspace. A claim the workspace may not make (another
  * workspace owns the account) turns the poll into an `error` state, so the login never reports success for an
  * account the workspace cannot see.
+ *
+ * A 2FA code goes to `/otp` (not `/input`): the upstream types it into OnlyFans' prompt and the status says
+ * `otpChecking` until OnlyFans answers. Its body is never logged here, and no error (ours or the upstream's) echoes it.
  */
 export default async function accountsLoginRoutes(app: FastifyInstance) {
   const jobs = new Map<string, JobRecord>();
@@ -36,10 +40,12 @@ export default async function accountsLoginRoutes(app: FastifyInstance) {
     const cutoff = Date.now() - JOB_TTL_MS;
     for (const [id, rec] of jobs) if (rec.at < cutoff) jobs.delete(id);
   };
-  /** The job record if workspace `teamId` started it, else a 404 (the started-principal check). */
+  /** The job record if workspace `teamId` started it (the started-principal check): 404 unknown or expired, 403 another workspace's. */
   const owned = (jobId: string, teamId: string): JobRecord => {
+    prune();
     const rec = jobs.get(jobId);
-    if (!rec || rec.teamId !== teamId) throw new AppError(404, 'job_not_found', 'No such login job');
+    if (!rec) throw new AppError(404, 'job_not_found', 'No such login job');
+    if (rec.teamId !== teamId) throw new AppError(403, 'job_forbidden', 'This login was started by another workspace');
     return rec;
   };
 
@@ -122,6 +128,18 @@ export default async function accountsLoginRoutes(app: FastifyInstance) {
         return passThrough(
           reply,
           await app.upstream.browserLoginInput(request.params.jobId, JSON.stringify(request.body), request.session.teamId, request.id),
+        );
+      },
+    );
+
+    s.post(
+      '/browser/:jobId/otp',
+      { schema: { tags: ['dashboard'], params: z.object({ jobId: z.string() }), body: browserLoginOtpBody } },
+      async (request, reply) => {
+        owned(request.params.jobId, request.session.teamId);
+        return passThrough(
+          reply,
+          await app.upstream.browserLoginOtp(request.params.jobId, JSON.stringify(request.body), request.session.teamId, request.id),
         );
       },
     );
