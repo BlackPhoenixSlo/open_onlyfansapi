@@ -12,6 +12,10 @@ against it; the launcher (lib/upstream_launcher.py) points the upstream's module
                     to NOTFOUND; the self-signed certificate is accepted with --ignore-certificate-errors.
   OnlyFans' site    HTTPS on loopback, served for onlyfans.com: a login form rendered by script after
                     load; a 2FA prompt with a STALE HIDDEN `input[name=code]` ahead of the visible one;
+                    for an account in `captchas`, the prompt also carries a reCAPTCHA frame: "hidden" (a
+                    leftover, in a visibility:hidden container off screen, as reCAPTCHA parks its challenge)
+                    or "visible" (on screen, next to the code field). Each frame load is recorded in
+                    `captcha_frames` (uid, path);
                     a wrong code re-renders the prompt with an error; the right code sets `auth_id`, and
                     the signed-in home page makes one signed /api2/v2 request and loads the signing
                     module (webpack 89668) through `webpackChunkof_vue`. Every 2FA submission is recorded
@@ -85,6 +89,11 @@ padding:12px;border:1px solid #ccd;border-radius:6px;font-size:16px}button{width
 border-radius:24px;background:#00aff0;color:#fff;font-weight:700;font-size:15px;margin-top:8px}.err{color:#d33}
 </style></head><body><div class=box id=app>Loading…</div><script>
 const app = document.getElementById("app");
+let captcha = null;  // "hidden" | "visible" | null: a reCAPTCHA frame on the 2FA prompt
+const CAPTCHA = {
+  hidden: '<div style="visibility:hidden;position:absolute;top:-10000px"><iframe src="/recaptcha/api2/bframe"></iframe></div>',
+  visible: '<iframe src="/recaptcha/api2/anchor" width=304 height=78 style="border:0;display:block;margin:8px 0"></iframe>',
+};
 const post = (p, b) => fetch(p, {method: "POST", body: JSON.stringify(b)}).then((r) => r.json());
 function showLogin() {
   app.innerHTML = '<h1>OnlyFans</h1><form id=login><input type=text name=email placeholder=Email>' +
@@ -93,7 +102,7 @@ function showLogin() {
     e.preventDefault();
     const f = e.target;
     const j = await post("/__fake/login", {email: f.email.value, password: f.password.value});
-    if (j.otp) showOtp(""); else app.insertAdjacentHTML("beforeend", "<p class=err>Wrong email or password</p>");
+    if (j.otp) { captcha = j.captcha; showOtp(""); } else app.insertAdjacentHTML("beforeend", "<p class=err>Wrong email or password</p>");
   };
 }
 function showOtp(err) {
@@ -101,7 +110,7 @@ function showOtp(err) {
     (err ? '<p class=err>' + err + '</p>' : '') +
     '<input name=code id=stale style=display:none>' +  // a stale hidden code input, ahead of the real one
     '<form id=otp><input name=code id=visible autocomplete=one-time-code inputmode=numeric placeholder=Code>' +
-    '<button type=submit>VERIFY</button></form>';
+    '<button type=submit>VERIFY</button></form>' + (CAPTCHA[captcha] || '');
   document.getElementById("otp").onsubmit = async (e) => {
     e.preventDefault();
     const j = await post("/__fake/otp", {code: document.getElementById("visible").value,
@@ -141,11 +150,12 @@ class World:
     to its user id; every account has `password` and takes the 2FA code `otp`."""
 
     def __init__(self, out: Path, *, accounts: dict[str, str], otp: str, password: str, chromium: str,
-                 rev: str = "202610251200-slop"):
+                 rev: str = "202610251200-slop", captchas: dict[str, str] | None = None):
         self.out = Path(out)
         self.tmp = self.out / "fake-world"
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.accounts, self.otp, self.password, self.chromium, self.rev = accounts, otp, password, chromium, rev
+        self.captchas = captchas or {}        # OF email -> "hidden" | "visible": a reCAPTCHA frame on its 2FA prompt
         self.bb_key, self.bb_project = BB_KEY, BB_PROJECT
         now = int(time.time() * 1000)
         self.signs = {uid: signing(uid, rev, now) for uid in accounts.values()}
@@ -154,6 +164,7 @@ class World:
         self.bb_calls: list[dict] = []        # Browserbase API: {method, path, status}
         self.logins: list[dict] = []          # OF login form posts: {email, password_ok}
         self.otp_record: list[dict] = []      # 2FA submissions: {t, uid, code, stale, ok}
+        self.captcha_frames: list[dict] = []  # reCAPTCHA frame loads on the 2FA prompt: {t, uid, path}
         self.api_calls: list[dict] = []       # the upstream's OF API calls: {path, uid, sign_ok}
         self.ws_connects: list[dict] = []
         self.sessions: dict[str, dict] = {}   # sid -> {proc, cdp, dir, ws, released}
@@ -397,6 +408,14 @@ class World:
                         data["static_param"] = s["rules"]["static_param"]
                         html = html.replace("<script>", f"<script>window.__SIGNED_IN__={json.dumps(data)};", 1)
                     return self._send(200, html, "text/html")
+                if path.startswith("/recaptcha/"):
+                    with world._lock:
+                        world.captcha_frames.append({"t": time.time(), "uid": self._cookie("slop_login"), "path": path})
+                    world.log(f"of captcha frame {path} uid={self._cookie('slop_login')}")
+                    return self._send(200, '<body style="margin:0;font:14px Arial;border:1px solid #d3d3d3;'
+                                           'background:#f9f9f9;height:76px;display:flex;align-items:center;'
+                                           'padding-left:12px">&#9744; I\'m not a robot (slop reCAPTCHA)</body>',
+                                      "text/html")
                 if path == "/api2/v2/users/me" and s:
                     return self._send(200, {"id": int(s["uid"]), "username": f"slop{s['uid']}",
                                             "name": "Slop Creator", "isAuth": True})
@@ -410,7 +429,7 @@ class World:
                     with world._lock:
                         world.logins.append({"t": time.time(), "uid": uid, "password_ok": ok})
                     world.log(f"of login uid={uid} password_ok={ok}")
-                    return self._send(200, {"otp": ok},
+                    return self._send(200, {"otp": ok, "captcha": world.captchas.get(body.get("email") or "")},
                                       headers={"Set-Cookie": f"slop_login={uid}; Domain=onlyfans.com; Path=/; Secure"}
                                       if ok else None)
                 if self.path == "/__fake/otp":

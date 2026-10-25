@@ -1,4 +1,6 @@
 """Flow: Try Browserbase login -> OnlyFans asks for the 2FA code -> the operator types it in the dashboard.
+Then the same login for two more OF accounts whose 2FA prompt also carries a reCAPTCHA frame: one left over hidden
+(the code field must still show), one on screen (the job is a challenge, solved in the live view).
 
 Real path: the web app (Vite) -> the TS API -> the upstream -> a "Browserbase" session (a local Chromium over CDP) ->
 "OnlyFans" (lib/fake_world.py). One dashboard user (A) drives the UI in a real browser; a second workspace (B) only
@@ -18,6 +20,13 @@ Checks (one flow, run once: a login is one operator at a time, not a volume path
   account-row-and-api              account_workspace has the account for A's workspace; GET /v1/accounts lists it
   otp-route-409-after-done         a code after done is 409
   otp-record-counts                OF saw exactly the two codes, in order (nothing dropped, nothing extra)
+  hidden-captcha-prompt-shown      a 2FA prompt with a leftover hidden reCAPTCHA frame (loaded, off screen): the code
+                                   field and the live view show, the job is in otp with no challenge
+  hidden-captcha-code-logs-in      the code typed in that field reaches OF once and the login is done
+  hidden-captcha-account-row-and-api  account_workspace has that account for A's workspace; GET /v1/accounts lists it
+  visible-captcha-is-challenge     a reCAPTCHA frame on screen next to the code field: the job is a recaptcha challenge,
+                                   the dialog says so over the live view, and no code field shows
+  visible-captcha-otp-409          a code for that challenge job is 409 (OF never sees it)
   stale-hidden-input-untouched     the hidden stale input ahead of the real field was never filled
   code-never-leaked                neither code appears in any log, any status or error body, or the fakes' own log
   no-5xx                           no 5xx on any API call the browser or the probes made
@@ -26,9 +35,13 @@ Checks (one flow, run once: a login is one operator at a time, not a volume path
   p95-vs-last-green                end-to-end p95 of the dashboard's API calls is within 2x (+250 ms) of the last
                                    green run of this scenario (the first run sets the baseline)
 
-FAULTS: otp-code-never-consumed (the upstream never takes the code from the job's slot). Expected red: the checks that
-need the code to reach OF (wrong-code-rejected-stays-otp, right-code-logs-in, account-row-and-api,
-otp-route-409-after-done, otp-record-counts). Everything else stays green.
+FAULTS:
+  otp-code-never-consumed (the upstream never takes the code from the job's slot). Expected red: the checks that
+    need the code to reach OF (wrong-code-rejected-stays-otp, right-code-logs-in, account-row-and-api,
+    otp-route-409-after-done, otp-record-counts, hidden-captcha-code-logs-in, hidden-captcha-account-row-and-api).
+    Everything else stays green.
+  challenge-ignores-visibility (the pre-fix challenge detection: a hidden captcha counts). Expected red: the three
+    hidden-captcha-* checks. Everything else stays green.
 """
 from __future__ import annotations
 
@@ -45,11 +58,14 @@ from fake_world import World
 from recorder import Recorder
 from stack import Stack
 
-FAULTS = {"otp-code-never-consumed": "the worker never takes the code from the job's slot"}
+FAULTS = {"otp-code-never-consumed": "the worker never takes the code from the job's slot",
+          "challenge-ignores-visibility": "a hidden challenge container or frame counts as a challenge"}
 
 OF_EMAIL = "creator@slop.test"
 OF_UID = "990000101"
 OF_PASSWORD = "slop-of-password-1"
+HIDDEN_EMAIL, HIDDEN_UID = "hidden-captcha@slop.test", "990000102"    # a leftover hidden reCAPTCHA on its 2FA prompt
+VISIBLE_EMAIL, VISIBLE_UID = "visible-captcha@slop.test", "990000103"  # a reCAPTCHA on screen on its 2FA prompt
 CODE, WRONG = "739218", "104857"
 CODE_TYPED, WRONG_TYPED = "739-218", "104 857"
 REJECTED = "didn't accept that code"
@@ -115,7 +131,9 @@ async def run(ctx, out: Path, fault: str | None) -> None:
 
     async with async_playwright() as pw:
         chromium = pw.chromium.executable_path
-        with World(out, accounts={OF_EMAIL: OF_UID}, otp=CODE, password=OF_PASSWORD, chromium=chromium) as world, \
+        with World(out, accounts={OF_EMAIL: OF_UID, HIDDEN_EMAIL: HIDDEN_UID, VISIBLE_EMAIL: VISIBLE_UID}, otp=CODE,
+                   password=OF_PASSWORD, chromium=chromium,
+                   captchas={HIDDEN_EMAIL: "hidden", VISIBLE_EMAIL: "visible"}) as world, \
                 Stack(out, world, fault=fault) as stack:
             browser = await pw.chromium.launch()
             try:
@@ -152,13 +170,7 @@ async def _flow(ctx, out, fault, world, stack, browser, rec, shots) -> None:
 
     page.on("response", lambda r: asyncio.ensure_future(on_response(r)))
 
-    await page.goto(f"{app}/accounts")
-    await page.get_by_role("button", name="Try Browserbase login").first.click()
-    await page.locator("#bl-email").fill(OF_EMAIL)
-    await page.locator("#bl-password").fill(OF_PASSWORD)
-    async with page.expect_response(lambda r: r.url.endswith("/api/accounts/login/browser/start")) as started:
-        await page.get_by_role("dialog").get_by_role("button", name="Try Browserbase login").click()
-    job_id = json.loads(await (await started.value).text())["jobId"]
+    job_id = await _start_login(page, app, OF_EMAIL)
     ctx.metric("job_id", job_id)
 
     # ── the prompt, next to the live view ──
@@ -266,10 +278,10 @@ async def _flow(ctx, out, fault, world, stack, browser, rec, shots) -> None:
               code=err_code(text))
 
     if not done:  # leave nothing running: stop the login the way the operator would
-        try:
-            await page.get_by_role("button", name="Stop login").click(timeout=5_000)
-        except Exception:  # noqa: BLE001
-            await a.call("POST", f"/api/accounts/login/browser/{job_id}/cancel")
+        await _stop_login(page, a, job_id)
+
+    await _hidden_captcha(ctx, world, stack, page, a, app, shots, team_a)
+    await _visible_captcha(ctx, world, page, a, app, shots)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and not all(s.get("released") for s in world.sessions.values()):
         await asyncio.sleep(0.25)
@@ -281,9 +293,103 @@ async def _flow(ctx, out, fault, world, stack, browser, rec, shots) -> None:
     await ctx_b.close()
 
 
+async def _start_login(page, app: str, email: str) -> str:
+    """Open Accounts, start Try Browserbase login for `email` through the dialog; the job id."""
+    await page.goto(f"{app}/accounts")
+    await page.get_by_role("button", name="Try Browserbase login").first.click()
+    await page.locator("#bl-email").fill(email)
+    await page.locator("#bl-password").fill(OF_PASSWORD)
+    async with page.expect_response(lambda r: r.url.endswith("/api/accounts/login/browser/start")) as started:
+        await page.get_by_role("dialog").get_by_role("button", name="Try Browserbase login").click()
+    return json.loads(await (await started.value).text())["jobId"]
+
+
+async def _stop_login(page, a: Probe, job_id: str) -> None:
+    try:
+        await page.get_by_role("button", name="Stop login").click(timeout=5_000)
+    except Exception:  # noqa: BLE001
+        await a.call("POST", f"/api/accounts/login/browser/{job_id}/cancel")
+
+
+async def _hidden_captcha(ctx, world, stack, page, a: Probe, app: str, shots: Path, team_a) -> None:
+    """A leftover hidden reCAPTCHA frame on OF's 2FA prompt: the code field still shows and the code logs in."""
+    job_id = await _start_login(page, app, HIDDEN_EMAIL)
+    otp, live = page.locator("#bl-otp"), page.locator("iframe[title='Browserbase live view']")
+    shown = True
+    try:
+        await otp.wait_for(state="visible", timeout=45_000)
+        await live.wait_for(state="visible", timeout=5_000)
+        await page.wait_for_timeout(2_500)  # the live view's next frame shows OF's 2FA page
+    except Exception as e:  # noqa: BLE001
+        shown = False
+        ctx.metric("hidden_captcha_prompt_wait_error", type(e).__name__)
+    await page.screenshot(path=str(shots / "c-hidden-captcha-otp-prompt.png"))
+    st, text = await a.call("GET", f"/api/accounts/login/browser/{job_id}")
+    snap = json.loads(text) if st == 200 else {}
+    frames = [f["path"] for f in world.captcha_frames if f["uid"] == HIDDEN_UID]
+    ctx.check("hidden-captcha-prompt-shown", shown and bool(frames) and snap.get("state") == "otp"
+              and snap.get("challenge") is None, captcha_frames_loaded=frames, code_field_shown=shown,
+              state=snap.get("state"), challenge=snap.get("challenge"),
+              screenshot="screenshots/c-hidden-captcha-otp-prompt.png")
+
+    done = False
+    if shown:
+        try:
+            await otp.fill(CODE_TYPED, timeout=5_000)
+            await page.get_by_role("button", name="Submit code").click(timeout=5_000)
+            await page.get_by_role("dialog").wait_for(state="detached", timeout=60_000)
+            await page.get_by_text(f"slop{HIDDEN_UID}").first.wait_for(timeout=20_000)
+            done = True
+        except Exception as e:  # noqa: BLE001
+            ctx.metric("hidden_captcha_code_error", f"{type(e).__name__}: {str(e).splitlines()[0][:200]}")
+        await page.wait_for_timeout(500)
+        await page.screenshot(path=str(shots / "d-hidden-captcha-logged-in.png"))
+    if not done:
+        await _stop_login(page, a, job_id)
+    got = [r for r in world.otp_record if r["uid"] == HIDDEN_UID]
+    ctx.check("hidden-captcha-code-logs-in", done and [r["code"] for r in got] == [CODE] and got[0]["ok"],
+              dialog_closed_and_listed=done, of_submissions=len(got), of_accepted=bool(got) and got[0]["ok"],
+              screenshot="screenshots/d-hidden-captcha-logged-in.png" if shown else None)
+
+    rows = stack.sql(f"select team_id from account_workspace where account_id = {int(HIDDEN_UID)}")
+    st, text = await a.call("GET", "/v1/accounts")
+    items = json.loads(text).get("items", []) if st == 200 else []
+    listed = [i for i in items if str(i.get("id")) == HIDDEN_UID]
+    ctx.check("hidden-captcha-account-row-and-api", rows == [[team_a]] and bool(listed)
+              and listed[0].get("status") == "active", db_rows=rows, team_a=team_a, api_listed=listed)
+
+
+async def _visible_captcha(ctx, world, page, a: Probe, app: str, shots: Path) -> None:
+    """A reCAPTCHA frame on screen next to OF's code field: a challenge for the live view, no code field."""
+    job_id = await _start_login(page, app, VISIBLE_EMAIL)
+    live = page.locator("iframe[title='Browserbase live view']")
+    seen = True
+    try:
+        await page.get_by_role("status").filter(has_text="showing a verification check").wait_for(timeout=45_000)
+        await live.wait_for(state="visible", timeout=5_000)
+        await page.wait_for_timeout(2_500)  # the live view's next frame shows the captcha
+    except Exception as e:  # noqa: BLE001
+        seen = False
+        ctx.metric("visible_captcha_wait_error", type(e).__name__)
+    await page.screenshot(path=str(shots / "e-visible-captcha-challenge.png"))
+    st, text = await a.call("GET", f"/api/accounts/login/browser/{job_id}")
+    snap = json.loads(text) if st == 200 else {}
+    no_field = await page.locator("#bl-otp").count() == 0
+    frames = [f["path"] for f in world.captcha_frames if f["uid"] == VISIBLE_UID]
+    ctx.check("visible-captcha-is-challenge", seen and no_field and bool(frames) and snap.get("state") == "challenge"
+              and (snap.get("challenge") or {}).get("kind") == "recaptcha" and bool(snap.get("liveViewUrl")),
+              dialog_says_challenge_over_live_view=seen, code_field_absent=no_field, captcha_frames_loaded=frames,
+              state=snap.get("state"), challenge=snap.get("challenge"),
+              screenshot="screenshots/e-visible-captcha-challenge.png")
+    st, text = await a.call("POST", f"/api/accounts/login/browser/{job_id}/otp", {"code": CODE})
+    ctx.check("visible-captcha-otp-409", st == 409 and err_code(text) == "otp_not_expected"
+              and not [r for r in world.otp_record if r["uid"] == VISIBLE_UID], status=st, code=err_code(text))
+    await _stop_login(page, a, job_id)
+
+
 def _after(ctx, out: Path, world: World, rec) -> None:
     """Checks over the run's records, once every process has stopped and flushed its log."""
-    codes = [r["code"] for r in world.otp_record]
+    codes = [r["code"] for r in world.otp_record if r["uid"] == OF_UID]
     ctx.check("otp-record-counts", codes == [WRONG, CODE], submissions=len(codes),
               in_order=codes == [WRONG, CODE])
     ctx.check("stale-hidden-input-untouched", all(r["stale"] == "" for r in world.otp_record),

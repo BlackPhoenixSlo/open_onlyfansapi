@@ -44,7 +44,25 @@ def _otp_code_never_consumed() -> None:
     browser_login.LoginJob._take_otp = lambda self: None
 
 
-FAULTS = {"otp-code-never-consumed": _otp_code_never_consumed}
+def _challenge_ignores_visibility() -> None:
+    """Challenge detection without its visibility rule: any challenge container or Cloudflare frame in the DOM counts,
+    hidden or not (what `query_selector` and the bare frame-URL walk did before), so a leftover hidden captcha masks
+    the 2FA prompt. The fake site's captchas are reCAPTCHA frames, so a run exercises the container half (`_shown`);
+    the frame half is covered by the upstream's real-Chromium test."""
+    import browser_login_playwright as blp
+
+    async def shown(self, selector):
+        return await self._page.query_selector(selector) is not None
+
+    async def frame_shown(_frame):
+        return True
+
+    blp.PlaywrightDriver._shown = shown
+    blp._frame_shown = frame_shown
+
+
+FAULTS = {"otp-code-never-consumed": _otp_code_never_consumed,
+          "challenge-ignores-visibility": _challenge_ignores_visibility}
 
 fault = os.environ.get("SLOP_FAULT") or ""
 if fault:

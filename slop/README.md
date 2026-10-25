@@ -46,7 +46,9 @@ Quote runs by that name. Inside:
   the `connectUrl`. Its live view is a page of CDP screenshots, not Browserbase's interactive devtools page.
 - **OnlyFans' site** is served over HTTPS on loopback; the session Chromium maps `onlyfans.com` to it
   (`--host-resolver-rules`, everything else NOTFOUND) and accepts its self-signed certificate. Its 2FA page puts a
-  hidden stale `input[name=code]` ahead of the real one; a wrong code re-renders the prompt with an error.
+  hidden stale `input[name=code]` ahead of the real one; a wrong code re-renders the prompt with an error. Two more
+  accounts get a reCAPTCHA frame on that prompt, served by the same fake site: one left over hidden (a
+  visibility:hidden container off screen), one on screen next to the code field.
 - **OnlyFans' API and socket** (used after the login by the capture pipeline and pollers) are loopback fakes; the upstream
   reaches them by IP via module constants set in the launcher, so its `.onlyfans.com` cookies are not sent there; the
   fake authenticates by the verified signature. The signing material is synthetic.
@@ -57,5 +59,6 @@ Quote runs by that name. Inside:
 
 ## Scenarios
 
-- `browserbase-otp-login` — Try Browserbase login, OnlyFans asks for the 2FA code, the operator types it in the dialog.
-  Checks and the fault are listed in the scenario's docstring.
+- `browserbase-otp-login` — Try Browserbase login, OnlyFans asks for the 2FA code, the operator types it in the dialog;
+  then a 2FA prompt with a leftover hidden captcha (the code field still shows and logs in) and one with a captcha on
+  screen (a challenge for the live view, no code field). Checks and the faults are listed in the scenario's docstring.
