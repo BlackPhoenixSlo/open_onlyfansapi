@@ -73,6 +73,7 @@ instead of step 2. It serves account `1` on :3001. Use one upstream or the other
 | Parity check | `node scripts/parity-audit.mjs check /tmp/up.json` | exit 0, 113/233 per-account lines served, no regression, no off-spec |
 | Drizzle drift | `pnpm db:generate` | no new file in `apps/api/drizzle` |
 | Optional: image smoke | `sh scripts/compose-smoke.sh` | passes (CI `docker` job) |
+| Slop (real path, fakes outside) | `slop/run all` (needs Postgres on :5434; see `slop/README.md`) | exit 0; prints its run folder `slop/runs/<UTC>-<sha>-<scenario>/` |
 
 ## 4. Connect one real model
 
