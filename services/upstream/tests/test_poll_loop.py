@@ -93,7 +93,7 @@ def test_a_first_failure_without_any_response_also_waits_the_interval():
     assert run_loop(poller, 3) == [INTERVAL, 2 * INTERVAL, INTERVAL]
 
 
-@pytest.mark.parametrize(("status", "code"), [(401, 0), (400, 301)])
+@pytest.mark.parametrize(("status", "code"), [(401, 0), (400, 301), (400, 101)])
 def test_a_refused_session_calls_on_expired_and_ends(status, code):
     expired = []
     assert run_loop(StubPoller(of_error(status, code=code)), 99, on_expired=lambda: expired.append(1)) == []

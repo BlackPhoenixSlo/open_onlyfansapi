@@ -132,8 +132,9 @@ def test_proxy_not_required_when_disabled(routed, monkeypatch, fake):
 @pytest.mark.parametrize(("status", "body"), [
     (401, {"error": {"code": 401, "message": "Unauthorized"}}),
     (400, {"error": {"code": 301, "message": "Wrong user."}}),
+    (400, {"error": {"code": 101, "message": "otpState"}}),
 ])
-@pytest.mark.parametrize("path", ["/of/chats", "/of/_of/mass-messaging/overview"])
+@pytest.mark.parametrize("path", ["/of/me", "/of/chats", "/of/_of/mass-messaging/overview"])
 def test_a_dead_session_reply_on_rest_expires_the_account_once(routed, monkeypatch, fake, status, body, path):
     events = []
     monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=events.append))

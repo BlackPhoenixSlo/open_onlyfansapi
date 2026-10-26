@@ -55,9 +55,9 @@ Client = Annotated[OFClient, Depends(account_client)]
 
 
 def note_of_response(request: Request, resp: object) -> None:
-    """OF answered this account's request with a dead-session reply (401, or 400 "Wrong
-    user"): mark the account session_expired, which announces it once. Only requests that
-    went through `account_client` carry an account."""
+    """OF answered this account's request with a dead-session reply (401, or 400 "Wrong user"
+    or "otpState"; `of_client.session_refused`): mark the account session_expired, which
+    announces it once. Only requests that went through `account_client` carry an account."""
     aid = getattr(request.state, "of_account_id", None)
     if aid and session_refused(resp):
         request.app.state.supervisor.mark_expired(aid)

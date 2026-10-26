@@ -1,8 +1,8 @@
 """Raw passthrough `ANY /of/_of/{path}` to OF's `/api2/v2/{path}` (plan-v5 §2.1).
 
 OF's status, body bytes and content-type come back unchanged; no client header reaches OF
-and no OF header but content-type comes back. No ledger rows, no events, except that a 401 or 400
-"Wrong user" marks the account session_expired (`deps.note_of_response`).
+and no OF header but content-type comes back. No ledger rows, no events, except that a 401 or a 400
+"Wrong user" (code 301) or "otpState" (code 101) marks the account session_expired (`deps.note_of_response`).
 """
 from __future__ import annotations
 

@@ -60,10 +60,16 @@ class OFAPIError(Exception):
         self.response = response
 
 
+# OF's 400 error codes for a session it will not serve again: 301 "Wrong user", and 101 "otpState"
+# (the account needs a 2FA code, so only a new login brings it back).
+REFUSED_400_CODES = (101, 301)
+
+
 def session_refused(resp, *, users_me: bool = False) -> bool:
-    """OF's answer for a dead session: 401, or 400 with OF's error code 301 ("Wrong user"), on any
-    request; on /users/me (`users_me`) also a 403 with OF's JSON body. An HTML or other 403 is
-    Cloudflare or a flagged proxy IP, which a reconnect (or a new proxy) may fix."""
+    """OF's answer for a dead session: 401, or 400 with an OF error code in `REFUSED_400_CODES`
+    (301 "Wrong user", 101 "otpState"), on any request; on /users/me (`users_me`) also a 403 with
+    OF's JSON body. An HTML or other 403 is Cloudflare or a flagged proxy IP, which a reconnect (or
+    a new proxy) may fix."""
     status = getattr(resp, "status_code", None)
     if status == 401:
         return True
@@ -76,7 +82,7 @@ def session_refused(resp, *, users_me: bool = False) -> bool:
         err = resp.json().get("error")
     except Exception:  # no JSON body: an ordinary 400
         return False
-    return isinstance(err, dict) and err.get("code") == 301
+    return isinstance(err, dict) and err.get("code") in REFUSED_400_CODES
 
 
 def _wrap_text_as_p(text: str) -> str:
