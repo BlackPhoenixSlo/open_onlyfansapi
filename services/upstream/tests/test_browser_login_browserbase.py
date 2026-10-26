@@ -6,7 +6,8 @@ proxy the way a pasted cURL does. Browserbase HTTP is faked.
 The 2FA code: one code at a time in the job's slot (`otpChecking`), typed then sent, a code still on the
 prompt after OTP_VERIFY_S asked for again, a code that can't be typed, leaving the prompt, cancel
 between typing and sending, the /otp route's 403/404/409/400, and that the code is never logged, never
-in a status or error. The `:visible` field rule runs on a real headless Chromium when one is installed."""
+in a status or error. The `:visible` field rule, and that only a visible captcha is a challenge (a hidden
+leftover one does not mask the 2FA prompt), run on a real headless Chromium when one is installed."""
 import asyncio
 import io
 import json
@@ -753,6 +754,82 @@ def test_on_a_real_page_a_hidden_stale_input_is_neither_the_prompt_nor_the_fill_
     stale, real, submitted = asyncio.run(scenario())
     assert (stale, real) == ("", CODE)
     assert submitted == [f"otp:{CODE}"]  # the 2FA form, not the page's first (login) form
+
+
+RECAPTCHA = "https://www.google.com/recaptcha/api2/bframe"
+RECAPTCHA_ANCHOR = "https://www.google.com/recaptcha/api2/anchor?ar=1&k=site-key"
+HCAPTCHA = "https://newassets.hcaptcha.com/captcha/v1/frame"
+TURNSTILE = "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile"
+OUTER = "https://frames.example.invalid/outer"  # serves a visible Turnstile frame: a captcha one frame down
+OTP_PROMPT = '<form><input name="code" autocomplete="one-time-code"><button type="submit">Verify</button></form>'
+
+
+def _shadow_frame(style):
+    """A Turnstile frame behind a closed shadow root: no selector reaches it, only `page.frames`."""
+    return ('<div id="host"></div><script>document.getElementById("host").attachShadow({mode: "closed"})'
+            f'.innerHTML = \'<iframe src="{TURNSTILE}" style="{style}"></iframe>\'</script>')
+
+
+# The same captchas, left over hidden in the ways a page hides one, then on screen.
+HIDDEN_CAPTCHAS = (
+    f'<iframe src="{RECAPTCHA}" style="display:none"></iframe>',
+    f'<div style="visibility:hidden;position:absolute;top:-10000px"><iframe src="{RECAPTCHA}"></iframe></div>',
+    f'<iframe src="{HCAPTCHA}" width="0" height="0" style="border:0"></iframe>',
+    '<div class="cf-turnstile" hidden>widget</div>',
+    '<div id="challenge-stage" style="display:none">check</div>',
+    _shadow_frame("display:none"),
+    '<p style="display:none">Verify you are human</p>',
+    f'<iframe src="{OUTER}" style="visibility:hidden" width="400" height="200"></iframe>',
+    f'<iframe src="{OUTER}" width="0" height="0" style="border:0"></iframe>',
+    # reCAPTCHA's invisible badge, styled as Google styles it: on screen to Playwright, but never a challenge (a real
+    # one opens the bframe).
+    ('<div class="grecaptcha-badge" style="width:256px;height:60px;position:fixed;bottom:14px;right:-186px;'
+     f'box-shadow:gray 0 0 5px"><iframe src="{RECAPTCHA_ANCHOR}&size=invisible" width="256" height="60"></iframe></div>'),
+)
+VISIBLE_CAPTCHAS = (
+    (f'<iframe src="{RECAPTCHA}"></iframe>', "recaptcha"),
+    (f'<iframe src="{HCAPTCHA}" width="300" height="150"></iframe>', "hcaptcha"),
+    ('<div class="cf-turnstile">widget</div>', "turnstile"),
+    ('<div id="challenge-stage">check</div>', "cloudflare"),
+    (_shadow_frame("width:300px;height:65px"), "turnstile"),
+    (f'<iframe src="{RECAPTCHA_ANCHOR}&size=normal" width="304" height="78"></iframe>', "recaptcha"),
+    ('<p>Verify you are human</p><div class="cf-turnstile" hidden>widget</div>', "cloudflare"),
+    (f'<iframe src="{OUTER}" width="400" height="200"></iframe>', "turnstile"),
+)
+
+
+def test_on_a_real_page_a_hidden_leftover_captcha_does_not_mask_the_2fa_prompt():
+    _chromium_or_skip()
+    from playwright.async_api import async_playwright
+
+    async def scenario():
+        async with async_playwright() as pw:
+            try:
+                browser = await pw.chromium.launch(headless=True)
+            except Exception as e:  # noqa: BLE001
+                pytest.skip(f"no Chromium: {type(e).__name__}")
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: route.fulfill(
+                body=f'<iframe src="{TURNSTILE}" width="300" height="65"></iframe>' if route.request.url == OUTER
+                else "<p>captcha</p>", content_type="text/html"))
+            d = PlaywrightDriver()
+            d._page = page
+            seen = {}
+            for html in HIDDEN_CAPTCHAS + tuple(h for h, _ in VISIBLE_CAPTCHAS):
+                await page.set_content(html + OTP_PROMPT)
+                obs = await d.observe()
+                # The captcha is really there (a frame, a container, or the text), hidden or not.
+                in_dom = len(page.frames) > 1 or bool(await page.query_selector(".cf-turnstile, [id^='challenge-']")) \
+                    or "verify you are human" in (await page.content()).lower()
+                seen[html] = (obs.kind, obs.challenge.kind if obs.challenge else None, in_dom)
+            await browser.close()
+            return seen
+
+    seen = asyncio.run(scenario())
+    assert {html: seen[html] for html in HIDDEN_CAPTCHAS} == {html: ("otp", None, True) for html in HIDDEN_CAPTCHAS}
+    # A captcha on screen is still the challenge (live view), even with the code field next to it.
+    assert {html: seen[html] for html, _ in VISIBLE_CAPTCHAS} == \
+        {html: ("challenge", kind, True) for html, kind in VISIBLE_CAPTCHAS}
 
 
 # ─── HTTP: POST /login/browser/{id}/otp ────────────────────────────
