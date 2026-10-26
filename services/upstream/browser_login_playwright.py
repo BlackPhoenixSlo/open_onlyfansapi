@@ -10,6 +10,7 @@ session is signed for ongoing calls by the existing `of_signer.py`, not by anyth
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from browser_login import CapturedLogin, Challenge, Observation
@@ -37,12 +38,13 @@ class LoginFormError(RuntimeError):
 
 # Text OnlyFans/Cloudflare show on an interstitial challenge.
 CHALLENGE_TEXT = ("just a moment", "verify you are human", "checking your browser")
-# Challenge containers, matched in order; the value is the reported challenge kind.
+# Challenge containers, matched in order; the value is the reported challenge kind. Only a visible one counts.
 CHALLENGE_SELECTORS = (
     ("[id^='challenge-']", "cloudflare"),
     (".cf-turnstile", "turnstile"),
     ("iframe[src*='challenges.cloudflare.com']", "turnstile"),
-    ("iframe[src*='recaptcha']", "recaptcha"),
+    # Not the invisible reCAPTCHA's badge: it sits on screen but is no challenge (a real one opens its bframe).
+    ("iframe[src*='recaptcha']:not([src*='size=invisible'])", "recaptcha"),
     ("iframe[src*='hcaptcha']", "hcaptcha"),
     ("iframe[src*='geetest']", "geetest"),
 )
@@ -188,24 +190,32 @@ class PlaywrightDriver:
             return False
 
     async def _detect_challenge(self) -> str | None:
+        """The kind of challenge on screen, or None. Only a visible container or frame counts, as for the
+        2FA field: a captcha left over hidden in the DOM would otherwise mask the 2FA prompt."""
         try:
-            body = (await self._page.inner_text("body")).lower()
+            body = (await self._page.inner_text("body")).lower()  # rendered text: none under display:none or visibility:hidden
         except Exception:  # noqa: BLE001
             body = ""
         if any(t in body for t in CHALLENGE_TEXT):
             # Prefer a specific container's kind, else report a generic cloudflare interstitial.
             for sel, kind in CHALLENGE_SELECTORS:
-                if await self._page.query_selector(sel) is not None:
+                if await self._shown(sel):
                     return kind
             return "cloudflare"
         for sel, kind in CHALLENGE_SELECTORS:
-            if await self._page.query_selector(sel) is not None:
+            if await self._shown(sel):
                 return kind
-        # Walk every frame for a Turnstile widget hidden behind a closed shadow root.
+        # Walk every frame for a Turnstile widget behind a closed shadow root (no selector reaches it).
         for frame in self._page.frames:
-            if "challenges.cloudflare.com" in (frame.url or ""):
+            if "challenges.cloudflare.com" in (frame.url or "") and await _frame_shown(frame):
                 return "turnstile"
         return None
+
+    async def _shown(self, selector: str) -> bool:
+        try:
+            return await self._page.locator(f"{selector}:visible").count() > 0
+        except Exception:  # noqa: BLE001 — a page mid-navigation; the next tick looks again
+            return False
 
     async def screenshot(self) -> tuple[bytes, int, int]:
         png = await self._page.screenshot(type="png")
@@ -276,12 +286,30 @@ class PlaywrightDriver:
             return None
 
     async def close(self) -> None:
-        import contextlib
-
         for obj, closer in ((self._context, "close"), (self._pw, "stop")):
             if obj is not None:
                 with contextlib.suppress(Exception):
                     await getattr(obj, closer)()
+
+
+async def _frame_shown(frame) -> bool:
+    """A frame is on screen when its own <iframe> element, and each one above it up to the page, is visible
+    (Playwright's rule: a non-empty box, not visibility:hidden). A frame that is gone mid-check is not."""
+    while frame.parent_frame is not None:
+        try:
+            element = await frame.frame_element()
+        except Exception:  # noqa: BLE001
+            return False
+        try:
+            if not await element.is_visible():
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            with contextlib.suppress(Exception):
+                await element.dispose()
+        frame = frame.parent_frame
+    return True
 
 
 async def _fill_verified(field, value: str, what: str) -> None:
