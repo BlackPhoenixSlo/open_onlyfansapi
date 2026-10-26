@@ -354,13 +354,16 @@ async def _flow(ctx, out, ws, owner_of, world, rx, stack, browser, rec) -> None:
     for i, r in enumerate(badge_rows):
         if r["status"] != BADGE:
             continue
-        await rows.nth(i).get_by_role("button", name=re.compile(r"^Actions for ")).click()
-        edit = page.get_by_role("menuitem", name="Edit")
-        opened = await edit.is_visible() or await _wait(edit.is_visible, 3, 0.2)
+        button = rows.nth(i).get_by_role("button", name=re.compile(r"^Actions for "))
+        menu = page.get_by_role("menu", name=await button.get_attribute("aria-label"))
+        await button.click()
+        edit = menu.get_by_role("menuitem", name="Edit")
+        opened = await _wait(edit.is_visible, 3, 0.2)
         if opened and not menu_opened:
             await page.screenshot(path=str(shots / "c-expired-row-menu.png"))
         menu_opened.append({"id": r["id"], "edit_shown": bool(opened)})
         await page.keyboard.press("Escape")
+        await menu.wait_for(state="hidden", timeout=5_000)
     stop.set()
     await asyncio.gather(*listeners, return_exceptions=True)
 
