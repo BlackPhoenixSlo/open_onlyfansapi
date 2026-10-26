@@ -165,15 +165,21 @@ class OFWebSocket:
                 raise
             except Exception as e:
                 log.warning("ws error %s — reconnecting in %ds", e, backoff)
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=backoff)
+                if await _backoff_wait(self._stop, backoff):
                     return
-                except asyncio.TimeoutError:
-                    pass
                 backoff = min(int(backoff * 2), RECONNECT_MAX_S)
 
     def stop(self) -> None:
         self._stop.set()
+
+
+async def _backoff_wait(stop: asyncio.Event, timeout: float) -> bool:
+    """Wait out a reconnect backoff; True when `stop` was set meanwhile."""
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 async def _pinger(ws, stop: asyncio.Event) -> None:

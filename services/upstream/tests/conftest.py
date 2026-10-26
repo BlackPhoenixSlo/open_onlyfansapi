@@ -29,6 +29,7 @@ from of_client import OFClient
 
 FIXTURES = HERE / "fixtures" / "of_frames"
 PAYLOADS = HERE / "fixtures" / "payloads"
+OF_ERRORS = HERE / "fixtures" / "of_errors"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
@@ -89,6 +90,13 @@ def new_session(aid: str, *, bump: float = 0) -> None:
 
 def frame(name: str) -> dict:
     return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def of_error_body(name: str) -> dict:
+    """`fixtures/of_errors/<name>.json`: an OF error body. `otp_state` (HTTP 400, the account needs a 2FA
+    code) is reconstructed from OF web's JS bundle, not captured: its keys (`code` 101, `payload.otpState`,
+    `payload.strong`) are what the bundle reads; the message text and the values are placeholders."""
+    return json.loads((OF_ERRORS / f"{name}.json").read_text())
 
 
 def payload_fixture(event: str) -> dict:

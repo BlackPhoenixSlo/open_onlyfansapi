@@ -23,6 +23,40 @@ def run_dir(scenario: str, fault: str | None) -> Path:
     return d
 
 
+def p95(xs: list[float]) -> float | None:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(0.95 * (len(xs) - 1))))]
+
+
+def last_green(out: Path, scenario: str) -> dict | None:
+    """metrics.json of the newest earlier PASS run of this scenario without a fault."""
+    for d in sorted(out.parent.iterdir(), reverse=True):
+        if d == out or not d.name.endswith(f"-{scenario}"):
+            continue
+        m = d / "metrics.json"
+        if m.exists():
+            data = json.loads(m.read_text())
+            if data.get("verdict") == "PASS" and not data.get("fault"):
+                return {**data, "run": d.name}
+    return None
+
+
+def check_p95(ctx, out: Path, ms: list[float]) -> None:
+    """`p95-vs-last-green`: this run's p95 (metric `api_p95_ms`) within 2x + 250 ms of the last green run's."""
+    now = p95(ms)
+    ctx.metric("api_p95_ms", now)
+    ctx.metric("api_calls_timed", len(ms))
+    prev = last_green(out, ctx.scenario)
+    if prev is None or prev.get("api_p95_ms") is None:
+        ctx.check("p95-vs-last-green", now is not None, p95_ms=now, baseline="none (this run sets it)")
+    else:
+        limit = 2 * prev["api_p95_ms"] + 250
+        ctx.check("p95-vs-last-green", now is not None and now <= limit, p95_ms=now, last_green=prev["run"],
+                  last_green_p95_ms=prev["api_p95_ms"], limit_ms=limit)
+
+
 class Report:
     def __init__(self, scenario: str, out: Path, fault: str | None):
         self.scenario, self.out, self.fault = scenario, out, fault

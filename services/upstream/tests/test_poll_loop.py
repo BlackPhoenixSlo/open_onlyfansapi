@@ -4,6 +4,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from conftest import of_error_body
 from curl_cffi.requests import exceptions as curl_errors
 
 import poll_loop
@@ -29,12 +30,13 @@ class StubPoller:
             raise outcome
 
 
-def of_error(status, *, retry_after=None, code=0):
-    """OF's error answer as `OFClient` raises it."""
+def of_error(status, *, retry_after=None, code=0, body=None):
+    """OF's error answer as `OFClient` raises it (`body` replaces the `{"error": {"code": code}}` default)."""
     headers = {"content-type": "application/json"}
     if retry_after is not None:
         headers["retry-after"] = retry_after
-    resp = SimpleNamespace(status_code=status, headers=headers, json=lambda: {"error": {"code": code}})
+    body = body or {"error": {"code": code}}
+    resp = SimpleNamespace(status_code=status, headers=headers, json=lambda: body)
     return OFAPIError(f"OF answered {status}", response=resp)
 
 
@@ -93,8 +95,9 @@ def test_a_first_failure_without_any_response_also_waits_the_interval():
     assert run_loop(poller, 3) == [INTERVAL, 2 * INTERVAL, INTERVAL]
 
 
-@pytest.mark.parametrize(("status", "code"), [(401, 0), (400, 301)])
-def test_a_refused_session_calls_on_expired_and_ends(status, code):
+@pytest.mark.parametrize(("status", "body"), [
+    (401, None), (400, {"error": {"code": 301}}), (400, of_error_body("otp_state"))])
+def test_a_refused_session_calls_on_expired_and_ends(status, body):
     expired = []
-    assert run_loop(StubPoller(of_error(status, code=code)), 99, on_expired=lambda: expired.append(1)) == []
+    assert run_loop(StubPoller(of_error(status, body=body)), 99, on_expired=lambda: expired.append(1)) == []
     assert expired == [1]

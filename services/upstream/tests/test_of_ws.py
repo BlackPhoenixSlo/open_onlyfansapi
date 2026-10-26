@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from conftest import of_error_body
 
 import of_ws
 from of_client import OFAPIError, session_refused
@@ -123,12 +124,27 @@ def of_reply(status, body=None, content_type="application/json"):
 
 
 WRONG_USER = {"error": {"code": 301, "message": "Wrong user."}}
+OTP_STATE = of_error_body("otp_state")  # the account needs a 2FA code (reconstructed from OF's bundle)
 
 
 @pytest.mark.parametrize(("resp", "rest", "users_me"), [
     (of_reply(401), True, True),
     (of_reply(400, WRONG_USER), True, True),
+    (of_reply(400, OTP_STATE), True, True),
+    (of_reply(400, {"error": {"code": 101, "message": "otpState"}}), True, True),  # the message marker alone
+    (of_reply(400, {"error": {"code": 101, "message": "Enter the code", "payload": {"otpState": {}}}}), True, True),
+    # 101 needs an otpState marker: a bare 101, or one whose payload has none, is an ordinary 400
+    (of_reply(400, {"error": {"code": 101}}), False, False),
+    (of_reply(400, {"error": {"code": 101, "message": "Wrong user."}}), False, False),
+    (of_reply(400, {"error": {"code": 101, "payload": {"strong": True}}}), False, False),
+    (of_reply(400, {"error": {"code": 101, "payload": "otpState"}}), False, False),
+    # 105 is OF's per-request step-up (the request is retried with a code): the session is alive
+    (of_reply(400, {"error": {"code": 105, "message": "otpState", "payload": {"otpState": {}}}}), False, False),
     (of_reply(400, {"error": {"code": 0, "message": "Bad request"}}), False, False),
+    *[(of_reply(400, {"error": {"code": code}}), False, False) for code in (100, 102, 105, 300, 302, "101", None)],
+    (of_reply(400, {"error": "otpState"}), False, False),
+    (of_reply(401, OTP_STATE), True, True),
+    (of_reply(403, OTP_STATE, "text/html"), False, False),
     (of_reply(400, content_type="text/html"), False, False),
     (of_reply(403, {"error": {"code": 0}}, "application/json; charset=utf-8"), False, True),
     (of_reply(403, content_type="text/html"), False, False),  # Cloudflare / flagged proxy IP
@@ -140,10 +156,25 @@ def test_session_refused(resp, rest, users_me):
     assert session_refused(resp, users_me=True) is users_me
 
 
-@pytest.mark.parametrize("resp", [of_reply(401), of_reply(400, WRONG_USER), of_reply(403, {"error": {}})])
-def test_a_dead_session_on_users_me_raises_session_expired(resp):
+@pytest.mark.parametrize("resp", [of_reply(401), of_reply(400, WRONG_USER), of_reply(400, OTP_STATE),
+                                  of_reply(403, {"error": {}})])
+def test_a_dead_session_on_users_me_raises_session_expired(resp, monkeypatch):
     client = fake_client()
-    client.me = lambda: (_ for _ in ()).throw(OFAPIError(str(resp.status_code), response=resp))
+    calls = []
+
+    def refused_me():
+        calls.append(1)
+        raise OFAPIError(str(resp.status_code), response=resp)
+
+    client.me = refused_me
+
+    class Retried(BaseException):  # past the loop's `except Exception`
+        pass
+
+    async def no_retry(stop, timeout):  # the reconnect backoff: a dead session must never reach it
+        raise Retried(timeout)
+
+    monkeypatch.setattr(of_ws, "_backoff_wait", no_retry)
 
     async def main():
         async for _ in OFWebSocket(client).events():
@@ -151,6 +182,7 @@ def test_a_dead_session_on_users_me_raises_session_expired(resp):
 
     with pytest.raises(of_ws.SessionExpired):
         asyncio.run(main())
+    assert calls == [1]  # one /users/me, then the socket gives up
 
 
 def test_a_non_json_403_on_users_me_reconnects(monkeypatch, no_pinger):
@@ -167,12 +199,11 @@ def test_a_non_json_403_on_users_me_reconnects(monkeypatch, no_pinger):
     client.me = flaky_me
     waits = []
 
-    async def no_sleep(aw, timeout):  # the backoff wait: record it, skip it
-        aw.close()
+    async def no_sleep(stop, timeout):  # the backoff wait: record it, skip it
         waits.append(timeout)
-        raise asyncio.TimeoutError
+        return False
 
-    monkeypatch.setattr(of_ws.asyncio, "wait_for", no_sleep)
+    monkeypatch.setattr(of_ws, "_backoff_wait", no_sleep)
 
     async def main():
         ws = OFWebSocket(client)

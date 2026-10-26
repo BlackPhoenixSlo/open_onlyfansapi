@@ -182,6 +182,29 @@ def test_a_stale_pump_does_not_announce_expiry(evicted):
     asyncio.run(main())
 
 
+def test_an_expiry_from_a_pump_outlived_by_a_new_proxy_is_announced(evicted):
+    async def main():
+        hub = FakeHub()
+        sup, src = supervisor(hub)
+        make_account("100001")
+        await sup.reconcile()
+        await settle()
+        # Same session, new proxy, before the old pump's /users/me refusal arrives: the session is
+        # the one that expired, so its workspace hears about it.
+        proxies.upsert({"label": "acct-100001", "scheme": "http", "host": "203.0.113.11", "port": 8080})
+        src.feeds[0].put_nowait(SessionExpired("/users/me answered 400"))
+        await settle()
+        assert sup.status("100001") == "session_expired"
+        assert [(f["type"], f["account_id"]) for f in hub.frames] == [("accounts.session_expired", 100001)]
+        sup.mark_expired("100001")  # a later REST refusal on the new proxy announces nothing more
+        await sup.reconcile()
+        await settle()
+        assert src.starts == ["100001"] and len(hub.frames) == 1
+        await sup.stop()
+
+    asyncio.run(main())
+
+
 def test_a_crashed_pump_is_restarted(evicted):
     async def main():
         sup, src = supervisor()

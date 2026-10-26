@@ -55,7 +55,8 @@ Who: owner only. Connect OF accounts, set their proxies, and start analytics.
 - **Try Browserbase login**: the same in a remote Browserbase browser, so it works on a phone and needs no extension.
   It works only if the operator set \`BROWSERBASE_API_KEY\` and \`BROWSERBASE_PROJECT_ID\` on the server.
 - The table shows Display name, Username, Label, ID and Status. Status \`session_expired\` means OF refused the
-  session: use **Connect account** again with a fresh cURL for the same account.
+  session or wants the account's 2FA code: log in again with **Try Browserbase login** or **Browser login** (both
+  take the 2FA code), or use **Connect account** with a fresh cURL for the same account.
 - **Run analytics (N days)** (30, 90 or 180 days; active accounts only) backfills the account's history for
   [Stats](/stats), [Conversations](/conversations) and [Revenue](/revenue). It runs in the background, shows
   \`Running…\`, then \`Done · view Stats\`. Long ranges take hours. See

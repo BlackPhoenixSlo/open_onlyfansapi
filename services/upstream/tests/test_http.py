@@ -6,7 +6,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import AUTH, TOKEN, OFFake, key_paths, make_account, payload_fixture
+from conftest import (
+    AUTH,
+    TOKEN,
+    OFFake,
+    key_paths,
+    make_account,
+    of_error_body,
+    payload_fixture,
+)
 from curl_cffi.requests import exceptions as curl_errors
 from fastapi.testclient import TestClient
 
@@ -132,8 +140,9 @@ def test_proxy_not_required_when_disabled(routed, monkeypatch, fake):
 @pytest.mark.parametrize(("status", "body"), [
     (401, {"error": {"code": 401, "message": "Unauthorized"}}),
     (400, {"error": {"code": 301, "message": "Wrong user."}}),
+    (400, of_error_body("otp_state")),
 ])
-@pytest.mark.parametrize("path", ["/of/chats", "/of/_of/mass-messaging/overview"])
+@pytest.mark.parametrize("path", ["/of/me", "/of/chats", "/of/_of/mass-messaging/overview"])
 def test_a_dead_session_reply_on_rest_expires_the_account_once(routed, monkeypatch, fake, status, body, path):
     events = []
     monkeypatch.setattr(upstream.supervisor, "hub", SimpleNamespace(publish=events.append))

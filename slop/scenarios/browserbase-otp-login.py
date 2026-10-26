@@ -56,6 +56,7 @@ LIB = Path(__file__).resolve().parents[1] / "lib"
 sys.path.insert(0, str(LIB))
 from fake_world import World
 from recorder import Recorder
+from report import check_p95
 from stack import Stack
 
 FAULTS = {"otp-code-never-consumed": "the worker never takes the code from the job's slot",
@@ -70,26 +71,6 @@ CODE, WRONG = "739218", "104857"
 CODE_TYPED, WRONG_TYPED = "739-218", "104 857"
 REJECTED = "didn't accept that code"
 LEAK_FORMS = (CODE, WRONG, CODE_TYPED, WRONG_TYPED, "739 218", "104-857")
-
-
-def p95(xs: list[float]) -> float | None:
-    if not xs:
-        return None
-    xs = sorted(xs)
-    return xs[min(len(xs) - 1, int(round(0.95 * (len(xs) - 1))))]
-
-
-def last_green(out: Path, scenario: str) -> dict | None:
-    """metrics.json of the newest earlier PASS run of this scenario without a fault."""
-    for d in sorted(out.parent.iterdir(), reverse=True):
-        if d == out or not d.name.endswith(f"-{scenario}"):
-            continue
-        m = d / "metrics.json"
-        if m.exists():
-            data = json.loads(m.read_text())
-            if data.get("verdict") == "PASS" and not data.get("fault"):
-                return {**data, "run": d.name}
-    return None
 
 
 class Probe:
@@ -432,12 +413,4 @@ def _after(ctx, out: Path, world: World, rec) -> None:
     ctx.check("nothing-off-host", not refused, refused=refused[:5])
 
     ms = [c["ms"] for c in calls if c.get("ms") is not None] + [d["ms"] for d in dash if d.get("ms") is not None]
-    now = p95(ms)
-    ctx.metric("api_p95_ms", now)
-    prev = last_green(out, ctx.scenario)
-    if prev is None or prev.get("api_p95_ms") is None:
-        ctx.check("p95-vs-last-green", now is not None, p95_ms=now, baseline="none (this run sets it)")
-    else:
-        limit = 2 * prev["api_p95_ms"] + 250
-        ctx.check("p95-vs-last-green", now is not None and now <= limit, p95_ms=now, last_green=prev["run"],
-                  last_green_p95_ms=prev["api_p95_ms"], limit_ms=limit)
+    check_p95(ctx, out, ms)

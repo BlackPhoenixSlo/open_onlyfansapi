@@ -166,8 +166,9 @@ def of_accounts() -> list[dict]:
     """Connected OF accounts. `status`:
     `active` — a frame has been received since the pump started (not proof of live connectivity);
     `connecting` — runnable, pump starting or no frame yet;
-    `session_expired` — OF answered 401 to any call, 400 "Wrong user" (code 301), or a JSON 403
-    to /users/me; waits for a new session (re-connect);
+    `session_expired` — OF answered 401 to any call, 400 "Wrong user" (code 301) or 400 code 101
+    with its otpState marker (the account needs a 2FA code) to any call, or a JSON 403 to
+    /users/me; waits for a new session (re-connect);
     `no_session` — no captured session; `no_proxy` — no proxy while OF_REQUIRE_PROXY is on.
     """
     return [_account_row(meta) for meta in accounts.list_accounts() if str(meta.get("id") or "").isdigit()]

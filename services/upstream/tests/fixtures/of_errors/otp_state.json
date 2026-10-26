@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": 101,
+    "message": "otpState",
+    "payload": {
+      "otpState": {},
+      "strong": false
+    }
+  }
+}
