@@ -8,6 +8,7 @@ is faked at its wire boundary by `lib/`, never inside service code. Extend this 
 slop/run --list                         # scenarios and the faults each supports
 slop/run all                            # every scenario; exit 0 = all green
 slop/run browserbase-otp --fault otp-code-never-consumed   # break it once: only the targeted checks go red
+slop/run otpstate-session-expired --fault otpstate-not-refused
 ```
 
 Exit codes: 0 every check passed, 1 a check failed, 3 infra (the stack did not come up or the scenario crashed).
@@ -24,6 +25,8 @@ Quote runs by that name. Inside:
 - `upstream.log`, `api.log`, `web.log`, `migrate.log`, `fake-world.log`: every process's own output
 - `api-calls.jsonl` (the probes' calls), `dashboard-responses.jsonl` (what the browser got from `/api` and `/v1`)
 - `fake-of-otp-record.jsonl`: what "OnlyFans" received — the one file a 2FA code may appear in
+- `fake-of-api-calls.jsonl` (every call the fake OF API answered, with status), `webhook-deliveries.jsonl` (every POST
+  the fake receiver got), `ws-client-frames.jsonl` (every frame the `/v1/ws` clients got), where a scenario uses them
 - `offhost-refused.jsonl`: every connection the guard refused (must stay empty)
 - `screenshots/`
 
@@ -37,7 +40,9 @@ Quote runs by that name. Inside:
 | `lib/fake_world.py` | fake Browserbase API (one local headless Chromium per session over CDP), live view, OnlyFans site/API/socket |
 | `lib/guard.py`, `lib/node_guard.cjs` | refuse (and log) any connection off loopback, in the Python and Node processes |
 | `lib/vite.slop.config.mts` | the web app's own Vite config with its proxy pointed at the slop API (apps/web untouched) |
-| `lib/recorder.py`, `lib/report.py` | recorded HTTP client; checks, metrics, verdict |
+| `lib/recorder.py`, `lib/report.py` | recorded HTTP clients (dashboard user, API key); checks, metrics, verdict, p95 vs last green |
+| `lib/seed.py` | SQL seeding before services start: workspaces, owners, keys, accounts, mass history; the upstream's session store |
+| `lib/webhook_receiver.py` | loopback webhook receiver, registered through the real `POST /v1/webhooks`; records every delivery |
 | `scenarios/<flow>.py` | one file per user flow: `async def run(ctx, out, fault)` and `FAULTS` |
 
 ## Declared fakes and bypasses
@@ -54,8 +59,31 @@ Quote runs by that name. Inside:
   confined by its resolver rules, and the driver only talks to it.
 - **Nothing is seeded by SQL** in `browserbase-otp-login`: sign-up links the workspace and the login creates the
   account. A login is one operator at a time, so the flow runs once (no volume or concurrent users).
+- **Seeded by SQL** in `otpstate-session-expired` (`lib/seed.py`, before any service starts): 6 workspaces as sign-up
+  leaves them (owner with better-auth's own scrypt hash, credential, organization, owner member, team link), 48 accounts
+  (`account_workspace`), 48 API keys, 19,200 ledger events, 14,400 `message_fact` rows, 18,000 `request_log` rows. The
+  48 accounts' sessions are written into the upstream's state dir (`sessions/accounts/<id>/`, the layout a login
+  writes) instead of 48 logins. After that, everything goes through real endpoints.
+- **OF's `otpState` answer** (HTTP 400 `{"error":{"code":101,"message":"otpState","payload":{"otpState":{},
+  "strong":false}}}`, the upstream's fixture `tests/fixtures/of_errors/otp_state.json`) is reconstructed from OF's web
+  bundle, not captured. The fake gives it to every call of an account once the scenario flips it. The **step-up** answer
+  (400 code 105, one path only) is a guessed shape, used to show a per-request refusal does not expire the account.
+- **OF's socket** is driven by the scenario: it pushes `api2_chat_message` frames to a connected account (in order, one
+  connection's frames on one thread) and closes an account's socket (1000) to make the upstream reconnect.
+- **Knobs** (each recorded in the run's `metrics.json` `knobs`): `SLOP_WS_RECONNECT_MAX_S=2` sets the upstream's socket
+  reconnect cap (`of_ws.RECONNECT_MAX_S`, 30 s in the product) so a reconnect loop shows within the window;
+  `SENT_POLL_INTERVAL_S` / `MASS_POLL_INTERVAL_S=3600` make the pollers poll once at pump start, so only `/v1` calls
+  reach an `otp-http` account's OF after the trigger; the API runs with `ALLOW_HTTP_WEBHOOKS=true` because the receiver
+  is plain http on 127.0.0.1 (production refuses http and private addresses).
+- **The Accounts page** has no refetch interval, so the scenario reloads it to see the settled status.
 
 ## Scenarios
 
 - `browserbase-otp-login` — Try Browserbase login, OnlyFans asks for the 2FA code, the operator types it in the dialog.
-  Checks and the fault are listed in the scenario's docstring.
+  One operator, no volume.
+- `otpstate-session-expired` — OF starts answering `otpState` for a quarter of 48 connected accounts while 42 API
+  integrations call `/v1` and 36 accounts' sockets keep delivering: each affected account goes `session_expired` once
+  (ledger, `/v1/accounts`, upstream, one signed webhook to its workspace), its socket stops reconnecting, `/v1/*` relays
+  OF's 400, the owner sees "Session expired · re-connect", and nothing else changes.
+
+Each scenario's docstring lists its checks, its faults and which checks a fault turns red.

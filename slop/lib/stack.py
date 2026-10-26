@@ -41,8 +41,13 @@ def pick_port(start: int) -> int:
 
 
 class Stack:
-    def __init__(self, out: Path, world, *, fault: str | None):
+    """`seed(stack, state_dir)` runs after the migration and before any service starts (SQL into `gateway_slop`, files
+    into the upstream's state dir); `upstream_env` / `api_env` add a scenario's declared knobs to those processes."""
+
+    def __init__(self, out: Path, world, *, fault: str | None, seed=None, upstream_env: dict | None = None,
+                 api_env: dict | None = None):
         self.out, self.world, self.fault = out, world, fault
+        self.seed, self.upstream_env, self.api_env = seed, dict(upstream_env or {}), dict(api_env or {})
         self.procs: list[tuple[str, subprocess.Popen]] = []
         self.guard_log = out / "offhost-refused.jsonl"
         self.guard_log.touch()
@@ -104,6 +109,11 @@ class Stack:
     def database_url(self) -> str:
         return f"{PG}/{DB}"
 
+    def sql_script(self, script: str) -> None:
+        """Run a multi-statement SQL script (seeding) in one psql session; any error stops it."""
+        subprocess.run(["psql", self.database_url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "-"], input=script,
+                       check=True, capture_output=True, text=True)
+
     def sql(self, query: str) -> list[list[str]]:
         r = subprocess.run(["psql", self.database_url, "-At", "-F", "\t", "-c", query], check=True,
                            capture_output=True, text=True)
@@ -126,11 +136,13 @@ class Stack:
         self.up_port = pick_port(4310)
         state = self.out / "upstream-state"
         state.mkdir()
+        if self.seed is not None:
+            self.seed(self, state)
         up_env = {**os.environ, "UPSTREAM_TOKEN": UPSTREAM_TOKEN, "UPSTREAM_STATE_DIR": str(state),
                   "BROWSERBASE_API_KEY": w.bb_key, "BROWSERBASE_PROJECT_ID": w.bb_project,
                   "SLOP_OF_API": w.of_api, "SLOP_BB_API": w.bb_api, "SLOP_GUARD_LOG": str(self.guard_log),
                   "SLOP_FAULT": self.fault or "", "SENT_POLL_INTERVAL_S": "10", "MASS_POLL_INTERVAL_S": "10",
-                  "PYTHONUNBUFFERED": "1"}
+                  "PYTHONUNBUFFERED": "1", **self.upstream_env}
         up_env.pop("STATIC_PARAM", None)
         self.spawn("upstream", [VENV_PY, str(LIB / "upstream_launcher.py"), str(self.up_port)],
                    cwd=ROOT / "services/upstream", env=up_env)
@@ -140,6 +152,7 @@ class Stack:
         self.web_port = pick_port(5180)
         self.app_url = f"http://localhost:{self.web_port}"
         self.api_url = f"http://127.0.0.1:{self.api_port}"
+        self.up_url = f"http://127.0.0.1:{self.up_port}"
         node_opts = f"--require {LIB / 'node_guard.cjs'}"
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("DATABASE_URL", "UPSTREAM_", "APP_URL",
                                                                             "BETTER_AUTH", "SMTP_", "HELP_"))}
@@ -150,7 +163,8 @@ class Stack:
                    "UPSTREAM_URL": f"http://127.0.0.1:{self.up_port}", "UPSTREAM_TOKEN": UPSTREAM_TOKEN,
                    "UPSTREAM_WS_URL": f"ws://127.0.0.1:{self.up_port}/ws", "RUN_JOBS": "true",
                    "REGISTRATION_OPEN": "true", "STATS_REFRESH_HOUR_UTC": "", "HELP_DEEPSEEK_API_KEY": "",
-                   "SMTP_HOST": "", "NODE_OPTIONS": node_opts, "SLOP_GUARD_LOG": str(self.guard_log)}
+                   "SMTP_HOST": "", "NODE_OPTIONS": node_opts, "SLOP_GUARD_LOG": str(self.guard_log),
+                   **self.api_env}
         self.spawn("api", [str(ROOT / "apps/api/node_modules/.bin/tsx"), "src/server.ts"], cwd=ROOT / "apps/api",
                    env=api_env)
         self.wait_http("api", f"{self.api_url}/healthz", 90)

@@ -20,10 +20,20 @@ against it; the launcher (lib/upstream_launcher.py) points the upstream's module
   OnlyFans' API     plain HTTP on loopback, for the upstream after the login (of_client.API_BASE,
                     HASH_BASE, session_bootstrap.CHUNK_URL_TPL point here): the 2313.js chunk, the
                     x-hash, /api2/v2/users/me (the `sign` header is verified against the synthetic
-                    rules; `wsUrl` points at the fake socket) and empty pages for the pollers' reads.
+                    rules; `wsUrl` points at the fake socket), a fixed chat list per account
+                    (`chat_list`), a payout balance, and empty pages for the pollers' other reads.
+                    Every call is recorded in `api_calls` (t, path, uid, sign_ok, status; `users_me()`
+                    reads the /users/me ones). Served concurrently (one thread per connection).
                     Bypass, declared: the upstream reaches it by IP, so its cookies (domain
                     .onlyfans.com) are not sent; it authenticates by the verified signature instead.
-  OnlyFans' socket  ws on loopback: answers {"act":"connect"} with {"connected":true}, then idles.
+                    `require_otp(uids)`: from then on every call for those accounts, /users/me
+                    included, is OF's 400 otpState (`OTP_STATE`, reconstructed from OF's web
+                    bundle, not captured). `step_up[uid] = {path}`: that path alone answers OF's 400
+                    code 105 (`STEP_UP`, a per-request step-up, not a dead session; shape guessed).
+  OnlyFans' socket  ws on loopback: answers {"act":"connect"} with {"connected":true}, then sends
+                    what `ws_push(uid, frame)` queues, in order, one connection's frames at a time
+                    (recorded in `ws_sent`); `ws_drop(uid)` closes the account's socket as OF does
+                    when it drops a session. Reads (get_onlines) are ignored.
 
 Bypass, declared: the signing material is synthetic (`signing()`): a 2313.js with 32 checksum terms
 and the sign it implies, so of_signer.derive_rules_from_chunk accepts it as it would OF's.
@@ -32,6 +42,7 @@ from __future__ import annotations
 
 import base64
 import json
+import queue
 import shutil
 import socket
 import ssl
@@ -48,6 +59,17 @@ ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = ROOT / "services" / "upstream"
 BB_KEY = "slop-browserbase-dummy-key"
 BB_PROJECT = "slop-project"
+# OF's 400 for an account that must enter a 2FA code: reconstructed from OF's web bundle, not captured. The one copy
+# is the upstream tests' fixture, so the unit tests and this fake answer the same body.
+OTP_STATE = json.loads((UPSTREAM / "tests/fixtures/of_errors/otp_state.json").read_text())
+# OF's 400 for a per-request step-up (an extra check on one action); not a dead session. Shape guessed.
+STEP_UP = {"error": {"code": 105, "message": "Additional verification is required"}}
+_CLOSE = object()
+
+
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 256  # a burst of concurrent callers must queue, not be refused (the default is 5)
 
 
 def signing(uid: str, rev: str, time_ms: int) -> dict:
@@ -140,8 +162,8 @@ class World:
     """Fake Browserbase + fake OnlyFans (site, API, socket) for one run. `accounts` maps each OF email
     to its user id; every account has `password` and takes the 2FA code `otp`."""
 
-    def __init__(self, out: Path, *, accounts: dict[str, str], otp: str, password: str, chromium: str,
-                 rev: str = "202610251200-slop"):
+    def __init__(self, out: Path, *, accounts: dict[str, str], otp: str | None = None, password: str | None = None,
+                 chromium: str | None = None, rev: str = "202610251200-slop"):
         self.out = Path(out)
         self.tmp = self.out / "fake-world"
         self.tmp.mkdir(parents=True, exist_ok=True)
@@ -156,6 +178,11 @@ class World:
         self.otp_record: list[dict] = []      # 2FA submissions: {t, uid, code, stale, ok}
         self.api_calls: list[dict] = []       # the upstream's OF API calls: {path, uid, sign_ok}
         self.ws_connects: list[dict] = []
+        self.ws_conns: dict[str, queue.Queue] = {}   # uid -> the open socket's outbound queue
+        self.ws_sent: dict[str, list] = {}           # uid -> frames sent after the handshake, in order
+        self.otp_state: set[str] = set()             # accounts OF now answers with OTP_STATE
+        self.otp_state_since: dict[str, float] = {}
+        self.step_up: dict[str, set[str]] = {}       # uid -> /api2/v2 paths answered with STEP_UP
         self.sessions: dict[str, dict] = {}   # sid -> {proc, cdp, dir, ws, released}
         self._lock = threading.Lock()
         self._servers: list[ThreadingHTTPServer] = []
@@ -173,12 +200,12 @@ class World:
         subprocess.run(["/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
                         "-out", str(cert), "-days", "2", "-subj", "/CN=onlyfans.com"],
                        check=True, capture_output=True)
-        site = ThreadingHTTPServer(("127.0.0.1", 0), self._site_handler())
+        site = _Server(("127.0.0.1", 0), self._site_handler())
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(cert, key)
         site.socket = tls.wrap_socket(site.socket, server_side=True)
-        bb = ThreadingHTTPServer(("127.0.0.1", 0), self._bb_handler())
-        api = ThreadingHTTPServer(("127.0.0.1", 0), self._api_handler())
+        bb = _Server(("127.0.0.1", 0), self._bb_handler())
+        api = _Server(("127.0.0.1", 0), self._api_handler())
         for s in (site, bb, api):
             s.daemon_threads = True
             threading.Thread(target=s.serve_forever, daemon=True).start()
@@ -206,7 +233,16 @@ class World:
 
         world = self
 
+        def drain(ws, q):
+            try:
+                for _ in ws:  # answer nothing to get_onlines
+                    pass
+            except Exception:  # noqa: BLE001 — a peer going away
+                pass
+            q.put(None)
+
         def handler(ws):
+            uid, q = None, queue.Queue()
             try:
                 msg = json.loads(ws.recv(timeout=10))
                 uid = next((u for u, s in world.signs.items() if msg.get("token") == f"slop-ws-{u}"), None)
@@ -217,14 +253,68 @@ class World:
                     ws.close(4001)
                     return
                 ws.send(json.dumps({"connected": True, "v": "5.4.0"}))
-                for _ in ws:  # idle; answer nothing to get_onlines
-                    pass
-            except Exception:  # noqa: BLE001 — a peer going away
-                pass
+                with world._lock:
+                    world.ws_conns[uid] = q
+                threading.Thread(target=drain, args=(ws, q), daemon=True).start()
+                while (item := q.get()) is not None:
+                    if item is _CLOSE:
+                        ws.close(1000, "session dropped")
+                        break
+                    ws.send(json.dumps(item))
+                    with world._lock:
+                        world.ws_sent.setdefault(uid, []).append(item)
+            except Exception as e:  # noqa: BLE001 — a peer going away
+                world.log(f"ws uid={uid} ended: {type(e).__name__}")
+            finally:
+                with world._lock:
+                    if uid is not None and world.ws_conns.get(uid) is q:
+                        del world.ws_conns[uid]
 
         self._ws_server = serve(handler, "127.0.0.1", 0)
         self.ws_port = self._ws_server.socket.getsockname()[1]
         threading.Thread(target=self._ws_server.serve_forever, daemon=True).start()
+
+    # ── OF's state, as a scenario changes it ──
+    def require_otp(self, uids) -> None:
+        """OF now wants a 2FA code for these accounts: every API call for them answers OTP_STATE."""
+        now = time.time()
+        with self._lock:
+            for uid in uids:
+                self.otp_state.add(uid)
+                self.otp_state_since[uid] = now
+        self.log(f"otpState on for {len(list(uids))} account(s)")
+
+    def ws_push(self, uid: str, frame: dict) -> bool:
+        """Queue one frame on the account's open socket (sent in order); False when it has none."""
+        with self._lock:
+            q = self.ws_conns.get(uid)
+        if q is None:
+            return False
+        q.put(frame)
+        return True
+
+    def ws_drop(self, uid: str) -> bool:
+        """Close the account's socket, as OF does when it drops the session."""
+        with self._lock:
+            q = self.ws_conns.get(uid)
+        if q is None:
+            return False
+        q.put(_CLOSE)
+        return True
+
+    def users_me(self, uid: str) -> list[float]:
+        """When the upstream called /api2/v2/users/me for `uid`."""
+        with self._lock:
+            return [c["t"] for c in self.api_calls if c["uid"] == uid and c["path"] == "/api2/v2/users/me"]
+
+    @staticmethod
+    def chat_list(uid: str) -> list[dict]:
+        """The account's chat list, in OF's order (newest first); last messages are old, so pollers read nothing."""
+        base = int(uid) * 10
+        return [{"withUser": {"id": base + k, "_view": "s"}, "unreadMessagesCount": 0,
+                 "lastMessage": {"id": base * 100 + k, "createdAt": f"2026-0{1 + k % 8}-0{1 + k}T10:00:00+00:00",
+                                 "fromUser": {"id": base + k}, "text": f"old message {k}"}}
+                for k in (7, 3, 9, 1, 5, 2)]
 
     # ── the remote browser ──
     def _launch(self) -> dict:
@@ -449,11 +539,25 @@ class World:
                     want = of_signer.sign(f"http://x{self.path}", uid, world.rules,
                                           int(self.headers.get("time") or 0))["sign"] if s else None
                     ok = bool(s) and self.headers.get("sign") == want and bool(self.headers.get("x-hash"))
-                    with world._lock:
-                        world.api_calls.append({"t": time.time(), "path": path, "uid": uid, "sign_ok": ok})
-                    world.log(f"api GET {path} uid={uid} sign_ok={ok}")
                     if not ok:
-                        return self._send(401, {"error": {"code": 401, "message": "slop: bad sign"}}, headers=rev)
+                        status, body = 401, {"error": {"code": 401, "message": "slop: bad sign"}}
+                    elif uid in world.otp_state:
+                        status, body = 400, OTP_STATE
+                    elif path in world.step_up.get(uid, ()):
+                        status, body = 400, STEP_UP
+                    else:
+                        status, body = 200, None
+                    with world._lock:
+                        world.api_calls.append({"t": time.time(), "path": path, "uid": uid, "sign_ok": ok,
+                                                "status": status})
+                    world.log(f"api GET {path} uid={uid} sign_ok={ok} -> {status}")
+                    if body is not None:
+                        return self._send(status, body, headers=rev)
+                    if path == "/api2/v2/chats":
+                        return self._send(200, {"list": world.chat_list(uid), "hasMore": False}, headers=rev)
+                    if path == "/api2/v2/payouts/balances":
+                        return self._send(200, {"currentBalance": 1234.5, "pendingBalance": 0, "currency": "USD"},
+                                          headers=rev)
                     if path == "/api2/v2/users/me":
                         return self._send(200, {"id": int(uid), "username": f"slop{uid}", "name": f"Slop {uid}",
                                                 "avatar": None, "isAuth": True,

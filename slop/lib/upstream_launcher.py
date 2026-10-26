@@ -5,6 +5,8 @@
     API_BASE by value):  of_client.API_BASE / HASH_BASE, session_bootstrap.CHUNK_URL_TPL -> $SLOP_OF_API;
     browser_login_browserbase.BROWSERBASE_API -> $SLOP_BB_API. browser_login_playwright.LOGIN_URL is left as is:
     the fake Browserbase's Chromium maps onlyfans.com to the fake site;
+  * $SLOP_WS_RECONNECT_MAX_S (a scenario's declared knob): of_ws.RECONNECT_MAX_S, the socket's reconnect backoff cap
+    (30 s in the product), so a reconnect loop shows within a short observation window;
   * $SLOP_FAULT, a named product fault (see FAULTS), patched into the live module.
 
 Usage: python upstream_launcher.py <port>   (cwd and sys.path: services/upstream)
@@ -44,7 +46,36 @@ def _otp_code_never_consumed() -> None:
     browser_login.LoginJob._take_otp = lambda self: None
 
 
-FAULTS = {"otp-code-never-consumed": _otp_code_never_consumed}
+_session_refused = of_client.session_refused
+
+
+def _otpstate_not_refused() -> None:
+    """master's classifier: OF's 400 code 101 ("otpState") is an ordinary 400, not a dead session. Wraps
+    `of_client.session_refused` (whatever its rule) so a 400 with error code 101 answers False, in of_client and,
+    after `app` is imported, in every module that imported the function by name (of_ws, deps, poll_loop, ...)."""
+
+    def session_refused(resp, *, users_me: bool = False) -> bool:
+        if getattr(resp, "status_code", None) == 400:
+            try:
+                err = resp.json().get("error")
+            except Exception:  # noqa: BLE001 — no JSON body
+                err = None
+            if isinstance(err, dict) and err.get("code") == 101:
+                return False
+        return _session_refused(resp, users_me=users_me)
+
+    of_client.session_refused = session_refused
+    _REPATCH.append(session_refused)
+
+
+_REPATCH: list = []
+FAULTS = {"otp-code-never-consumed": _otp_code_never_consumed, "otpstate-not-refused": _otpstate_not_refused}
+
+if os.environ.get("SLOP_WS_RECONNECT_MAX_S"):
+    import of_ws
+
+    of_ws.RECONNECT_MAX_S = int(os.environ["SLOP_WS_RECONNECT_MAX_S"])
+    print(f"[slop] knob: of_ws.RECONNECT_MAX_S = {of_ws.RECONNECT_MAX_S}", flush=True)
 
 fault = os.environ.get("SLOP_FAULT") or ""
 if fault:
@@ -54,6 +85,13 @@ if fault:
 import uvicorn
 
 import app
+
+for patched in _REPATCH:  # a module imported before the fault (or by `app`) holds the original by name
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "session_refused", None) is _session_refused:
+            mod.session_refused = patched
+    held = sorted(m.__name__ for m in list(sys.modules.values()) if getattr(m, "session_refused", None) is patched)
+    print(f"[slop] fault: session_refused is the patched one in {held}", flush=True)
 
 for name, mod, attr in (("of_client.API_BASE", of_client, "API_BASE"), ("of_client.HASH_BASE", of_client, "HASH_BASE"),
                         ("session_bootstrap.CHUNK_URL_TPL", session_bootstrap, "CHUNK_URL_TPL"),
