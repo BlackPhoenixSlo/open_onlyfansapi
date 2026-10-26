@@ -60,16 +60,25 @@ class OFAPIError(Exception):
         self.response = response
 
 
-# OF's 400 error codes for a session it will not serve again: 301 "Wrong user", and 101 "otpState"
-# (the account needs a 2FA code, so only a new login brings it back).
-REFUSED_400_CODES = (101, 301)
+# OF's 400 error codes for a session it will not serve again. 301 is "Wrong user". 101 with OF's
+# otpState marker means the account needs a 2FA code (OF web opens its 2FA modal on it), so only a
+# new login brings it back. 105 is a per-request step-up (OF retries that request with a code): the
+# session is alive.
+WRONG_USER = 301
+OTP_STATE = 101
+
+
+def _otp_state(err: dict) -> bool:
+    """OF's otpState marker: `payload.otpState`, the shape OF web's bundle reads, or the message."""
+    payload = err.get("payload")
+    return (isinstance(payload, dict) and "otpState" in payload) or err.get("message") == "otpState"
 
 
 def session_refused(resp, *, users_me: bool = False) -> bool:
-    """OF's answer for a dead session: 401, or 400 with an OF error code in `REFUSED_400_CODES`
-    (301 "Wrong user", 101 "otpState"), on any request; on /users/me (`users_me`) also a 403 with
-    OF's JSON body. An HTML or other 403 is Cloudflare or a flagged proxy IP, which a reconnect (or
-    a new proxy) may fix."""
+    """OF's answer for a dead session: 401, or 400 with OF's error code 301 ("Wrong user") or 101
+    with its otpState marker (a 2FA code is needed), on any request; on /users/me (`users_me`) also
+    a 403 with OF's JSON body. An HTML or other 403 is Cloudflare or a flagged proxy IP, which a
+    reconnect (or a new proxy) may fix."""
     status = getattr(resp, "status_code", None)
     if status == 401:
         return True
@@ -82,7 +91,10 @@ def session_refused(resp, *, users_me: bool = False) -> bool:
         err = resp.json().get("error")
     except Exception:  # no JSON body: an ordinary 400
         return False
-    return isinstance(err, dict) and err.get("code") in REFUSED_400_CODES
+    if not isinstance(err, dict):
+        return False
+    code = err.get("code")
+    return code == WRONG_USER or (code == OTP_STATE and _otp_state(err))
 
 
 def _wrap_text_as_p(text: str) -> str:

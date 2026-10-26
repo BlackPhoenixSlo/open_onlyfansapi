@@ -196,7 +196,8 @@ class Supervisor:
         return "connecting"
 
     def mark_expired(self, aid: str, key: Key | None = None) -> None:
-        """Mark this session expired and announce `account.session_expired` once per session.
+        """Mark this session expired and announce `account.session_expired` once per session (per
+        process: a restart announces it again, with the same id, which the gateway's ledger drops).
         `key` is the pump's; None means the current session (a REST call OF refused). The next
         reconcile stops the pump; a new session (re-connect) clears the mark."""
         current = self.key(aid)
@@ -205,7 +206,9 @@ class Supervisor:
             return
         log.warning("session expired account=%s", aid)
         self._expired[aid] = key[0]
-        if current == key:  # a pump outlived by a new session or proxy announces nothing
+        # A pump outlived by a new session announces nothing; one outlived by only a new proxy does,
+        # since `blocker` keys the mark on the session, so this session is the one that expired.
+        if current is not None and current[0] == key[0]:
             self.hub.publish(events.account_event(
                 "account.session_expired", int(aid), key[0], "session_expired",
                 events.iso(datetime.now(UTC))))

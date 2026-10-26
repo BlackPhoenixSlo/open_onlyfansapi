@@ -19,7 +19,7 @@ import { DisconnectDialog } from '@/features/accounts/DisconnectDialog';
 import { EditAccountDialog } from '@/features/accounts/EditAccountDialog';
 import { ProxiesCard } from '@/features/accounts/ProxiesCard';
 import { RunAnalytics } from '@/features/accounts/RunAnalytics';
-import { SessionExpiredBadge } from '@/features/accounts/status-badge';
+import { SESSION_EXPIRED_HINT, SessionExpiredBadge } from '@/features/accounts/status-badge';
 import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
@@ -97,7 +97,7 @@ function Accounts() {
                 <TableCell className="font-mono">{a.id}</TableCell>
                 <TableCell>
                   {a.status === 'session_expired' ? (
-                    <SessionExpiredBadge title="OnlyFans refused this account's session. Use Connect account with a fresh cURL for the same account." />
+                    <SessionExpiredBadge title={SESSION_EXPIRED_HINT} />
                   ) : (
                     <Badge variant="secondary">{a.status}</Badge>
                   )}
