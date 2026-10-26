@@ -20,6 +20,7 @@ import { EditAccountDialog } from '@/features/accounts/EditAccountDialog';
 import { ProxiesCard } from '@/features/accounts/ProxiesCard';
 import { RunAnalytics } from '@/features/accounts/RunAnalytics';
 import { SESSION_EXPIRED_HINT, SessionExpiredBadge } from '@/features/accounts/status-badge';
+import { ACTIONS_COLUMN } from '@/features/accounts/table-layout';
 import { ApiError, accountsQuery } from '@/lib/api';
 
 export const Route = createFileRoute('/_app/accounts')({ component: Accounts });
@@ -78,7 +79,7 @@ function Accounts() {
               <TableHead>ID</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Analytics</TableHead>
-              <TableHead className="w-20" />
+              <TableHead className={`w-20 ${ACTIONS_COLUMN}`} />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -104,7 +105,7 @@ function Accounts() {
                 </TableCell>
                 {/* Only an active account can run; a session_expired one shows no Run analytics until it is re-connected. */}
                 <TableCell>{a.status === 'active' && <RunAnalytics accountId={a.id} />}</TableCell>
-                <TableCell>
+                <TableCell className={ACTIONS_COLUMN}>
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" aria-label={`Actions for ${a.label ?? a.id}`}>
